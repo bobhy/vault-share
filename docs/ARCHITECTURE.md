@@ -2,7 +2,6 @@
 ## History
 This project is inspired by "obsidian-air-sync" and related work by Takehito Gondo.  Credit where credit is due.
 ## Naming
-Names are always hard.  And once you choose them, you tend to be stuck with them.  So you dither in starting a project, and you live with bad names longer than you should.
 
 This project is "Vault Sync".  Prior work focused on the *mechanism* (syncing), but this one is focused on the user *service*.  
 The idea of this project is to allow users to *share* an Obsidian Vault, either among multiple devices owned by the same user, or among multiple users (and their multiple devices).
