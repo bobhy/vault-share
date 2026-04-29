@@ -1,0 +1,19 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"lib": ["ES2022", "DOM"],
+		"strict": true,
+		"noImplicitReturns": true,
+		"allowSyntheticDefaultImports": true,
+		"isolatedModules": true,
+		"types": ["node", "webdriverio", "@wdio/globals/types", "wdio-obsidian-service"],
+		"skipLibCheck": true
+	},
+	"include": [
+		"wdio.conf.mts",
+		"wdio.multiremote.conf.mts",
+		"tests/wdio/**/*.ts"
+	]
+}

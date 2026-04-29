@@ -30,5 +30,9 @@ export default tseslint.config(
 		"version-bump.mjs",
 		"versions.json",
 		"main.js",
+		"vitest.config.ts",
+		"wdio.conf.mts",
+		"wdio.multiremote.conf.mts",
+		"tests/wdio/**",
 	]),
 );

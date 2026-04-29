@@ -5,12 +5,15 @@ An Obsidian community plugin for multi-master sync among multiple Obsidian vault
 ## Commands
 
 ```bash
-npm install        # Install dependencies
-npm run dev        # Development (watch)
-npm run build      # Production build (tsc -noEmit && esbuild)
-npm test           # vitest
-npm run test:watch # vitest watch
-npm run lint       # eslint ./src/
+npm install             # Install dependencies
+npm run dev             # Development (watch)
+npm run build           # Production build (tsc -noEmit && esbuild)
+npm test                # vitest (unit tests)
+npm run test:watch      # vitest watch
+npm run lint            # eslint .
+npm run setup:e2e:wdio  # One-time: save GDrive token for e2e tests
+npm run test:e2e:single # wdio e2e tests, single vault
+npm run test:e2e:cross  # wdio e2e tests, two vaults (multiremote)
 ```
 
 ## Architecture
@@ -50,7 +53,6 @@ For Architectural overview, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - Command IDs are immutable once published
 - No migration code — on IndexedDB schema changes, cold-start (drop all stores and recreate). Settings schema changes should use sensible defaults for missing fields via `Object.assign({}, DEFAULT_SETTINGS, stored)`
 
-
 ## Type safety & lint rules
 
 Always pass `npm run lint && npm run build && npm test` after making changes.
@@ -64,10 +66,10 @@ Always pass `npm run lint && npm run build && npm test` after making changes.
 
 ### Type-safe mocks in tests
 - Do not cast `vi.spyOn` targets with `as any`. Use typed helpers instead
-  - `spyRequestUrl()` — type-safe spy on obsidian's `requestUrl`
-  - `mockSettings()` — returns a complete `AirSyncSettings` default
+    - `spyRequestUrl()` — type-safe spy on obsidian's `requestUrl` (lives in `src/fs/googledrive/test-helpers.ts` when that module is created)
+    - `mockSettings()` — returns a complete `VaultShareSettings` default (lives in `src/__mocks__/sync-test-helpers.ts` when `VaultShareSettings` is defined)
 - Access private fields via `as unknown as { field: Type }` pattern
-- Pass `createMockStateStore()` directly (its intersection type satisfies `SyncStateStore`)
+- Pass `createMockStateStore()` directly (its intersection type satisfies `SyncStateStore`; lives in `src/__mocks__/sync-test-helpers.ts` when `SyncStateStore` is defined)
 
 ### No `async` without `await`
 - Never write `async` functions or arrow functions that contain no `await` expression — fix the code, do not disable the lint rule
