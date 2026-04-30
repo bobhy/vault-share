@@ -26,3 +26,7 @@ data.json
 
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
+
+# Exclude persistent test resources
+persistent-test-resources
+

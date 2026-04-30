@@ -1,0 +1,1 @@
+Placeholder to be replaced by real files for the google auth relay site hosted in Github Pages.
