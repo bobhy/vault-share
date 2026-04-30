@@ -30,3 +30,7 @@ data.json
 # Exclude persistent test resources
 persistent-test-resources
 
+#exclude generated docs files (specifications in specs/ are checked in)
+docs
+
+

@@ -1,0 +1,20 @@
+{
+  "entryPoints": ["src"],
+  "entryPointStrategy": "expand",
+  "out": "docs",
+  "exclude": ["**/*.test.ts", "**/__mocks__/**", "**/test-helpers.ts"],
+  "externalSymbolLinkMappings": {
+    "obsidian": {
+      "addIcon": "#",
+      "Workspace.updateOptions": "#"
+    },
+    "typescript": {
+      "setInterval": "#",
+      "window.setInterval": "#"
+    }
+  },
+  "disableSources": true,
+  "excludePrivate": false,
+  "excludeInternal": false,
+  "tsconfig": "./tsconfig.json"
+}

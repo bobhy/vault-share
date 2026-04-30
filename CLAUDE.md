@@ -92,3 +92,8 @@ Always pass `npm run lint && npm run build && npm test` after making changes.
 ## Obsidian community plugin conventions
 
 See [Sample Plugin README.md](https://github.com/obsidianmd/obsidian-sample-plugin/blob/master/README.md) for additional details about Obsidian community plugins
+
+## Documentation conventions
+- All modules documented with TypeDoc comments
+- Exported identifies appear in generated documentation, but exported identifiers for tests or exported test helpers are explicitly excluded from generated documentation.
+
