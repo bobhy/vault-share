@@ -1,5 +1,6 @@
 import { Env } from './types';
 import { handleCallback, handleTokenRefresh } from './oauth';
+import { privacyPage, termsPage } from './html';
 
 const SECURITY_HEADERS = {
 	'Cache-Control': 'no-store, no-cache',
@@ -30,6 +31,14 @@ export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		const url = new URL(request.url);
 		const path = url.pathname;
+
+		if (path === '/privacy' && request.method === 'GET') {
+			return withHeaders(new Response(privacyPage(), { status: 200, headers: { 'Content-Type': 'text/html;charset=UTF-8' } }));
+		}
+
+		if (path === '/terms' && request.method === 'GET') {
+			return withHeaders(new Response(termsPage(), { status: 200, headers: { 'Content-Type': 'text/html;charset=UTF-8' } }));
+		}
 
 		if (path === '/google/callback' && request.method === 'GET') {
 			const res = await handleCallback(request, env);
