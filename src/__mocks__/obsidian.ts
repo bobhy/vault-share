@@ -182,13 +182,21 @@ export class Vault {
 	}
 }
 
+export class SecretStorage {
+	private store = new Map<string, string>();
+	getSecret(key: string): string | null { return this.store.get(key) ?? null; }
+	setSecret(key: string, value: string): void { this.store.set(key, value); }
+}
+
 export class App {
 	vault: Vault;
+	secretStorage: SecretStorage;
 	fileManager = {
 		trashFile: async (_file: TFile | TFolder) => {},
 	};
 	constructor() {
 		this.vault = new Vault();
+		this.secretStorage = new SecretStorage();
 	}
 }
 

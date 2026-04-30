@@ -21,7 +21,9 @@ npm run test:e2e:cross  # wdio e2e tests, two vaults (multiremote)
 Architecture docs describe general structure and functionality but 
 design and implementation documentation resides in TypeDoc comments in source files.
 
-For Architectural overview, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+For Architectural overview, see [specs/ARCHITECTURE.md](specs/ARCHITECTURE.md).
+
+Enhancement and feature design specs live in [specs/](specs/).
 
 ## Project conventions
 

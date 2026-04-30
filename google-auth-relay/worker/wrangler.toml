@@ -1,0 +1,13 @@
+name = "vault-share-auth"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# No custom domain configured — worker is served on the free workers.dev subdomain.
+# To add a custom domain later:
+#   routes = [{ pattern = "your-domain.example.com", custom_domain = true }]
+
+[vars]
+# TODO: replace with the client ID from your Google Cloud OAuth2 web application credential.
+GOOGLE_CLIENT_ID = "TODO"
+# TODO: replace with your actual workers.dev subdomain after first deploy (npx wrangler deploy --dry-run).
+GOOGLE_REDIRECT_URI = "https://vault-share-auth.TODO.workers.dev/google/callback"

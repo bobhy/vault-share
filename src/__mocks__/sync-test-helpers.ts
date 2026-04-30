@@ -18,4 +18,9 @@ export function readBuffer(content: ArrayBuffer): string {
 // TODO: implement createMockFs() when IFileSystem is defined in src/fs/interface.ts
 // TODO: implement createMockStateStore() when SyncStateStore is defined in src/sync/state.ts
 // TODO: implement addFile() when FileEntity is defined
-// TODO: implement mockSettings() when VaultShareSettings is defined in src/settings.ts
+import { DEFAULT_SETTINGS, VaultShareSettings } from '../settings';
+
+/** Return a complete VaultShareSettings object with optional overrides. */
+export function mockSettings(overrides: Partial<VaultShareSettings> = {}): VaultShareSettings {
+	return Object.assign({}, DEFAULT_SETTINGS, overrides);
+}

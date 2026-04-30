@@ -34,5 +34,6 @@ export default tseslint.config(
 		"wdio.conf.mts",
 		"wdio.multiremote.conf.mts",
 		"tests/wdio/**",
+		"google-auth-relay/**",
 	]),
 );
