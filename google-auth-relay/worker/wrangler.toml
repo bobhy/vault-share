@@ -7,7 +7,6 @@ compatibility_date = "2024-12-01"
 #   routes = [{ pattern = "your-domain.example.com", custom_domain = true }]
 
 [vars]
-# TODO: replace with the client ID from your Google Cloud OAuth2 web application credential.
-GOOGLE_CLIENT_ID = "TODO"
+GOOGLE_CLIENT_ID = "535881224719-5qvscbujq78mpvne1rp3im0cg5cdcu4c.apps.googleusercontent.com"
 # TODO: replace with your actual workers.dev subdomain after first deploy (npx wrangler deploy --dry-run).
-GOOGLE_REDIRECT_URI = "https://vault-share-auth.TODO.workers.dev/google/callback"
+GOOGLE_REDIRECT_URI = "https://vault-share-auth.bob-hyman.workers.dev/google/callback"
