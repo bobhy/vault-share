@@ -16,7 +16,9 @@
 		"test:e2e:cross": "npm run build && wdio run wdio.multiremote.conf.mts",
 		"docs": "typedoc && npm run docs --prefix google-auth-relay/worker",
 		"new-credential": "node new-credential.mjs",
-		"deploy": "node deploy.mjs"
+		"deploy": "node deploy.mjs",
+		"playground:googleDrive:read": "vitest run --config vitest.playground.config.ts tests/playground/gdrive-read.playground.ts",
+		"playground:googleDrive:write": "vitest run --config vitest.playground.config.ts tests/playground/gdrive-write.playground.ts"
 	},
 	"keywords": [],
 	"license": "MIT",

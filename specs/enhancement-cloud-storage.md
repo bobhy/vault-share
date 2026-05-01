@@ -81,10 +81,12 @@ const RELAY_URL = "https://<worker-name>.<account>.workers.dev";
 
 ### interactive playground - Google Drive
 These commands and dialogs demonstrate cloud storage access, but will not be included in the actual release of the plug in.
-- persistent playground vault: path `persistentTestResources/playground-googleDrive`, is reused across runs.
+The playground need not to run within Obsidian, but it must exercise the Google Drive classes unmodified.
+So it can be implemented as mocks for Obsidian APIs that use NodeJS or other non-Obsidian APIs to do real network and file IO.
+- persistent playground: path `persistentTestResources/playground-googleDrive`, is reused across runs.  
 - invoked by NPM scripts of pattern: `npm run playground:...`.
 - `npm run playground:googleDrive:read`
-    Reads cloud storage file to specified note in test vault
+    Reads cloud storage file to specified note in test folder
     - opens "Read File" dialog
         - "Drive folder": read only.  Shows the currently configured drive folder path in settings.
         - "Drive file" field, a select box populated with all the files present in the selected Drive folder.
@@ -92,9 +94,9 @@ These commands and dialogs demonstrate cloud storage access, but will not be inc
             If the named note exists, it is overwritten with the contents of the Drive file.
         - "Submit" and "Cancel" buttons: Submit actually reads the drive file and writes the note, displaying any error message that occurs.
 - `npm run playground:googleDrive:write`
-    Writes cloud storage file from specified note in test vault
+    Writes cloud storage file from specified note in test folder
     - "Drive folder": read only.  Shows the currently configured drive folder path in settings.
-    - "Note to read" field, select box populated with all the notes present in the test vault
+    - "Note to read" field, select box populated with all the notes present in the test folder
     - "Drive file" field, user enters name of cloud file to create or overwrite.
         If drive file doesn't currently exist, it is created.  Otherwise, it is overwritten.
     - "Submit" and "Cancel" buttons: Submit actually reads the note and writes the drive file, displaying any error message that occurs.
