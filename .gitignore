@@ -21,6 +21,9 @@ main.js
 # wdio e2e token (written by npm run setup:e2e:wdio)
 .e2e-refresh-token
 
+# Playground Drive session cache — contains OAuth tokens, never commit
+persistentTestResources/playground-gdrive-secrets.json
+
 # obsidian
 data.json
 
