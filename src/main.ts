@@ -12,6 +12,7 @@ export default class VaultSharePlugin extends Plugin {
 	settings: VaultShareSettings = { ...DEFAULT_SETTINGS };
 	auth!: GDriveAuth;
 	api!: GDriveApi;
+	settingTab!: VaultShareSettingTab;
 
 	async onload() {
 		this.auth = new GDriveAuth(this.app);
@@ -27,12 +28,14 @@ export default class VaultSharePlugin extends Plugin {
 				await this.auth.handleAuthCallback(params);
 				this.auth.saveToSecretStorage();
 				new Notice('Google Drive connected.');
+				this.settingTab.display();
 			} catch (err) {
 				new Notice(`Connection failed: ${err instanceof Error ? err.message : String(err)}`);
 			}
 		});
 
-		this.addSettingTab(new VaultShareSettingTab(this.app, this));
+		this.settingTab = new VaultShareSettingTab(this.app, this);
+		this.addSettingTab(this.settingTab);
 	}
 
 	onunload() {}

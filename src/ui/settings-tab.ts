@@ -47,10 +47,10 @@ export class VaultShareSettingTab extends PluginSettingTab {
 					.onClick(async () => {
 						if (this.plugin.auth.isAuthenticated) {
 							await this.plugin.disconnect();
+							this.display();
 						} else {
 							await this.plugin.connect();
 						}
-						this.display();
 					}),
 			);
 	}
