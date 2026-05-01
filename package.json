@@ -14,7 +14,9 @@
 		"setup:e2e:wdio": "node --import jiti/register tests/wdio/setup-wdio-token.ts",
 		"test:e2e:single": "npm run build && wdio run wdio.conf.mts",
 		"test:e2e:cross": "npm run build && wdio run wdio.multiremote.conf.mts",
-		"docs": "typedoc && npm run docs --prefix google-auth-relay/worker"
+		"docs": "typedoc && npm run docs --prefix google-auth-relay/worker",
+		"new-credential": "node new-credential.mjs",
+		"deploy": "node deploy.mjs"
 	},
 	"keywords": [],
 	"license": "MIT",
