@@ -118,3 +118,14 @@ The `drive.file` scope grants access to every Drive file vault-share has ever cr
 ### Documentation
 Add a section in [ARCHITECTURE.md](./ARCHITECTURE.md) describing the Google Drive module: its classes, the OAuth flow, and the relay's role.
 Provide TypeDoc in the source files describing the public interfaces of exported classes.
+
+### Status Messasges
+
+hese events produce status messages
+
+| event | status bar text |
+| ----- | --------------- |
+| new connection  | Connected to group vault `<folder>` |
+| normal disconnect | Disconnected from group vault `<folder>` |
+| authentication or token refresh error | Auth error connecting to group vault `<folder>` |
+| connection dropped (non-auth) | Lost connection to group vault `<folder>` |
