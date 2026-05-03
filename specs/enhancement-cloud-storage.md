@@ -11,7 +11,7 @@ A module containing one or more classes to interact with Google Drive.
 The plugin currently targets Google Drive, but might in the future be extended to support MSFT OneDrive or DropBox.
 For now, we won't implement an abstract interface because we don't know the proper abstractions.  When we choose to support another cloud storage provider, we'll design that abstraction and implement it for each provider.
 
-#### CRUD on cloud folders and files.  
+#### CRUD on cloud folders and files  
 Allows the plugin to create, delete, read and write both folders and files in Google Drive.
 
 - Read and write whole files: don't depend on any partial read or collaborative update capabilities that Google Drive may have.
@@ -75,6 +75,7 @@ const RELAY_URL = "https://<worker-name>.<account>.workers.dev";
     - a field to specify an arbitrary Drive folder path.  Normal case is this folder will be created by the plugin, and it will therefore have access.
     If an existing folder is specified, it must have been created by some app using the same OAuth2 credential in the past, so plugin should still have access.
     **Folder path format:** slash-separated folder names (forward or backward slash accepted), must begin with a separator.  The root is the provider's top-level personal folder: `My Drive` for Google Drive, `My files` for MSFT OneDrive; Dropbox natively uses forward-slash paths with the same convention.  Example: `/vault-share/shared`.  The plugin resolves the path to a provider file ID at connect time by walking the hierarchy, creating any missing segments.
+    The path may be a shortcut or other link to the actual folder to operate on, plugin will coerce as necessary.
     - a toggle button that alternates between "Connect" and "Disconnect" states:
         - **Connect:** initiates the OAuth flow, resolves the folder path to a Drive file ID, and confirms read/write access.  The file ID is retained for the duration of the connection.  On success the button label changes to "Disconnect".
         - **Disconnect:** revokes the stored tokens via Google's revocation endpoint, clears all token entries from `app.secretStorage`, and resets the button label to "Connect".
