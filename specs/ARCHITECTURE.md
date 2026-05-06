@@ -7,8 +7,8 @@ This project is "Vault Sync".  Prior work focused on the *mechanism* (syncing), 
 The idea of this project is to allow users to *share* an Obsidian Vault, either among multiple devices owned by the same user, or among multiple users (and their multiple devices).
 This name is not currently trademarked, but can be copyrighted.
 
-In contexts where Obsidian is implicit, e.g within the Obsidian vault and plugins repo, the name should be spelled "vault-sync".
-In general contexts (perhaps a folder name in a user's Cloud storage service), the name should be spelled "obsidian-vault-sync".
+In contexts where Obsidian is implicit, e.g within the Obsidian vault and plugins repo, the name should be spelled "vault-share".
+In general contexts (perhaps a folder name in a user's Cloud storage service), the name should be spelled "obsidian-vault-share".
 
 ## Vision
 Primary goal is to allow users to *share* an Obsidian vault across multiple devices and multiple users.  
@@ -35,26 +35,27 @@ Designed for testability, both unit tests and end to end tests, some of which ar
 The plugin generates a continuous log stream which has configurable filter based on message severity.
 By default, the log is written to the javascript console, where it is viewable (on some plaforms) by obsidian-cli.
 
-In addition, the same log stream is written to a circular buffer which can be displayed in the right sidebar (via `.ensureSideLeaf()`) when configured by user.  When active, new messages appear at the bottom of the sidebar and old ones scroll off the top.
+In addition, the same log stream is written to the right sidebar (via `.ensureSideLeaf()`) when configured by user.  
+When active, new messages appear at the bottom of the sidebar and older ones scroll off the top.
 
-Logging has these settings:
+#### Settings
 
-In Setting section "Logging":
-
-| setting | type / units | default | description |
+| Setting | Type / units | Default | Description |
 | ------- | ------------ | --------| ------------ |
-| Log Severity | enum (Error,Warning,Info, Debug) | Warning | Don't log messages with lesser severity |
-| Log to Sidebar | bool | false | Display log in sidebar |
-| Sidebar buffer | int / messages | 100 | Max number of log messages to display in sidebar |
+| logSeverity | enum {DEBUG,INFO, WARNING, ERROR} | WARNING | severity of log message to display |
+| logToSidebar | bool | FALSE | Display recent log messages in new tab in right sidebar |
+| logHorizon | int | 1000 | Number of most recent log entries to display in sidebar if enabled. |
 
-### Error handling
+### Error and User confirmation popups
+
 - Non-recoverable errors display a modal popup with a "Quit" button.  Clicking Quit causes the plugin to do best-effort cleanup and terminate.
 - *Recoverable* errors display a modal popup with a "Continue" and a "Quit" button.  Clicking Continue just closes the modal.  Clicking Quit causes the plugin to do normal cleanup and to terminate.  
-- Warnings or unusual successes are simply written to the plugin log at Warning or 
+- Warnings or unusual successes are simply written to the plugin log at Warning or Info severity and do not generate modals or toasts.
+- Situations requiring user confirmation, like recoverable errors, display a modal popup with a "Continue" and "Quit" button. The confirmation only applies to the specific situation being described by the popup.  Clicking "quit" aborts that particular process (not the whole plugin), and clicking "continue" allows it to proceed normally.  For example: the plugin can be configured to ask for confirmation before modifying or deleting "too many" files in a synchronization pass.  Clicking Quit aborts the synchronization pass without modifying them; clicking Continue allows the files to be modified.
 
-### Status Bar
+### User awareness via Status Bar
 
 Rather than display distracting toasts, Vault Share displays routine informational messages in the status bar.  
 These are concise and remain in the status bar till replaced by another.
 
-Events causing a status bar message can also produce a more detailed Info log entry.
+Events causing a status bar message generally also produce a detailed Info log entry.

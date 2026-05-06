@@ -76,6 +76,7 @@ const RELAY_URL = "https://<worker-name>.<account>.workers.dev";
     If an existing folder is specified, it must have been created by some app using the same OAuth2 credential in the past, so plugin should still have access.
     **Folder path format:** slash-separated folder names (forward or backward slash accepted), must begin with a separator.  The root is the provider's top-level personal folder: `My Drive` for Google Drive, `My files` for MSFT OneDrive; Dropbox natively uses forward-slash paths with the same convention.  Example: `/vault-share/shared`.  The plugin resolves the path to a provider file ID at connect time by walking the hierarchy, creating any missing segments.
     The path may be a shortcut or other link to the actual folder to operate on, plugin will coerce as necessary.
+    Default for this field is the name of the local Obsidian vault.
     - a toggle button that alternates between "Connect" and "Disconnect" states:
         - **Connect:** initiates the OAuth flow, resolves the folder path to a Drive file ID, and confirms read/write access.  The file ID is retained for the duration of the connection.  On success the button label changes to "Disconnect".
         - **Disconnect:** revokes the stored tokens via Google's revocation endpoint, clears all token entries from `app.secretStorage`, and resets the button label to "Connect".
