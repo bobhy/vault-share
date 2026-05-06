@@ -1,22 +1,18 @@
 import type { SyncStore } from './store';
 
 /**
- * Return the stable per-device client ID.
- * Prefers a sanitized OS hostname; falls back to a stored UUID.
- * The UUID is generated on first call and persisted in SyncStore.
- * Survives plugin uninstall/reinstall because the IDB database persists.
+ * Return the stable per-vault client ID.
+ * Generated as a UUID v4 on first call and persisted in SyncStore,
+ * so each vault installation gets a unique identity even when two vaults
+ * run on the same device.
  */
 export async function resolveClientId(store: SyncStore): Promise<string> {
 	const stored = await store.getClientId();
 	if (stored) return stored;
 
-	const id = deriveClientId();
+	const id = generateUUID();
 	await store.putClientId(id);
 	return id;
-}
-
-function deriveClientId(): string {
-	return generateUUID();
 }
 
 function generateUUID(): string {
