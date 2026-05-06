@@ -43,6 +43,7 @@ export async function singleFileSync(
 		if (actions.length === 0) return;
 
 		const action = actions[0]!;
+		ctx.logger.debug(`sync ${action.path}: ${action.type}`);
 		const overlay = showSyncOverlay(path, workspace);
 
 		try {

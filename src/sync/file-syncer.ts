@@ -69,13 +69,17 @@ export async function syncOneFile(
 		case 'conflict': {
 			const strategy = ctx.settings().fileConflict;
 			const conflictResult = await resolveConflict(action, strategy, ctx);
-			if (conflictResult.merged) {
-				const mergedContent = await ctx.localFs.read(action.path);
+			const resolvedInPlace = conflictResult.merged
+				|| (!conflictResult.localConflictPath && !conflictResult.remoteConflictPath);
+			if (resolvedInPlace) {
+				// Merged or Use Newer: both sides now agree on the original path.
+				const content = await ctx.localFs.read(action.path);
 				const localSide = ctx.localFs.stat(action.path);
 				await updateRecord(action, ctx, localSide?.mtime ?? 0);
-				await ctx.store.putContent(action.path, mergedContent);
+				await ctx.store.putContent(action.path, content);
 			} else {
-				// Conflict files were created — remove the original record.
+				// Keep Both or delete-conflict: original path is gone; conflict files
+				// already have their own records written by resolveConflict.
 				await ctx.store.deleteRecord(action.path);
 			}
 			return {

@@ -1,5 +1,5 @@
 {
-	"name": "vault-sync",
+	"name": "vault-share",
 	"version": "0.1.0",
 	"description": "Share Obsidian vaults between devices and users by syncing through Google Drive.",
 	"main": "main.js",

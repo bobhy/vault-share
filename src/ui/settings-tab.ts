@@ -238,6 +238,22 @@ export class VaultShareSettingTab extends PluginSettingTab {
 					}),
 			);
 
+		new Setting(containerEl)
+			.setName('Clear sync history')
+			.setDesc(
+				'Forget all sync records. The next bulk sync will re-reconcile every file ' +
+				'with Drive as if starting fresh.',
+			)
+			.addButton(btn =>
+				btn
+					.setButtonText('Clear history')
+					.setWarning()
+					.onClick(async () => {
+						await this.plugin.clearSyncHistory();
+						this.display();
+					}),
+			);
+
 		// --- Statistics (read-only) ---
 		new Setting(containerEl).setName('Statistics').setHeading();
 
@@ -262,13 +278,12 @@ export class VaultShareSettingTab extends PluginSettingTab {
 
 			new Setting(containerEl)
 				.setName('Reset statistics')
-				.setDesc('Clear sync history and reset all counters.')
+				.setDesc('Reset all counters to zero.')
 				.addButton(btn =>
 					btn
 						.setButtonText('Reset')
 						.setWarning()
 						.onClick(async () => {
-							await this.plugin.store?.clearAll();
 							await this.plugin.statsTracker?.reset();
 							this.display();
 						}),

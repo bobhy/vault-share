@@ -78,6 +78,7 @@ export class BulkSync {
 
 			// Process one file at a time, yielding between each.
 			for (const action of actions) {
+				this.ctx.logger.debug(`sync ${action.path}: ${action.type}`);
 				const fileResult = await syncOneFile(action, this.ctx, hasHistory);
 
 				if (fileResult.changed) {

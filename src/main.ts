@@ -148,6 +148,12 @@ export default class VaultSharePlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: 'clear-sync-history',
+			name: 'Clear sync history',
+			callback: () => { void this.clearSyncHistory(); },
+		});
+
 		// 16. Start scheduler (triggers initial bulk sync)
 		this.scheduler.start();
 		this.scheduler.triggerBulkSync();
@@ -199,6 +205,12 @@ export default class VaultSharePlugin extends Plugin {
 			this.driveFolderId = await this.resolveDriveFolder().catch(() => '');
 			this.scheduler?.triggerBulkSync();
 		}
+	}
+
+	/** Clear sync records and cached content, then trigger a fresh bulk pass. */
+	async clearSyncHistory(): Promise<void> {
+		await this.store?.clearHistory();
+		this.scheduler?.triggerBulkSync();
 	}
 
 	/** Rebuild ExcludeMatcher after excludeRules change. */

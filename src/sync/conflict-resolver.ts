@@ -137,10 +137,33 @@ async function resolveKeepBoth(
 		await ctx.localFs.write(remoteConflictPath, remoteContent);
 	}
 
-	// Push both conflict files to Drive.
-	await ctx.driveFs.write(rootFolderId, localConflictPath, localContent, ctx.statsTracker, sampler);
+	// Push both conflict files to Drive and store sync records so the next pass
+	// sees them as already-synced (absent records would re-trigger a conflict loop).
+	const syncedAt = Date.now();
+	const localDriveSide = await ctx.driveFs.write(rootFolderId, localConflictPath, localContent, ctx.statsTracker, sampler);
+	const localLocalSide = ctx.localFs.stat(localConflictPath);
+	await ctx.store.putRecord({
+		path: localConflictPath,
+		driveFileId: localDriveSide.driveFileId,
+		localMtime: localLocalSide?.mtime ?? 0,
+		remoteMtime: localDriveSide.mtime,
+		localSize: localLocalSide?.size ?? 0,
+		remoteSize: localDriveSide.size,
+		syncedAt,
+	});
+
 	if (remoteContent) {
-		await ctx.driveFs.write(rootFolderId, remoteConflictPath, remoteContent, ctx.statsTracker, sampler);
+		const remoteDriveSide = await ctx.driveFs.write(rootFolderId, remoteConflictPath, remoteContent, ctx.statsTracker, sampler);
+		const remoteLocalSide = ctx.localFs.stat(remoteConflictPath);
+		await ctx.store.putRecord({
+			path: remoteConflictPath,
+			driveFileId: remoteDriveSide.driveFileId,
+			localMtime: remoteLocalSide?.mtime ?? 0,
+			remoteMtime: remoteDriveSide.mtime,
+			localSize: remoteLocalSide?.size ?? 0,
+			remoteSize: remoteDriveSide.size,
+			syncedAt,
+		});
 	}
 
 	// Delete the original from Drive.
@@ -210,17 +233,39 @@ async function resolveDeleteConflict(
 	const sampler = { value: false };
 	const placeholderBytes = new TextEncoder().encode(PLACEHOLDER_TEXT).buffer;
 
+	const syncedAt = Date.now();
+
 	if (!action.local) {
 		// Local was deleted; remote was modified. Create placeholder locally.
 		const placeholderPath = buildConflictFilename(path, ctx.clientId, now);
 		await ctx.localFs.write(placeholderPath, placeholderBytes);
 		// Push placeholder to Drive so all vaults see it.
-		await ctx.driveFs.write(rootFolderId, placeholderPath, placeholderBytes, ctx.statsTracker, sampler);
+		const driveSide = await ctx.driveFs.write(rootFolderId, placeholderPath, placeholderBytes, ctx.statsTracker, sampler);
+		const localSide = ctx.localFs.stat(placeholderPath);
+		await ctx.store.putRecord({
+			path: placeholderPath,
+			driveFileId: driveSide.driveFileId,
+			localMtime: localSide?.mtime ?? 0,
+			remoteMtime: driveSide.mtime,
+			localSize: localSide?.size ?? 0,
+			remoteSize: driveSide.size,
+			syncedAt,
+		});
 	} else {
 		// Remote was deleted; local was modified. Create placeholder on Drive.
 		const placeholderPath = buildConflictFilename(path, 'group', now);
 		await ctx.localFs.write(placeholderPath, placeholderBytes);
-		await ctx.driveFs.write(rootFolderId, placeholderPath, placeholderBytes, ctx.statsTracker, sampler);
+		const driveSide = await ctx.driveFs.write(rootFolderId, placeholderPath, placeholderBytes, ctx.statsTracker, sampler);
+		const localSide = ctx.localFs.stat(placeholderPath);
+		await ctx.store.putRecord({
+			path: placeholderPath,
+			driveFileId: driveSide.driveFileId,
+			localMtime: localSide?.mtime ?? 0,
+			remoteMtime: driveSide.mtime,
+			localSize: localSide?.size ?? 0,
+			remoteSize: driveSide.size,
+			syncedAt,
+		});
 	}
 
 	ctx.statsTracker.recordDeleteConflict();

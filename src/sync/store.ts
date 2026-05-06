@@ -138,6 +138,15 @@ export class SyncStore {
 		});
 	}
 
+	/** Clear sync records and cached content without touching stats. */
+	clearHistory(): Promise<void> {
+		return this.idb.runTransaction([STORE_RECORDS, STORE_CONTENT], 'readwrite', (tx) => {
+			tx.objectStore(STORE_RECORDS).clear();
+			tx.objectStore(STORE_CONTENT).clear();
+			return () => undefined;
+		});
+	}
+
 	/** Clear sync history (records + content) and reset stats. */
 	async clearAll(): Promise<void> {
 		await this.idb.runTransaction([STORE_RECORDS, STORE_CONTENT, STORE_STATS], 'readwrite', (tx) => {
