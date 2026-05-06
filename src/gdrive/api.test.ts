@@ -43,6 +43,24 @@ describe('GDriveApi', () => {
 			spyRequestUrl().mockResolvedValue(makeMockResponse({ status: 401, json: {} }));
 			await expect(api.listChildren('p')).rejects.toMatchObject({ code: 'auth-expired' });
 		});
+
+		it('follows nextPageToken across multiple pages', async () => {
+			const api = makeApi();
+			const page1 = makeFile({ id: 'f1', name: 'a.md' });
+			const page2 = makeFile({ id: 'f2', name: 'b.md' });
+			const spy = spyRequestUrl()
+				.mockResolvedValueOnce(makeMockResponse({ json: { files: [page1], nextPageToken: 'tok1' } }))
+				.mockResolvedValueOnce(makeMockResponse({ json: { files: [page2] } }));
+
+			const files = await api.listChildren('folder1');
+
+			expect(files).toHaveLength(2);
+			expect(files[0]!.id).toBe('f1');
+			expect(files[1]!.id).toBe('f2');
+			expect(spy).toHaveBeenCalledTimes(2);
+			const secondUrl = (spy.mock.calls[1]![0] as { url: string }).url;
+			expect(secondUrl).toContain('pageToken=tok1');
+		});
 	});
 
 	describe('readFile', () => {

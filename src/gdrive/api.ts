@@ -39,20 +39,31 @@ function assertDriveFileList(v: unknown): asserts v is DriveFileList {
 export class GDriveApi {
 	constructor(private readonly auth: GDriveAuth) {}
 
-	/** List files (and folders) that are direct children of parentId. */
+	/** List files (and folders) that are direct children of parentId, handling pagination. */
 	async listChildren(parentId: string): Promise<DriveFile[]> {
-		const token = await this.auth.getAccessToken();
 		const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`);
-		const fields = encodeURIComponent('files(id,name,mimeType,modifiedTime)');
-		const response = await requestUrl({
-			url: `${DRIVE_API}/files?q=${q}&fields=${fields}&pageSize=1000`,
-			headers: { Authorization: `Bearer ${token}` },
-			throw: false,
-		});
-		this.throwOnError(response.status);
-		const json: unknown = response.json;
-		assertDriveFileList(json);
-		return json.files;
+		const fields = encodeURIComponent('nextPageToken,files(id,name,mimeType,modifiedTime)');
+		const base = `${DRIVE_API}/files?q=${q}&fields=${fields}&pageSize=1000`;
+
+		const all: DriveFile[] = [];
+		let pageToken: string | undefined;
+
+		do {
+			const token = await this.auth.getAccessToken();
+			const url = pageToken ? `${base}&pageToken=${encodeURIComponent(pageToken)}` : base;
+			const response = await requestUrl({
+				url,
+				headers: { Authorization: `Bearer ${token}` },
+				throw: false,
+			});
+			this.throwOnError(response.status);
+			const json: unknown = response.json;
+			assertDriveFileList(json);
+			all.push(...json.files);
+			pageToken = json.nextPageToken;
+		} while (pageToken);
+
+		return all;
 	}
 
 	/** Return a single file's metadata. */

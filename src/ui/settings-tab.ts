@@ -14,11 +14,14 @@ export class VaultShareSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
+		// --- Connection ---
+		new Setting(containerEl).setName('Connection').setHeading();
+
 		new Setting(containerEl)
 			.setName('Drive folder path')
 			.setDesc(
 				'Slash-separated path to the shared folder in Google Drive. ' +
-				'Must start with a separator. The folder is created if it does not exist. ' +
+				'Must start with a separator. Created if it does not exist. ' +
 				'Example: /vault-share/shared',
 			)
 			.addText(text =>
@@ -26,13 +29,11 @@ export class VaultShareSettingTab extends PluginSettingTab {
 					.setPlaceholder('/vault-share')
 					.setValue(this.plugin.settings.driveFolderPath)
 					.onChange(async value => {
-						this.plugin.settings.driveFolderPath = value;
-						await this.plugin.saveData(this.plugin.settings);
+						await this.plugin.onDriveFolderPathChange(value);
 					}),
 			);
 
 		const isConnected = this.plugin.auth.isAuthenticated;
-
 		new Setting(containerEl)
 			.setName('Google Drive connection')
 			.setDesc(
@@ -53,5 +54,226 @@ export class VaultShareSettingTab extends PluginSettingTab {
 						}
 					}),
 			);
+
+		// --- Sync ---
+		new Setting(containerEl).setName('Synchronization').setHeading();
+
+		new Setting(containerEl)
+			.setName('Conflict resolution')
+			.setDesc('How to handle files modified on two devices before syncing.')
+			.addDropdown(drop =>
+				drop
+					.addOption('Merge', 'Merge (combine changes with conflict markers)')
+					.addOption('Keep Both', 'Keep both (rename both versions)')
+					.addOption('Use Newer', 'Use newer (keep the most recently modified)')
+					.setValue(this.plugin.settings.fileConflict)
+					.onChange(async value => {
+						this.plugin.settings.fileConflict = value as typeof this.plugin.settings.fileConflict;
+						await this.plugin.saveData(this.plugin.settings);
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Exclude rules')
+			.setDesc(
+				'Ordered rules controlling which files are synced. ' +
+				'One rule per line. A ! prefix re-includes a previously excluded path. ' +
+				'Last matching rule wins.',
+			)
+			.addTextArea(area => {
+				area
+					.setPlaceholder('One rule per line')
+					.setValue(this.plugin.settings.excludeRules.join('\n'))
+					.onChange(async value => {
+						this.plugin.settings.excludeRules = value.split('\n');
+						await this.plugin.saveData(this.plugin.settings);
+						this.plugin.rebuildExcludeMatcher();
+					});
+				area.inputEl.rows = 6;
+			});
+
+		new Setting(containerEl)
+			.setName('Bulk sync interval')
+			.setDesc('How often (in seconds) a full vault sync runs in the background.')
+			.addText(text =>
+				text
+					.setValue(String(this.plugin.settings.bulkSyncPoll))
+					.onChange(async value => {
+						const n = parseInt(value, 10);
+						if (!isNaN(n) && n > 0) {
+							this.plugin.settings.bulkSyncPoll = n;
+							await this.plugin.saveData(this.plugin.settings);
+						}
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Open file poll interval')
+			.setDesc('How often (in seconds) an open visible file is checked for remote changes.')
+			.addText(text =>
+				text
+					.setValue(String(this.plugin.settings.openFilePoll))
+					.onChange(async value => {
+						const n = parseInt(value, 10);
+						if (!isNaN(n) && n > 0) {
+							this.plugin.settings.openFilePoll = n;
+							await this.plugin.saveData(this.plugin.settings);
+						}
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Edit holddown')
+			.setDesc('Seconds to wait after the last keystroke before syncing an edited file.')
+			.addText(text =>
+				text
+					.setValue(String(this.plugin.settings.openFileChangeHoldDown))
+					.onChange(async value => {
+						const n = parseInt(value, 10);
+						if (!isNaN(n) && n > 0) {
+							this.plugin.settings.openFileChangeHoldDown = n;
+							await this.plugin.saveData(this.plugin.settings);
+						}
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Modification confirmation threshold')
+			.setDesc(
+				'Show a confirmation dialog when bulk sync would modify more than this ' +
+				'percentage of vault files (0 = always confirm, 100 = never confirm).',
+			)
+			.addText(text =>
+				text
+					.setValue(String(this.plugin.settings.fileModificationConfirmationThreshold))
+					.onChange(async value => {
+						const n = parseInt(value, 10);
+						if (!isNaN(n) && n >= 0 && n <= 100) {
+							this.plugin.settings.fileModificationConfirmationThreshold = n;
+							await this.plugin.saveData(this.plugin.settings);
+						}
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Minimum files for confirmation')
+			.setDesc('Skip the modification confirmation when the vault has fewer than this many syncable files.')
+			.addText(text =>
+				text
+					.setValue(String(this.plugin.settings.fileModificationConfirmationMin))
+					.onChange(async value => {
+						const n = parseInt(value, 10);
+						if (!isNaN(n) && n >= 0) {
+							this.plugin.settings.fileModificationConfirmationMin = n;
+							await this.plugin.saveData(this.plugin.settings);
+						}
+					}),
+			);
+
+		// --- Logging ---
+		new Setting(containerEl).setName('Logging').setHeading();
+
+		new Setting(containerEl)
+			.setName('Log level')
+			.setDesc('Minimum severity of messages written to the log.')
+			.addDropdown(drop =>
+				drop
+					.addOption('DEBUG', 'Debug')
+					.addOption('INFO', 'Info')
+					.addOption('WARNING', 'Warning')
+					.addOption('ERROR', 'Error')
+					.setValue(this.plugin.settings.logSeverity)
+					.onChange(async value => {
+						this.plugin.settings.logSeverity = value as typeof this.plugin.settings.logSeverity;
+						await this.plugin.saveData(this.plugin.settings);
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Show log in sidebar')
+			.setDesc('Display recent log messages in a right-sidebar panel.')
+			.addToggle(toggle =>
+				toggle
+					.setValue(this.plugin.settings.logToSidebar)
+					.onChange(async value => {
+						this.plugin.settings.logToSidebar = value;
+						await this.plugin.saveData(this.plugin.settings);
+						await this.plugin.updateSidebarLogView();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Log history size')
+			.setDesc('Number of most recent log entries to retain for the sidebar view.')
+			.addText(text =>
+				text
+					.setValue(String(this.plugin.settings.logHorizon))
+					.onChange(async value => {
+						const n = parseInt(value, 10);
+						if (!isNaN(n) && n > 0) {
+							this.plugin.settings.logHorizon = n;
+							await this.plugin.saveData(this.plugin.settings);
+						}
+					}),
+			);
+
+		// --- Sync commands ---
+		new Setting(containerEl).setName('Sync control').setHeading();
+
+		const isPaused = this.plugin.scheduler?.isPaused() ?? false;
+		new Setting(containerEl)
+			.setName('Sync status')
+			.setDesc(isPaused ? 'Sync is paused.' : 'Sync is running.')
+			.addButton(btn =>
+				btn
+					.setButtonText(isPaused ? 'Start sync' : 'Pause sync')
+					.onClick(() => {
+						if (isPaused) {
+							this.plugin.scheduler?.setPaused(false);
+							this.plugin.scheduler?.triggerBulkSync();
+						} else {
+							this.plugin.scheduler?.setPaused(true);
+						}
+						this.display();
+					}),
+			);
+
+		// --- Statistics (read-only) ---
+		new Setting(containerEl).setName('Statistics').setHeading();
+
+		const stats = this.plugin.statsTracker?.getCurrent();
+		if (stats) {
+			const fields: Array<[string, string, string | number]> = [
+				['Server clock skew', 'serverClockSkew', `${stats.serverClockSkew} ms`],
+				['Api response time', 'APIResponseTime', `${stats.APIResponseTime} ms`],
+				['Bulk sync passes', 'bulkSyncPasses', stats.bulkSyncPasses],
+				['Single file syncs', 'singleFileSyncCount', stats.singleFileSyncCount],
+				['Files pushed', 'filesPushed', stats.filesPushed],
+				['Files pulled', 'filesPulled', stats.filesPulled],
+				['Files merged', 'filesMerged', stats.filesMerged],
+				['Content conflicts', 'contentConflicts', stats.contentConflicts],
+				['Delete conflicts', 'deleteConflicts', stats.deleteConflicts],
+			];
+			for (const [name, , value] of fields) {
+				new Setting(containerEl)
+					.setName(name)
+					.setDesc(String(value));
+			}
+
+			new Setting(containerEl)
+				.setName('Reset statistics')
+				.setDesc('Clear sync history and reset all counters.')
+				.addButton(btn =>
+					btn
+						.setButtonText('Reset')
+						.setWarning()
+						.onClick(async () => {
+							await this.plugin.store?.clearAll();
+							await this.plugin.statsTracker?.reset();
+							this.display();
+						}),
+				);
+		}
 	}
 }
+
