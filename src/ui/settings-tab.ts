@@ -26,7 +26,7 @@ export class VaultShareSettingTab extends PluginSettingTab {
 			)
 			.addText(text =>
 				text
-					.setPlaceholder('/vault-share')
+					.setPlaceholder(`/${this.plugin.app.vault.getName()}`)
 					.setValue(this.plugin.settings.driveFolderPath)
 					.onChange(async value => {
 						await this.plugin.onDriveFolderPathChange(value);

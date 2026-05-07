@@ -40,7 +40,12 @@ export default class VaultSharePlugin extends Plugin {
 	async onload() {
 		// 1. Settings
 		const stored = await this.loadData() as unknown as Partial<VaultShareSettings>;
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored);
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			{ driveFolderPath: `/${this.app.vault.getName()}` },
+			stored,
+		);
 
 		// 2. Auth + API
 		this.auth = new GDriveAuth(this.app);
