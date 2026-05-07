@@ -102,6 +102,21 @@ export class SyncScheduler {
 	private onFileVisible(path: string): void {
 		if (this.fileStates.has(path)) return;
 		this.fileStates.set(path, { nextRunAt: 0, lastEditAt: 0 });
+		void this.seedBaseContent(path);
+	}
+
+	/**
+	 * Capture the current on-disk bytes as the merge base the first time a file
+	 * becomes visible, before any edits can advance the mtime.  Without this,
+	 * the first merge on a file with no sync history uses an empty base, which
+	 * forces every line into conflict.
+	 */
+	private async seedBaseContent(path: string): Promise<void> {
+		const { store, localFs } = this.deps.ctx;
+		const existing = await store.getContent(path);
+		if (existing) return;
+		const bytes = await localFs.read(path).catch(() => null);
+		if (bytes) await store.putContent(path, bytes);
 	}
 
 	private recomputeVisibleFiles(workspace: Workspace): void {

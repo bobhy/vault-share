@@ -232,3 +232,78 @@ describe('syncOneFile conflict handling', () => {
 		});
 	});
 });
+
+describe('syncOneFile record mtime correctness', () => {
+	let localFs: LocalFs;
+	let localFiles: Map<string, LocalFileEntry>;
+	let driveFs: DriveFsAdapter;
+	let driveFiles: Map<string, DriveFileEntry>;
+	let store: SyncStore;
+	let records: Map<string, SyncRecord>;
+	let ctx: SyncContext;
+
+	beforeEach(() => {
+		({ localFs, files: localFiles } = makeLocalFs());
+		({ driveFs, files: driveFiles } = makeDriveFs());
+		({ store, records } = makeSyncStore());
+
+		ctx = {
+			app: new App(),
+			localFs,
+			driveFs,
+			store,
+			statsTracker: stubStats,
+			settings: () => mockSettings(),
+			clientId: 'test-client-uuid',
+			driveFolderId: () => 'root-folder-id',
+			logger: stubLogger,
+		};
+
+		localFiles.set('note.md', { content: enc('local text'), mtime: 2000, size: 10 });
+		driveFiles.set('note.md', { driveFileId: 'drive-note-1', content: enc('old text'), mtime: 1000 });
+	});
+
+	const pushAction: SyncAction = {
+		type: 'push',
+		path: 'note.md',
+		local:  { path: 'note.md', mtime: 2000, size: 10 },
+		remote: { path: 'note.md', mtime: 1000, size: 8, driveFileId: 'drive-note-1' },
+	};
+
+	it('push: stores local OS mtime as localMtime, not the Drive write timestamp', async () => {
+		await syncOneFile(pushAction, ctx, true);
+
+		const rec = records.get('note.md')!;
+		// If this stores Drive server time instead of 2000, the next poll sees
+		// local as "modified" and loops forever.
+		expect(rec.localMtime).toBe(2000);
+	});
+
+	it('push: stores post-write Drive mtime as remoteMtime, not the pre-write value', async () => {
+		await syncOneFile(pushAction, ctx, true);
+
+		const rec = records.get('note.md')!;
+		// If this stores the stale pre-write 1000 instead of the new Drive mtime,
+		// the next poll sees remote as "modified" and triggers a conflict loop.
+		expect(rec.remoteMtime).not.toBe(1000);
+		expect(rec.remoteMtime).toBeGreaterThan(0);
+	});
+
+	it('merge: stores post-write Drive mtime as remoteMtime, not the pre-write value', async () => {
+		ctx = { ...ctx, settings: () => mockSettings({ fileConflict: 'Merge' }) };
+
+		const conflictAction: SyncAction = {
+			type: 'conflict',
+			path: 'note.md',
+			local:  { path: 'note.md', mtime: 2000, size: 10 },
+			remote: { path: 'note.md', mtime: 1000, size: 8, driveFileId: 'drive-note-1' },
+		};
+
+		await syncOneFile(conflictAction, ctx, true);
+
+		const rec = records.get('note.md')!;
+		expect(rec).toBeDefined();
+		expect(rec.remoteMtime).not.toBe(1000);
+		expect(rec.remoteMtime).toBeGreaterThan(0);
+	});
+});

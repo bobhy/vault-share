@@ -20,9 +20,6 @@ export async function singleFileSync(
 	const rootFolderId = ctx.driveFolderId();
 	if (!rootFolderId) return;
 
-	// Flush in-memory editor content for this path before reading from disk.
-	await ctx.localFs.saveOpenFileContent(path, workspace);
-
 	ctx.statsTracker.recordSingleFileSync();
 
 	try {
@@ -94,18 +91,6 @@ export function showSyncOverlay(path: string, workspace: Workspace): () => void 
 		const el = view.containerEl;
 		const overlay = el.createDiv({ cls: 'vault-share-sync-overlay' });
 		overlay.setText('Syncing…');
-		Object.assign(overlay.style, {
-			position: 'absolute',
-			inset: '0',
-			display: 'flex',
-			alignItems: 'center',
-			justifyContent: 'center',
-			background: 'rgba(var(--background-primary-rgb, 0,0,0), 0.4)',
-			zIndex: '1000',
-			pointerEvents: 'none',
-			fontSize: 'var(--font-ui-medium)',
-			color: 'var(--text-normal)',
-		});
 		overlays.push(overlay);
 	});
 

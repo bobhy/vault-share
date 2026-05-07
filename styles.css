@@ -1,8 +1,48 @@
-/*
+.vault-share-log-container {
+	user-select: text;
+	font-family: var(--font-monospace);
+	font-size: var(--font-smaller);
+	padding: 4px;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.vault-share-log-entry {
+	display: flex;
+	gap: 6px;
+	padding: 1px 0;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
 
-If your plugin does not need CSS, delete this file.
+.vault-share-log-time {
+	color: var(--text-muted);
+	flex-shrink: 0;
+}
 
-*/
+.vault-share-log-severity {
+	flex-shrink: 0;
+}
+
+.vault-share-log-debug    { color: var(--text-muted); }
+.vault-share-log-info     { color: var(--text-normal); }
+.vault-share-log-warning  { color: var(--color-yellow); }
+.vault-share-log-error    { color: var(--color-red); }
+
+.vault-share-log-detail {
+	padding-left: 1em;
+	color: var(--text-muted);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.vault-share-sync-overlay {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: rgba(var(--background-primary-rgb, 0, 0, 0), 0.4);
+	z-index: 1000;
+	pointer-events: none;
+	font-size: var(--font-ui-medium);
+	color: var(--text-normal);
+}

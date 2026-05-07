@@ -29,9 +29,18 @@ export async function syncOneFile(
 
 		case 'push': {
 			const content = await ctx.localFs.read(action.path);
-			const result = await ctx.driveFs.write(rootFolderId, action.path, content, ctx.statsTracker, sampler);
+			const driveSide = await ctx.driveFs.write(rootFolderId, action.path, content, ctx.statsTracker, sampler);
 			ctx.statsTracker.recordPush();
-			await updateRecord(action, ctx, result.mtime);
+			const localSide = action.local ?? ctx.localFs.stat(action.path);
+			await ctx.store.putRecord({
+				path: action.path,
+				driveFileId: driveSide.driveFileId,
+				localMtime: localSide?.mtime ?? 0,
+				remoteMtime: driveSide.mtime,
+				localSize: localSide?.size ?? 0,
+				remoteSize: driveSide.size,
+				syncedAt: Date.now(),
+			});
 			await ctx.store.putContent(action.path, content);
 			return { changed: true, merged: false, hadConflictMarkers: false };
 		}
@@ -73,9 +82,20 @@ export async function syncOneFile(
 				|| (!conflictResult.localConflictPath && !conflictResult.remoteConflictPath);
 			if (resolvedInPlace) {
 				// Merged or Use Newer: both sides now agree on the original path.
+				// Re-stat Drive to get the post-write mtime; action.remote carries the
+				// pre-write value and would make remote appear modified on the next poll.
 				const content = await ctx.localFs.read(action.path);
 				const localSide = ctx.localFs.stat(action.path);
-				await updateRecord(action, ctx, localSide?.mtime ?? 0);
+				const freshRemote = await ctx.driveFs.stat(rootFolderId, action.path);
+				await ctx.store.putRecord({
+					path: action.path,
+					driveFileId: freshRemote?.driveFileId ?? action.remote?.driveFileId ?? '',
+					localMtime: localSide?.mtime ?? 0,
+					remoteMtime: freshRemote?.mtime ?? 0,
+					localSize: localSide?.size ?? 0,
+					remoteSize: freshRemote?.size ?? 0,
+					syncedAt: Date.now(),
+				});
 				await ctx.store.putContent(action.path, content);
 			} else {
 				// Keep Both or delete-conflict: original path is gone; conflict files

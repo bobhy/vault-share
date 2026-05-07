@@ -1,4 +1,4 @@
-import { Notice, Plugin } from 'obsidian';
+import { Notice, Plugin, WorkspaceLeaf } from 'obsidian';
 import { DEFAULT_SETTINGS, VaultShareSettings } from './settings';
 import { GDriveAuth } from './gdrive/auth';
 import { GDriveApi } from './gdrive/api';
@@ -113,7 +113,7 @@ export default class VaultSharePlugin extends Plugin {
 		// 12. Sidebar log view
 		this.registerView(SYNC_LOG_VIEW_TYPE, leaf => new SyncLogView(leaf, this.logger));
 		if (this.settings.logToSidebar) {
-			await this.activateSidebarLogView();
+			this.app.workspace.onLayoutReady(() => { void this.activateSidebarLogView(); });
 		}
 
 		// 13. OAuth callback
@@ -238,10 +238,19 @@ export default class VaultSharePlugin extends Plugin {
 
 	private async activateSidebarLogView(): Promise<void> {
 		const existing = this.app.workspace.getLeavesOfType(SYNC_LOG_VIEW_TYPE);
-		if (existing.length > 0) return;
-		const leaf = this.app.workspace.getRightLeaf(false);
-		if (leaf) {
-			await leaf.setViewState({ type: SYNC_LOG_VIEW_TYPE, active: true });
+		if (existing[0]) {
+			await this.app.workspace.revealLeaf(existing[0]);
+			return;
 		}
+		// getRightLeaf(false) throws when the right sidebar panel hasn't been created yet.
+		let leaf: WorkspaceLeaf | null = null;
+		try {
+			leaf = this.app.workspace.getRightLeaf(false);
+		} catch {
+			return;
+		}
+		if (!leaf) return;
+		await leaf.setViewState({ type: SYNC_LOG_VIEW_TYPE, active: true });
+		await this.app.workspace.revealLeaf(leaf);
 	}
 }

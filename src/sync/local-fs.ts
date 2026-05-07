@@ -1,5 +1,5 @@
-import type { App, Workspace } from 'obsidian';
-import { MarkdownView, TFile, TFolder } from 'obsidian';
+import type { App } from 'obsidian';
+import { TFile, TFolder } from 'obsidian';
 import type { FileSide } from './types';
 import type { ExcludeMatcher } from './exclude';
 
@@ -59,27 +59,6 @@ export class LocalFs {
 		const file = this.getFileOrThrow(oldPath);
 		await this.ensureParentFolder(newPath);
 		await this.app.fileManager.renameFile(file, newPath);
-	}
-
-	/**
-	 * Flush in-memory editor content for the given path to disk.
-	 * Iterates all open leaves and saves any whose displayed file matches path.
-	 * This ensures unsaved edits are included in the next sync push.
-	 */
-	async saveOpenFileContent(path: string, workspace: Workspace): Promise<void> {
-		const saves: Promise<void>[] = [];
-		workspace.iterateAllLeaves(leaf => {
-			const view = leaf.view;
-			if (!(view instanceof MarkdownView)) return;
-			if (view.file?.path !== path) return;
-			// getMode() returns 'source' or 'preview'; editor is only available in source mode.
-			if (view.getMode() === 'source') {
-				const content = view.editor.getValue();
-				const file = view.file;
-				if (file) saves.push(this.app.vault.modify(file, content));
-			}
-		});
-		await Promise.all(saves);
 	}
 
 	private async walk(
