@@ -20,8 +20,8 @@ export class VaultShareSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName('Drive folder path')
 			.setDesc(
-				'Slash-separated path to the shared folder in Google Drive. ' +
-				'Must start with a separator. Created if it does not exist. ' +
+				'Slash-separated path to the group vault folder in Google Drive. ' +
+				'Must start with a separator. Full path is created if it does not exist. ' +
 				'Example: /vault-share/shared',
 			)
 			.addText(text =>
