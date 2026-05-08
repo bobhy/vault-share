@@ -133,12 +133,27 @@ export const config: WebdriverIO.MultiremoteConfig = {
 		);
 	},
 
-	before: async (_caps, _specs, _b) => {
-		// In multiremote mode, executeObsidian is not available on instances from
-		// getInstance() at this lifecycle stage. Vault initialization (token injection)
-		// is handled in the test file's own before() hook instead.
-		// Here we only ensure the token is in env so both the test's before() and
-		// the Drive API helpers can access it.
+	before: async (caps, _specs, b) => {
+		// wdio-obsidian-service skips its before() in multiremote because the top-level
+		// capabilities lack wdio:obsidianOptions, so executeObsidian is never added to
+		// sub-instances. Polyfill it on each instance using the same script the service uses.
+		const mr = b as WebdriverIO.MultiRemoteBrowser;
+		for (const name of Object.keys(caps as Record<string, unknown>)) {
+			const instance = mr.getInstance(name) as WebdriverIO.Browser;
+			(instance as unknown as Record<string, unknown>).executeObsidian =
+				async (func: (...args: unknown[]) => unknown, ...params: unknown[]) =>
+					instance.execute(
+						`const require = window.wdioObsidianService().require;
+						try {
+							return await (${func.toString()}).call(null, window.wdioObsidianService(), ...arguments);
+						} catch (e) {
+							if ("code" in e && typeof e.code != "number") { delete e.code; }
+							throw e;
+						}`,
+						...params,
+					);
+		}
+
 		let refreshToken = process.env["VAULT_SHARE_REFRESH_TOKEN"];
 		if (!refreshToken) {
 			try {

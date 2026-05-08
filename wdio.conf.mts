@@ -7,6 +7,13 @@ import { readFile } from "node:fs/promises";
 
 // Single-vault e2e tests. Run with: npm run test:e2e:single
 // One-time token setup:  npm run setup:e2e:wdio
+
+/** Drive folder used by single-vault e2e tests (isolated from production vaults). */
+export const SINGLE_VAULT_DRIVE_FOLDER = "/vault-share-e2e-single";
+
+/** Drive folder used by cross-vault e2e tests. Both vaults must share this path. */
+export const CROSS_VAULT_DRIVE_FOLDER = "/vault-share-e2e-cross";
+
 export const config: WebdriverIO.Config = {
 	runner: "local",
 	logLevel: "warn",
@@ -53,18 +60,80 @@ export const config: WebdriverIO.Config = {
 			}
 		}
 
-		await injectTokenAndReload(br, refreshToken);
+		await injectAndConfigure(br, refreshToken, SINGLE_VAULT_DRIVE_FOLDER);
 
-		// Cache the token for Drive API calls in the test helpers.
+		// Cache the token so Drive API helpers in test files can access it.
 		process.env["VAULT_SHARE_REFRESH_TOKEN"] = refreshToken;
 	},
 };
 
-async function injectTokenAndReload(br: WebdriverIO.Browser, refreshToken: string) {
-	// Inject the refresh token into secretStorage.
-	// wdio uses a fresh --user-data-dir so secretStorage is empty at plugin load time.
-	// Extend this function when the plugin backend is implemented.
-	await br.executeObsidian(async ({ app }, token) => {
+/**
+ * Inject a GDrive refresh token and fully configure the vault-share plugin for
+ * testing.  Because wdio uses a fresh --user-data-dir, secretStorage is empty
+ * when onload() runs.  This function:
+ *   1. Writes the token into secretStorage.
+ *   2. Calls loadFromSecretStorage() so the already-loaded plugin picks it up.
+ *   3. Sets the Drive folder path and resolves it so bulk-sync can run.
+ */
+export async function injectAndConfigure(
+	br: WebdriverIO.Browser,
+	refreshToken: string,
+	driveFolderPath: string,
+): Promise<void> {
+	await br.executeObsidian(async ({ app }, token, folderPath) => {
 		await app.secretStorage.setSecret("vault-share-googledrive-refresh-token", token);
-	}, refreshToken);
+
+		type Plugin = {
+			auth: { loadFromSecretStorage: () => void };
+			api: { resolveFolder: (path: string) => Promise<string> };
+			settings: { driveFolderPath: string };
+		};
+		const plugin = (app as unknown as {
+			plugins: { plugins: Record<string, Plugin> };
+		}).plugins.plugins["vault-share"] as Plugin | undefined;
+		if (!plugin) throw new Error("vault-share plugin not loaded");
+
+		// Re-read secrets — loadFromSecretStorage() ran during onload() before
+		// the token was available.
+		plugin.auth.loadFromSecretStorage();
+		plugin.settings.driveFolderPath = folderPath;
+		const folderId = await plugin.api.resolveFolder(folderPath);
+		(plugin as unknown as { driveFolderId: string }).driveFolderId = folderId;
+	}, refreshToken, driveFolderPath);
+}
+
+/**
+ * Run a bulk sync pass synchronously inside the given vault.
+ * Bypasses the scheduler timer so tests can trigger sync on demand.
+ */
+interface SyncPassResult {
+	downloaded: number;
+	uploaded: number;
+	deleted: number;
+	conflicts: number;
+	merges: number;
+	abortedByUser: boolean;
+	error?: unknown;
+}
+
+export async function runBulkSync(br: WebdriverIO.Browser): Promise<SyncPassResult> {
+	const result = await br.executeObsidian(async ({ app }) => {
+		type Plugin = { scheduler: unknown };
+		const plugin = (app as unknown as {
+			plugins: { plugins: Record<string, Plugin> };
+		}).plugins.plugins["vault-share"] as Plugin | undefined;
+		if (!plugin) throw new Error("vault-share plugin not loaded");
+
+		// Access the BulkSync instance held inside the scheduler's private deps.
+		const bulkSync = (plugin.scheduler as unknown as {
+			deps: { bulkSync: { run: () => Promise<unknown> } };
+		}).deps.bulkSync;
+		return bulkSync.run() as Promise<unknown>;
+	}) as unknown as SyncPassResult;
+
+	if (result?.error) {
+		const msg = result.error instanceof Error ? result.error.message : String(result.error);
+		throw new Error(`Bulk sync failed: ${msg}`);
+	}
+	return result;
 }

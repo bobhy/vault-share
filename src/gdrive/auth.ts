@@ -1,12 +1,11 @@
 import { App, requestUrl } from 'obsidian';
 import { GDriveError } from './errors';
+import { GOOGLE_CLIENT_ID, RELAY_BASE_URL } from './constants';
+export { GOOGLE_CLIENT_ID, RELAY_BASE_URL };
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
-
-export const GOOGLE_CLIENT_ID = '535881224719-5qvscbujq78mpvne1rp3im0cg5cdcu4c.apps.googleusercontent.com';
-export const RELAY_BASE_URL = 'https://vault-share-auth.bob-hyman.workers.dev';
 
 const REDIRECT_URI = `${RELAY_BASE_URL}/google/callback`;
 

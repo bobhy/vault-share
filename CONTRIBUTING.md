@@ -53,10 +53,10 @@ This reads the stored refresh token from Obsidian's SecretStorage and saves it t
 
 Prerequisites:
 
-- Obsidian is running with a vault that is already authenticated to Google Drive via Vault Share.
-- The `obsidian` CLI helper is on your PATH (installed by `wdio-obsidian-service`).
 - A Google account used only for testing and (probably) different from
 your main account.  Whatever account you respond to the oauth prompt with will have read/write access to all the vault files for that user.  
+- Obsidian is running with a vault that is already authenticated with the above Google account to Google Drive via Vault Share.
+- The `obsidian` CLI helper is on your PATH (installed by `wdio-obsidian-service`).
 
 ---
 

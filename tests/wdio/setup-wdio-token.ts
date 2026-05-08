@@ -19,7 +19,13 @@ const { stdout } = await execAsync(
 // obsidian eval prints log lines before the "=> <value>" result line.
 // String values are printed raw (not JSON-encoded), so slice off the "=> " prefix directly.
 const resultLine = stdout.split("\n").map(l => l.trim()).find(l => l.startsWith("=> "));
-if (!resultLine) throw new Error(`No result line in obsidian eval output:\n${stdout}`);
+if (!resultLine) {
+	const isStartingUp = stdout.includes("Loaded main app package");
+	console.error(isStartingUp
+		? "Obsidian is not open. Start Obsidian with a vault that has vault-share authenticated to Google Drive, then re-run this command."
+		: `No result line in obsidian eval output:\n${stdout}`);
+	process.exit(1);
+}
 const rawValue = resultLine.slice(3);
 const token = rawValue === "null" ? null : rawValue;
 
