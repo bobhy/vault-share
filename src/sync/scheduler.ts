@@ -4,8 +4,15 @@ import type { BulkSync } from './bulk-sync';
 import { singleFileSync } from './single-file-sync';
 
 interface PerFileState {
-	nextRunAt: number;
-	lastEditAt: number;
+	/** Epoch ms when a holdDown-triggered sync is due; Infinity = none pending. */
+	nextHoldDownAt: number;
+	/**
+	 * Epoch ms when the next poll-triggered sync is due.
+	 * Infinity = not being monitored (no polling).
+	 */
+	nextPollAt: number;
+	/** Whether the user has enabled monitoring (poll) mode for this file. */
+	monitored: boolean;
 }
 
 export interface SyncSchedulerDeps {
@@ -19,9 +26,19 @@ export interface SyncSchedulerDeps {
 
 /**
  * Drives all sync scheduling from a single 1-second heartbeat.
- * Each operation is represented by a nextRunAt timestamp.
- * Handles background/foreground catchup naturally — past-due operations
- * fire on the next tick after the app is foregrounded.
+ *
+ * Each file's sync deadline is tracked as two independent timestamps:
+ * - nextHoldDownAt: set on edit, fires `openFileChangeHoldDown` seconds later
+ * - nextPollAt: active only for monitored files, fires every `openFilePoll` seconds
+ *
+ * The tick fires whichever is due first (min of the two), then resets the holdDown
+ * to Infinity (poll took precedence or holdDown ran) and advances the poll deadline
+ * only for monitored files. This naturally implements the spec rule that
+ * "openFilePoll has precedence over openFileChangeHoldDown and will cancel a
+ * pending holdDown event."
+ *
+ * Handles background/foreground catchup: past-due deadlines fire on the next tick
+ * after the app is foregrounded.
  */
 export class SyncScheduler {
 	private bulkNextRunAt = 0; // 0 = run immediately
@@ -46,10 +63,8 @@ export class SyncScheduler {
 		registerEvent(ctx.app.vault.on('modify', file => {
 			const state = this.fileStates.get(file.path);
 			if (!state) return;
-			const now = Date.now();
-			state.lastEditAt = now;
 			const holdMs = ctx.settings().openFileChangeHoldDown * 1000;
-			state.nextRunAt = now + holdMs;
+			state.nextHoldDownAt = Date.now() + holdMs;
 		}));
 
 		const intervalId = window.setInterval(() => { void this.tick(); }, 1000);
@@ -73,6 +88,47 @@ export class SyncScheduler {
 		this.bulkNextRunAt = 0;
 	}
 
+	/**
+	 * Enable monitoring (poll) mode for the given path.
+	 * Per spec, enabling does not immediately run a sync — the first poll
+	 * fires `openFilePoll` seconds from now.
+	 * No-op if the file is not currently tracked (not open/visible).
+	 */
+	enableMonitoring(path: string): void {
+		const state = this.fileStates.get(path);
+		if (!state || state.monitored) return;
+		state.monitored = true;
+		state.nextPollAt = Date.now() + this.deps.ctx.settings().openFilePoll * 1000;
+	}
+
+	/**
+	 * Disable monitoring mode for the given path.
+	 * No-op if the file is not tracked or not being monitored.
+	 */
+	disableMonitoring(path: string): void {
+		const state = this.fileStates.get(path);
+		if (!state || !state.monitored) return;
+		state.monitored = false;
+		state.nextPollAt = Infinity;
+	}
+
+	/** Toggle monitoring for path; returns the new monitored state. */
+	toggleMonitoring(path: string): boolean {
+		const state = this.fileStates.get(path);
+		if (!state) return false;
+		if (state.monitored) {
+			this.disableMonitoring(path);
+		} else {
+			this.enableMonitoring(path);
+		}
+		return state.monitored;
+	}
+
+	/** Returns true if monitoring is currently enabled for path. */
+	isMonitored(path: string): boolean {
+		return this.fileStates.get(path)?.monitored ?? false;
+	}
+
 	private async tick(): Promise<void> {
 		if (this.paused) return;
 
@@ -90,10 +146,14 @@ export class SyncScheduler {
 		}
 
 		// Dispatch single-file syncs that are due.
+		// The deadline is the earlier of holdDown and poll. After running:
+		//   - holdDown is always cleared (reset to Infinity)
+		//   - poll advances only for monitored files
 		const pollMs = ctx.settings().openFilePoll * 1000;
 		for (const [path, state] of this.fileStates) {
-			if (now >= state.nextRunAt) {
-				state.nextRunAt = now + pollMs;
+			if (now >= Math.min(state.nextHoldDownAt, state.nextPollAt)) {
+				state.nextHoldDownAt = Infinity;
+				state.nextPollAt = state.monitored ? now + pollMs : Infinity;
 				void singleFileSync(path, ctx, workspace, setStatusBar);
 			}
 		}
@@ -101,13 +161,14 @@ export class SyncScheduler {
 
 	private onFileVisible(path: string): void {
 		if (this.fileStates.has(path)) return;
-		this.fileStates.set(path, { nextRunAt: 0, lastEditAt: 0 });
+		// nextHoldDownAt = 0 triggers an immediate sync on first tick after open.
+		this.fileStates.set(path, { nextHoldDownAt: 0, nextPollAt: Infinity, monitored: false });
 		void this.seedBaseContent(path);
 	}
 
 	/**
 	 * Capture the current on-disk bytes as the merge base the first time a file
-	 * becomes visible, before any edits can advance the mtime.  Without this,
+	 * becomes visible, before any edits can advance the mtime. Without this,
 	 * the first merge on a file with no sync history uses an empty base, which
 	 * forces every line into conflict.
 	 */
@@ -130,7 +191,7 @@ export class SyncScheduler {
 			if (view.file?.path) visible.add(view.file.path);
 		});
 
-		// Remove entries for files no longer visible.
+		// Remove entries for files no longer visible (monitoring state is discarded).
 		for (const path of this.fileStates.keys()) {
 			if (!visible.has(path)) this.fileStates.delete(path);
 		}

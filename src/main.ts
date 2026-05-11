@@ -1,4 +1,4 @@
-import { Notice, Plugin, WorkspaceLeaf } from 'obsidian';
+import { Notice, Plugin, TFile, WorkspaceLeaf } from 'obsidian';
 import { DEFAULT_SETTINGS, VaultShareSettings } from './settings';
 import { GDriveAuth } from './gdrive/auth';
 import { GDriveApi } from './gdrive/api';
@@ -36,6 +36,7 @@ export default class VaultSharePlugin extends Plugin {
 	private driveFs!: DriveFsAdapter;
 	private settingTab!: VaultShareSettingTab;
 	private statusBarEl!: HTMLElement;
+	private monitoringStatusBarEl!: HTMLElement;
 
 	async onload() {
 		// 1. Settings
@@ -74,9 +75,10 @@ export default class VaultSharePlugin extends Plugin {
 		this.localFs = new LocalFs(this.app);
 		this.driveFs = new DriveFsAdapter(this.api);
 
-		// 8. Status bar
+		// 8. Status bar (sync status) + monitoring status bar
 		this.statusBarEl = this.addStatusBarItem();
 		const setStatusBar = (text: string) => { this.statusBarEl.setText(text); };
+		this.monitoringStatusBarEl = this.addStatusBarItem();
 
 		// 9. Resolve Drive folder (best-effort at load; scheduler retries on each bulk pass)
 		if (this.auth.isAuthenticated) {
@@ -159,7 +161,51 @@ export default class VaultSharePlugin extends Plugin {
 			callback: () => { void this.clearSyncHistory(); },
 		});
 
-		// 16. Start scheduler (triggers initial bulk sync)
+		this.addCommand({
+			id: 'toggle-file-monitoring',
+			name: 'Toggle monitoring for remote changes',
+			editorCallback: (_editor, ctx) => {
+				const file = ctx.file;
+				if (!file || this.excludeMatcher.isExcluded(file.path)) return;
+				this.toggleMonitoringForFile(file.path);
+			},
+		});
+
+		// 16. Context menus
+		this.registerEvent(this.app.workspace.on('file-menu', (menu, abstractFile) => {
+			if (!(abstractFile instanceof TFile)) return;
+			if (this.excludeMatcher.isExcluded(abstractFile.path)) return;
+			const monitored = this.scheduler?.isMonitored(abstractFile.path) ?? false;
+			menu.addItem(item => {
+				item
+					.setTitle(monitored
+						? 'Disable monitoring for remote changes'
+						: 'Enable monitoring for remote changes')
+					.setIcon('sync')
+					.onClick(() => { this.toggleMonitoringForFile(abstractFile.path); });
+			});
+		}));
+
+		this.registerEvent(this.app.workspace.on('editor-menu', (menu, _editor, info) => {
+			const file = info.file;
+			if (!file || this.excludeMatcher.isExcluded(file.path)) return;
+			const monitored = this.scheduler?.isMonitored(file.path) ?? false;
+			menu.addItem(item => {
+				item
+					.setTitle(monitored
+						? 'Disable monitoring for remote changes'
+						: 'Enable monitoring for remote changes')
+					.setIcon('sync')
+					.onClick(() => { this.toggleMonitoringForFile(file.path); });
+			});
+		}));
+
+		// 17. Active-leaf-change: update monitoring status bar
+		this.registerEvent(this.app.workspace.on('active-leaf-change', _leaf => {
+			this.updateMonitoringStatusBar();
+		}));
+
+		// 18. Start scheduler (triggers initial bulk sync)
 		this.scheduler.start();
 		this.scheduler.triggerBulkSync();
 	}
@@ -229,6 +275,23 @@ export default class VaultSharePlugin extends Plugin {
 			await this.activateSidebarLogView();
 		} else {
 			this.app.workspace.detachLeavesOfType(SYNC_LOG_VIEW_TYPE);
+		}
+	}
+
+	/** Toggle monitoring for a file and refresh the monitoring status bar. */
+	private toggleMonitoringForFile(path: string): void {
+		this.scheduler?.toggleMonitoring(path);
+		this.updateMonitoringStatusBar();
+	}
+
+	/** Update the monitoring status bar based on the currently active file. */
+	private updateMonitoringStatusBar(): void {
+		const file = this.app.workspace.getActiveFile();
+		if (file && this.scheduler?.isMonitored(file.path)) {
+			const name = file.path.split('/').pop() ?? file.path;
+			this.monitoringStatusBarEl.setText(`Monitoring ${name}`);
+		} else {
+			this.monitoringStatusBarEl.setText('');
 		}
 	}
 
