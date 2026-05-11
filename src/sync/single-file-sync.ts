@@ -5,6 +5,7 @@ import { buildMixedEntries } from './change-detector';
 import { planActions } from './decision-engine';
 import { syncOneFile } from './file-syncer';
 import { ConfirmationModal } from '../ui/confirmation-modal';
+import { GDriveError } from '../gdrive/errors';
 
 /**
  * Sync a single file that is currently open or recently opened.
@@ -22,6 +23,8 @@ export async function singleFileSync(
 
 	ctx.statsTracker.recordSingleFileSync();
 
+	ctx.logger.debug(`singleFileSync: ${path} — fetching remote status`);
+
 	try {
 		const [localSide, remoteSide, record] = await Promise.all([
 			Promise.resolve(ctx.localFs.stat(path)),
@@ -37,10 +40,13 @@ export async function singleFileSync(
 		);
 
 		const actions = planActions(entries, hasHistory).filter(a => a.type !== 'noOp');
-		if (actions.length === 0) return;
+		if (actions.length === 0) {
+			ctx.logger.debug(`singleFileSync: ${path} — no action needed`);
+			return;
+		}
 
 		const action = actions[0]!;
-		ctx.logger.debug(`sync ${action.path}: ${action.type}`);
+		ctx.logger.debug(`singleFileSync: ${path} — action=${action.type}`);
 		const overlay = showSyncOverlay(path, workspace);
 
 		try {
@@ -71,8 +77,11 @@ export async function singleFileSync(
 
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
+		const detail = err instanceof GDriveError
+			? ` [${err.code}${err.status !== undefined ? `/${err.status}` : ''}]`
+			: '';
 		setStatusBar(`Interrupted ${basename(path)}: ${msg}`);
-		ctx.logger.error(`Single-file sync failed: ${path}`, msg);
+		ctx.logger.error(`Single-file sync failed: ${path}`, msg + detail);
 	}
 }
 

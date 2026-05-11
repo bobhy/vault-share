@@ -246,6 +246,10 @@ export class GDriveApi {
 
 	private throwOnError(status: number): void {
 		if (status >= 200 && status < 300) return;
+		// A 401 means the access token is invalid despite appearing locally valid.
+		// Clear the cached token so the next getAccessToken() forces a refresh
+		// rather than reusing the same stale token on every subsequent request.
+		if (status === 401) this.auth.invalidateAccessToken();
 		throw new GDriveError(`Drive API error (${status})`, codeFromStatus(status), status);
 	}
 }

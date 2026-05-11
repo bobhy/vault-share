@@ -182,5 +182,48 @@ describe('GDriveAuth', () => {
 			auth2.loadFromSecretStorage();
 			expect(auth2.isAuthenticated).toBe(true);
 		});
+
+		it('tokens are namespaced per vault — two vaults on the same machine do not share tokens', async () => {
+			// Simulate two separate Obsidian vaults ('v3' and 'v4') with their own App
+			// instances but sharing the same underlying SecretStorage store (as the OS
+			// keychain would do if keys were not namespaced).
+			const appV3 = new App();
+			const appV4 = new App();
+
+			// Point both apps at the same in-memory SecretStorage so we can prove isolation.
+			appV4.secretStorage = appV3.secretStorage;
+
+			appV3.vault.getName = vi.fn().mockReturnValue('v3');
+			appV4.vault.getName = vi.fn().mockReturnValue('v4');
+
+			const authV3 = new GDriveAuth(appV3);
+			const authV4 = new GDriveAuth(appV4);
+
+			// v3 authenticates and saves tokens.
+			const urlV3 = authV3.getAuthorizationUrl();
+			const stateV3 = new URL(urlV3).searchParams.get('state')!;
+			await authV3.handleAuthCallback({ state: stateV3, access_token: 'acc-v3', refresh_token: 'ref-v3', expires_in: '3600' });
+			authV3.saveToSecretStorage();
+
+			// v4 authenticates independently and saves its own tokens.
+			const urlV4 = authV4.getAuthorizationUrl();
+			const stateV4 = new URL(urlV4).searchParams.get('state')!;
+			await authV4.handleAuthCallback({ state: stateV4, access_token: 'acc-v4', refresh_token: 'ref-v4', expires_in: '3600' });
+			authV4.saveToSecretStorage();
+
+			// Reload v3 from storage — its tokens must be unaffected by v4's save.
+			const authV3Reload = new GDriveAuth(appV3);
+			authV3Reload.loadFromSecretStorage();
+			const internalV3 = authV3Reload as unknown as { refreshToken: string; accessToken: string };
+			expect(internalV3.refreshToken).toBe('ref-v3');
+			expect(internalV3.accessToken).toBe('acc-v3');
+
+			// Reload v4 from storage — it has its own tokens.
+			const authV4Reload = new GDriveAuth(appV4);
+			authV4Reload.loadFromSecretStorage();
+			const internalV4 = authV4Reload as unknown as { refreshToken: string; accessToken: string };
+			expect(internalV4.refreshToken).toBe('ref-v4');
+			expect(internalV4.accessToken).toBe('acc-v4');
+		});
 	});
 });

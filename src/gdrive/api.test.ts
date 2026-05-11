@@ -171,4 +171,62 @@ describe('GDriveApi', () => {
 			expect(body.parents).toContain('parent1');
 		});
 	});
+
+	describe('401 recovery', () => {
+		it('invalidates the cached access token when Drive API returns 401', async () => {
+			// Reproduce the monitoring-poll failure loop:
+			// Auth holds a valid-looking (unexpired) token, but Google rejects it with 401.
+			// After the error, the cached token must be cleared so the next getAccessToken()
+			// call forces a refresh rather than returning the same stale token again.
+			const app = new App();
+			const auth = new GDriveAuth(app);
+			const internal = auth as unknown as {
+				refreshToken: string;
+				accessToken: string;
+				accessTokenExpiry: number;
+			};
+			internal.refreshToken = 'ref';
+			internal.accessToken = 'stale-but-locally-valid-token';
+			internal.accessTokenExpiry = Date.now() + 3_600_000; // looks valid locally
+
+			const api = new GDriveApi(auth);
+			spyRequestUrl().mockResolvedValue(makeMockResponse({ status: 401, json: {} }));
+
+			await expect(api.listChildren('parent')).rejects.toMatchObject({ code: 'auth-expired' });
+
+			// The cached token must be cleared — next getAccessToken() will try to refresh.
+			expect(internal.accessToken).toBe('');
+			expect(internal.accessTokenExpiry).toBe(0);
+		});
+
+		it('forces a refresh on the next getAccessToken call after a 401', async () => {
+			const app = new App();
+			const auth = new GDriveAuth(app);
+			const internal = auth as unknown as {
+				refreshToken: string;
+				accessToken: string;
+				accessTokenExpiry: number;
+			};
+			internal.refreshToken = 'ref';
+			internal.accessToken = 'stale-but-locally-valid-token';
+			internal.accessTokenExpiry = Date.now() + 3_600_000;
+
+			const api = new GDriveApi(auth);
+
+			// First call: Drive returns 401, token gets invalidated.
+			spyRequestUrl().mockResolvedValueOnce(makeMockResponse({ status: 401, json: {} }));
+			await expect(api.listChildren('parent')).rejects.toMatchObject({ code: 'auth-expired' });
+
+			// Second call: token is gone, so getAccessToken() must refresh before the API call.
+			// Spy: first call = relay refresh → success; second call = Drive API → success.
+			spyRequestUrl()
+				.mockResolvedValueOnce(makeMockResponse({ json: { access_token: 'fresh-token', expires_in: 3600 } }))
+				.mockResolvedValueOnce(makeMockResponse({ json: { files: [] } }));
+
+			const files = await api.listChildren('parent');
+			expect(files).toEqual([]);
+			// The internal token should now be the freshly-obtained one.
+			expect(internal.accessToken).toBe('fresh-token');
+		});
+	});
 });

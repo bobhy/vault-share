@@ -9,9 +9,18 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 
 const REDIRECT_URI = `${RELAY_BASE_URL}/google/callback`;
 
-const SECRET_REFRESH_TOKEN = 'vault-share-googledrive-refresh-token';
-const SECRET_ACCESS_TOKEN = 'vault-share-googledrive-access-token';
-const SECRET_TOKEN_EXPIRY = 'vault-share-googledrive-token-expiry';
+// Keys are namespaced per vault so multiple Obsidian instances on the same
+// machine never overwrite each other's tokens.
+// SecretStorage IDs must be lowercase alphanumeric with dashes only, so we
+// sanitize the vault name before embedding it.
+function secretKeys(vaultName: string) {
+	const safe = vaultName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'default';
+	return {
+		refreshToken: `vault-share-${safe}-refresh-token`,
+		accessToken:  `vault-share-${safe}-access-token`,
+		tokenExpiry:  `vault-share-${safe}-token-expiry`,
+	};
+}
 
 /** Millis before expiry at which the plugin proactively refreshes the access token. */
 const PROACTIVE_REFRESH_MS = 60_000;
@@ -54,28 +63,43 @@ export class GDriveAuth {
 
 	/** Load persisted tokens from SecretStorage into memory. Called at plugin load. */
 	loadFromSecretStorage(): void {
-		this.refreshToken = this.app.secretStorage.getSecret(SECRET_REFRESH_TOKEN) ?? '';
-		this.accessToken = this.app.secretStorage.getSecret(SECRET_ACCESS_TOKEN) ?? '';
-		const expiryStr = this.app.secretStorage.getSecret(SECRET_TOKEN_EXPIRY);
+		const keys = secretKeys(this.app.vault.getName());
+		this.refreshToken = this.app.secretStorage.getSecret(keys.refreshToken) ?? '';
+		this.accessToken = this.app.secretStorage.getSecret(keys.accessToken) ?? '';
+		const expiryStr = this.app.secretStorage.getSecret(keys.tokenExpiry);
 		this.accessTokenExpiry = expiryStr ? parseInt(expiryStr, 10) : 0;
 	}
 
 	/** Persist in-memory tokens to SecretStorage. Called after auth callback and refresh. */
 	saveToSecretStorage(): void {
-		this.app.secretStorage.setSecret(SECRET_REFRESH_TOKEN, this.refreshToken);
-		this.app.secretStorage.setSecret(SECRET_ACCESS_TOKEN, this.accessToken);
-		this.app.secretStorage.setSecret(SECRET_TOKEN_EXPIRY, String(this.accessTokenExpiry));
+		const keys = secretKeys(this.app.vault.getName());
+		this.app.secretStorage.setSecret(keys.refreshToken, this.refreshToken);
+		this.app.secretStorage.setSecret(keys.accessToken, this.accessToken);
+		this.app.secretStorage.setSecret(keys.tokenExpiry, String(this.accessTokenExpiry));
+	}
+
+	/**
+	 * Discard the cached access token so the next {@link getAccessToken} call
+	 * is forced to perform a token refresh. Called by GDriveApi when the server
+	 * returns 401 despite a locally valid-looking token, which indicates the
+	 * token was revoked by an external event (e.g. another vault re-authenticating
+	 * to the same Google account with prompt=consent).
+	 */
+	invalidateAccessToken(): void {
+		this.accessToken = '';
+		this.accessTokenExpiry = 0;
 	}
 
 	/** Clear all stored tokens from SecretStorage and memory. Called on disconnect. */
 	clearSecretStorage(): void {
+		const keys = secretKeys(this.app.vault.getName());
 		this.refreshToken = '';
 		this.accessToken = '';
 		this.accessTokenExpiry = 0;
 		this.authFailedAt = 0;
-		this.app.secretStorage.setSecret(SECRET_REFRESH_TOKEN, '');
-		this.app.secretStorage.setSecret(SECRET_ACCESS_TOKEN, '');
-		this.app.secretStorage.setSecret(SECRET_TOKEN_EXPIRY, '');
+		this.app.secretStorage.setSecret(keys.refreshToken, '');
+		this.app.secretStorage.setSecret(keys.accessToken, '');
+		this.app.secretStorage.setSecret(keys.tokenExpiry, '');
 	}
 
 	/**
