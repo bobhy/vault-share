@@ -7,11 +7,11 @@ Synchronization means all vaults (local and group) have the same subfolder struc
 which is a folder structure on a cloud file server.  
 - V1 goal is to support Google Drive as the file server, but OneDrive or DropBox might be added in the future.  
 - Multiple users should be able to share the same group vault, abiding by the sharing rules of the cloud service.
-- Support synchroniation of all types of files, with options for handling conflicting changes made on different devices.
+- Support synchronization of all types of files, with options for handling conflicting changes made on different devices.
 - But specifically for text and markdown files, support an option to reconcile changes via diff3 merging.
 - Support offline operation, where Obsidian is usable even if not currently online.  Files can be edited locally while offline and will be synched with the group vault when the device is back online.
 - Provide a background bulk synchronization which tends to keep devices in sync within an hour of changes.
-- Provide a foreground, single-file synchronization which keeps active devices in sync within seconds.
+- Provide a foreground, single-file synchronization which keeps active devices in sync within seconds.  
 - Minimize network and local resource consumption within the above responsiveness constraints so the facility performs well on mobile devices.
 - Deploy via Obsidian Community Plugins repo, runs on any device which Obsidian supports.
 
@@ -64,6 +64,17 @@ User naturally wonders what happens if he were to make changes to the same note 
 arranges to make different changes to the same line of the note on each device at pretty much the same time.  User sees that sync is not magic, it could not decide which change was the "winner", so, the same several seconds after making both changes, user sees both devices showing a diff-3 style edit conflict in both edit windows.  When the user manually resolves the conflicting changes on one device, s/he sees that the resolved version is now displayed on both devices.
 
 None of this required user to hit "refresh" or do other manual intervention to see the updated note.
+
+### Single-user vs multi-user mode
+Usually, it's just a single user who has vaults on multiple devices and is only making changes on one device at a time.  
+So user is happy to see that changes s/he made earlier on some other device are present now when s/he picks up a new device and opens the file.  
+This user doesn't care whether the new device would have shown the updates before s/he started using it.
+
+When multiple users are collaborating on a given file, 
+they can enable a special synchronization mode for that file which allows each to see changes made by the other with much less delay.  
+A single user might use this mode in special circumstances, perhaps when s/he leaves Obsidian open on a desktop PC viewing a particular file 
+and picks up his/her phone to do something that ends up changing the same file via the vault on the phone.   
+The user appreciates seeing the open file update on the PC without having to hit refresh.
 
 ## Design Sketches
 (These are not literal design specs, they are more a design sketch to be refined between dev and agent in further reviews.)
@@ -186,10 +197,7 @@ If a network or other error interrupts the current file sync operation, it gives
 
 #### Single file sync
 The sync engine provides a single-file sync capability which performs all of the same sync operations using the same conflict resolution strategies as bulk sync, 
-but optimized to run on a file the user has already or wants to open.  When the user is editing the file, it handles pushing the changes to the group vault.
-
-This single-file sync is invoked as soon as a user opens a file and approximately every `openFilePoll` interval thereafter, while the file stays open.
-
+but optimized to run on a file the user has open.  It is invoked at various times while a file is open, as described in [](#viewing-and-editing-text-files).
 #### Sync Settings
 
 Note on 'setting' column in this and other Settings sections: the symbol in 'settings' column might be a name in the public API, but it is not exposed in the user interface.  Users and user doc refer to settings via Description column.
@@ -201,7 +209,7 @@ Note on 'setting' column in this and other Settings sections: the symbol in 'set
 | fileModificationConfirmationThreshold | int / percentage | 10 (percent) | Get user confirmation before letting bulk sync modify or delete <br> more than this percentage of files in a vault |
 | fileModificationConfirmationMin | int | 10 | If vault contains fewer than this number of syncable files, do *not* prompt user for confirmation per `fileModificationConfirmationThreshold`. |
 | bulkSyncPoll | int / seconds | 60*60 | How often a bulk sync runs while the plugin is active. |
-| openFilePoll | int / seconds | 10 | Perform a single file sync on the currently open file this often |
+| openFilePoll | int / seconds | 10 |  When monitoring mode enabled, perform a single file sync on the currently open file this often |
 | openFileChangeHoldDown | int / seconds | 5 | Perform a single file sync on the currently open file this many seconds after a local edit |
 
 Note on excludeRules: Based on agent suggestion, the filtering will use ordered ignore rules — a single string[] in settings, one pattern per line, processed top-to-bottom with last-match-wins semantics. A ! prefix negates (re-includes) a pattern.
@@ -242,20 +250,28 @@ The sync facility provides these messages in the status bar as it runs:
 | ----- | --------------- |
 | bulk sync starts | Syncing |
 | bulk sync completes | Synced: n downloaded, n uploaded, n deleted |
-| bulk sync encounters communication error, can't complete pass | Sync interrupted: \<error\> |
+| bulk sync encounters communication error, can't complete pass | Bulk sync interrupted: \<error\> |
 | single file sync completes for an open file | Updated \<openFileName\> |
 | single file sync encounters persistent communication error | Interrupted \<openFileName\>: \<error\> |
+
+File monitoring mode has a separate status bar placeholder which displays the monitoring state of the file in the currently active view:
+
+| event | status bar text |
+| ----- | --------------- |
+| monitoring active for the currently viewed open file | Monitoring \<openFileName\> |
+| monitoring not active for the current open file | |
+
+This status item changes when the active view changes, not when a sync event occurs.
 
 ### Viewing and editing text files
 The key user interaction with Obsidian is displaying and editing notes or other files.  
 Bulk sync is mostly concerned with improving the odds that a local copy of the file will already be up to date when the user opens it.
-Single file sync is focused on ensuring that the user is working with the newest version when s/he opens the file.
+Single file sync is focused on ensuring that the user is working with the newest version when s/he opens the file, and, 
+optionally, is seeing the most current version of the file from other devices.
 
 #### file viewing
 
 When user opens a file, or the view containing a previously opened file becomes visible, single-file sync runs to do an initial update (if needed).  
-As long as the open file is visible, single file sync runs to check for changes on intervals `openFilePoll`.
-Polling is cancelled when the user closes the file.
 
 If multiple files are open and visible at the same time, e.g in main and right hand panel, each of them gets this treatment.  But files open in different
 tabs of the main panel are not all visible, and the ones not visible are not synced (until they become visible).
@@ -270,10 +286,9 @@ User's previous scroll position in the view is preserved if possible.
 
 #### file editing
 
-Whenever the user makes a change to the open file, the plugin schedules a single-file sync to occur `openFileChangeHoldDown` seconds later.  (in addition to the `openFilePoll` schedule).
+Whenever the user makes a change to the open file, the plugin schedules a single-file sync to occur `openFileChangeHoldDown` seconds later.  
 If the user makes more changes before the interval passes, the sync operation is deferred an additional `openFileChangeHoldDown` seconds later.  
-If the user kept making changes, this holdDown timer might never trigger a sync.  However, the `openFilePoll` timer is not delayed by file changes,
-and will eventually trigger a single file sync.
+If the user kept making changes, this holdDown timer might never trigger a sync.  However, the `bulkSyncPoll` or `openFilePoll` (if active for that file) will eventually trigger a single file sync.
 
 Whenever it *does* run on an edited file, single-file sync automatically saves the open file to disk, so it has the latest information for merging. 
 
@@ -283,6 +298,38 @@ The sync operation may find conflicting changes in the group vault that must be 
 
 This also covers a modify-delete conflict.  
 If the group version was deleted, sync will download a conflict file with placeholder text and that's the file named in the dismiss dialog.
+
+#### file monitoring
+By default, when user opens a file, single-file sync is invoked once to update that file and later as part of a bulk sync triggered by `bulkSyncPoll`. 
+If the user edits the file, single-file sync is invoked after a burst of local changes, per `openFileChangeHoldDown`.  
+Any of these syncs will pull changes to that file from the group vault present at that time.  
+But they will not update the view with changes from other devices very quickly if the local user doesn't happen to also be making changes.
+
+So there is an additional "monitoring" mode that user can enable for an open file.  
+It invokes single-file sync on that file on a polling cycle configured by setting `openFilePoll` (which defaults to several times a minute).  
+If enabled for multiple open files, each file is synced on its own `openFilePoll`.
+
+openFilePoll has precedence over openFileChangeHoldDown and will cancel a pending hold down event.  So, in the following sequence:
+
+- At T+0, user makes a change to a file that is also being monitored.  Single file sync is scheduled for T+5, per openFileChangeHoldDown.
+- At T+2, single file sync runs, per previously scheduled openFilePoll.  This cancels the T+5 scheduled event.
+- At T+5, nothing happens.
+
+This works because it's the same single-file sync operation, however scheduled.  single-file sync invoked at T+2 will save local changes made by the user at T+0 and merge them with any remote changes, presenting the user with a fully updated view.
+Note that, *enabling* monitoring at T+2 would not cancel the T+5 run of single file sync, because enabling monitoring doesn't immediately run single-file sync, it just schedules the first run for `now + openFilePoll`.
+
+User invokes monitoring mode:
+- From the command palette (applies to the currently open file)
+- From the file context menu
+- From the editor context menu
+
+It is a *toggle* in the menu, with text 
+"Enable monitoring for remote changes" when current file is *not* being monitored, and 
+"Disable monitoring for remote changes" when it is.  
+
+If the active file is not syncable, e.g, if it is currently excluded by excludeRules, then the option is absent from the menu.
+
+File monitoring mode is associated the open file.  It is disabled when the user closes the last view on that file, or all of Obsidian.
 
 ### Group Vault name change
 When user changes the group vault name in settings, if there is sync history and it's not for the new name,
@@ -317,10 +364,10 @@ It also samples the server API response time for `file.get` or `stat` operations
 `<fileModificationReported> - <localDateTimeFileChangeInvoked> - <APIResponseTime>/2.`  The most recent sample is saved in statistic `observedClockSkew`.  
 
 ### Heartbeat
-single-file sync is run on file open events, but also on a `openFileChangeHoldDown` and `openFilePoll` schedules.
-bulk sync is run on plugin initialization, but also on `bulkSyncPoll` schedule.
+Single-file sync is run on file open events, but also on `openFileChangeHoldDown` (for edit events) and `openFilePoll` (for monitored files) events.
+Bulk sync is run on plugin initialization, but also on `bulkSyncPoll` events.
 
-These schedules should not be managed by scheduling a future Event for each operation; in normal operation of the holdDown timer at least, the event is often cancelled before it can fire, that's unnecessary overhead.  
+These should not be managed by scheduling a future Event for each operation; in normal operation of the holdDown timer at least, the Event is often cancelled before it can fire, that's unnecessary overhead.  
 
 Instead, all schedules should be managed from a single 1 second heartbeat event.  Each operation is represented by the future datetime that that process should run.
 The heartbeat compares current time to the scheduled execution time of the various operations and dispatches it when they are due (or past due).

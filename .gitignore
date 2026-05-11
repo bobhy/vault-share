@@ -36,4 +36,7 @@ persistentTestResources
 #exclude generated docs files (specifications in specs/ are checked in)
 docs
 
+# Claude Code local settings (personal overrides, not for team)
+.claude/settings.local.json
+
 
