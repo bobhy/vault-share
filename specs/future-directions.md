@@ -8,3 +8,5 @@
   Maybe copy *all* the settings to someplace keyed by actual vault name?  Then settings would save/restore thence and `settings.json` would be the cached echo, essentially meaningless.
   But maybe trying to do totally seamless reinstall is a bridge to far?
   Alternative isto have plugin reinstall also zap sync history and connection tokens (in machine local storage) so you get a consistent starting place.  Yes, next sync is a vault merge, but that shouldn't actually change much if the vaults were previously in sync.
+- review PR for obsidian-mock; what's the purpose of duplicated implementations?
+- rethink implementation of perfilestate in scheduler: multiple deadlines now, vs calculate next deadline when last one fires?
