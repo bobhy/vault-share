@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
  
 ### Changed
 - default vault now `/vault-sync/<localVaultName>`
+- broadened scope of "Clear sync history" to "Reset plugin" (which also clears statistics and cached auth tokens), now requiring user confirmation.
 
 ### Fixed
 - make gdrive access tokens per-instance, so multiple vaults on same device can each connect to Google Drive.

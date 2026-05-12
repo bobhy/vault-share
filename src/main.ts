@@ -159,12 +159,6 @@ export default class VaultSharePlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'clear-sync-history',
-			name: 'Clear sync history',
-			callback: () => { void this.clearSyncHistory(); },
-		});
-
-		this.addCommand({
 			id: 'toggle-file-monitoring',
 			name: 'Toggle monitoring for remote changes',
 			editorCallback: (_editor, ctx) => {
@@ -281,9 +275,12 @@ export default class VaultSharePlugin extends Plugin {
 		}
 	}
 
-	/** Clear sync records and cached content, then trigger a fresh bulk pass. */
-	async clearSyncHistory(): Promise<void> {
-		await this.store?.clearHistory();
+	/** Reset all plugin state: sync records, stats, and OAuth tokens. Leaves settings intact. */
+	async pluginReset(): Promise<void> {
+		await this.store?.clearAll();
+		await this.statsTracker?.reset();
+		this.auth.clearSecretStorage();
+		this.driveFolderId = '';
 		this.scheduler?.triggerBulkSync();
 	}
 
