@@ -6,8 +6,6 @@
 }
 
 .vault-share-log-entry {
-	display: flex;
-	gap: 6px;
 	padding: 1px 0;
 	white-space: pre-wrap;
 	word-break: break-word;
@@ -15,11 +13,9 @@
 
 .vault-share-log-time {
 	color: var(--text-muted);
-	flex-shrink: 0;
 }
 
 .vault-share-log-severity {
-	flex-shrink: 0;
 }
 
 .vault-share-log-debug    { color: var(--text-muted); }

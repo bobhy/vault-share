@@ -113,7 +113,10 @@ export default class VaultSharePlugin extends Plugin {
 		});
 
 		// 12. Sidebar log view
-		this.registerView(SYNC_LOG_VIEW_TYPE, leaf => new SyncLogView(leaf, this.logger));
+		this.registerView(SYNC_LOG_VIEW_TYPE, leaf => new SyncLogView(leaf, this.logger, () => {
+			this.settings.logToSidebar = false;
+			void this.saveData(this.settings);
+		}));
 		if (this.settings.logToSidebar) {
 			this.app.workspace.onLayoutReady(() => { void this.activateSidebarLogView(); });
 		}
@@ -169,6 +172,26 @@ export default class VaultSharePlugin extends Plugin {
 				if (!file || this.excludeMatcher.isExcluded(file.path)) return;
 				this.toggleMonitoringForFile(file.path);
 			},
+		});
+
+		this.addCommand({
+			id: 'copy-sync-log',
+			name: 'Copy sync log to clipboard',
+			callback: () => {
+				const lines: string[] = [];
+				for (const entry of this.logger.getEntries()) {
+					const timeStr = new Date(entry.timestamp).toLocaleTimeString(undefined, { hour12: false });
+					const line = `${timeStr} [${entry.severity}] ${entry.message}`;
+					lines.push(entry.detail ? `${line}\n  ${entry.detail}` : line);
+				}
+				void navigator.clipboard.writeText(lines.join('\n'));
+			},
+		});
+
+		this.addCommand({
+			id: 'clear-sync-log',
+			name: 'Clear sync log',
+			callback: () => { this.logger.clear(); },
 		});
 
 		// 16. Context menus

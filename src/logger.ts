@@ -56,6 +56,12 @@ export class Logger {
 		return this.entries;
 	}
 
+	/** Empty the ring buffer and notify the view to re-render. */
+	clear(): void {
+		this.entries = [];
+		this.onAppend?.();
+	}
+
 	private log(severity: LogSeverity, message: string, detail?: string): void {
 		if (SEVERITY_RANK[severity] < SEVERITY_RANK[this.getMinSeverity()]) return;
 
