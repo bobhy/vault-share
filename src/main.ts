@@ -44,7 +44,7 @@ export default class VaultSharePlugin extends Plugin {
 		this.settings = Object.assign(
 			{},
 			DEFAULT_SETTINGS,
-			{ driveFolderPath: `/${this.app.vault.getName()}` },
+			{ driveFolderPath: `/vault-share/${this.app.vault.getName()}` },
 			stored,
 		);
 

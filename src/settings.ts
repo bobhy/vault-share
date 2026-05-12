@@ -37,7 +37,7 @@ export interface VaultShareSettings {
 }
 
 export const DEFAULT_SETTINGS: VaultShareSettings = {
-	driveFolderPath: '',  // overridden at runtime with /<vault-name>; never used as-is
+	driveFolderPath: '',  // overridden at runtime with /vault-share/<vault-name>; never used as-is
 	// eslint-disable-next-line obsidianmd/hardcoded-config-path -- static constant; Vault#configDir is unavailable here; runtime code should use vault.configDir if overriding
 	excludeRules: ['.obsidian', '!.obsidian/plugins/vault-share'],
 	fileConflict: 'Merge',
