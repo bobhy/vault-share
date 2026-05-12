@@ -24,14 +24,14 @@ export class VaultShareSettingTab extends PluginSettingTab {
 				'Must start with a separator. Full path is created if it does not exist. ' +
 				'Example: /vault-share/shared',
 			)
-			.addText(text =>
+			.addText(text => {
 				text
-					.setPlaceholder(`/${this.plugin.app.vault.getName()}`)
-					.setValue(this.plugin.settings.driveFolderPath)
-					.onChange(async value => {
-						await this.plugin.onDriveFolderPathChange(value);
-					}),
-			);
+					.setPlaceholder(`/vault-share/${this.plugin.app.vault.getName()}`)
+					.setValue(this.plugin.settings.driveFolderPath);
+				text.inputEl.addEventListener('blur', () => {
+					void this.plugin.onDriveFolderPathChange(text.getValue());
+				});
+			});
 
 		const isConnected = this.plugin.auth.isAuthenticated;
 		new Setting(containerEl)
