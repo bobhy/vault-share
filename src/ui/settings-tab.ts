@@ -1,5 +1,6 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import type VaultSharePlugin from '../main';
+import { ConfirmationModal } from './confirmation-modal';
 
 /**
  * Settings UI for the Vault share plugin.
@@ -170,8 +171,65 @@ export class VaultShareSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		// --- Logging ---
-		new Setting(containerEl).setName('Logging').setHeading();
+		// --- Sync control ---
+		new Setting(containerEl).setName('Sync control').setHeading();
+
+		const isPaused = this.plugin.scheduler?.isPaused() ?? false;
+		new Setting(containerEl)
+			.setName('Sync status')
+			.setDesc(isPaused ? 'Sync is paused.' : 'Sync is running.')
+			.addButton(btn =>
+				btn
+					.setButtonText(isPaused ? 'Start sync' : 'Pause sync')
+					.onClick(() => {
+						if (isPaused) {
+							this.plugin.scheduler?.setPaused(false);
+							this.plugin.scheduler?.triggerBulkSync();
+						} else {
+							this.plugin.scheduler?.setPaused(true);
+						}
+						this.display();
+					}),
+			);
+
+		// --- Statistics (read-only) ---
+		new Setting(containerEl).setName('Statistics').setHeading();
+
+		const stats = this.plugin.statsTracker?.getCurrent();
+		if (stats) {
+			const fields: Array<[string, string, string | number]> = [
+				['Server clock skew', 'serverClockSkew', `${stats.serverClockSkew} ms`],
+				['Api response time', 'APIResponseTime', `${stats.APIResponseTime} ms`],
+				['Bulk sync passes', 'bulkSyncPasses', stats.bulkSyncPasses],
+				['Single file syncs', 'singleFileSyncCount', stats.singleFileSyncCount],
+				['Files pushed', 'filesPushed', stats.filesPushed],
+				['Files pulled', 'filesPulled', stats.filesPulled],
+				['Files merged', 'filesMerged', stats.filesMerged],
+				['Content conflicts', 'contentConflicts', stats.contentConflicts],
+				['Delete conflicts', 'deleteConflicts', stats.deleteConflicts],
+			];
+			for (const [name, , value] of fields) {
+				new Setting(containerEl)
+					.setName(name)
+					.setDesc(String(value));
+			}
+
+			new Setting(containerEl)
+				.setName('Reset statistics')
+				.setDesc('Reset all counters to zero.')
+				.addButton(btn =>
+					btn
+						.setButtonText('Reset')
+						.setWarning()
+						.onClick(async () => {
+							await this.plugin.statsTracker?.reset();
+							this.display();
+						}),
+				);
+		}
+
+		// --- Plugin ---
+		new Setting(containerEl).setName('Plugin').setHeading();
 
 		new Setting(containerEl)
 			.setName('Log level')
@@ -217,78 +275,30 @@ export class VaultShareSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		// --- Sync commands ---
-		new Setting(containerEl).setName('Sync control').setHeading();
-
-		const isPaused = this.plugin.scheduler?.isPaused() ?? false;
 		new Setting(containerEl)
-			.setName('Sync status')
-			.setDesc(isPaused ? 'Sync is paused.' : 'Sync is running.')
-			.addButton(btn =>
-				btn
-					.setButtonText(isPaused ? 'Start sync' : 'Pause sync')
-					.onClick(() => {
-						if (isPaused) {
-							this.plugin.scheduler?.setPaused(false);
-							this.plugin.scheduler?.triggerBulkSync();
-						} else {
-							this.plugin.scheduler?.setPaused(true);
-						}
-						this.display();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName('Clear sync history')
+			.setName('Reset plugin')
 			.setDesc(
-				'Forget all sync records. The next bulk sync will re-reconcile every file ' +
-				'with Drive as if starting fresh.',
+				'Deletes connection to cloud service and local sync history and statistics ' +
+				'for the plugin. Does not delete any vault files.',
 			)
 			.addButton(btn =>
 				btn
-					.setButtonText('Clear history')
+					.setButtonText('Reset plugin')
 					.setWarning()
 					.onClick(async () => {
-						await this.plugin.clearSyncHistory();
+						const confirmed = await ConfirmationModal.prompt(
+							this.plugin.app,
+							'Reset plugin?',
+							'This will permanently delete your Google Drive connection, all local ' +
+							'sync records, and statistics. Your vault files will not be affected. ' +
+							'To sync again you will need to reconnect — the plugin will then merge ' +
+							'your local vault with the group vault from scratch.',
+						);
+						if (!confirmed) return;
+						await this.plugin.pluginReset();
 						this.display();
 					}),
 			);
-
-		// --- Statistics (read-only) ---
-		new Setting(containerEl).setName('Statistics').setHeading();
-
-		const stats = this.plugin.statsTracker?.getCurrent();
-		if (stats) {
-			const fields: Array<[string, string, string | number]> = [
-				['Server clock skew', 'serverClockSkew', `${stats.serverClockSkew} ms`],
-				['Api response time', 'APIResponseTime', `${stats.APIResponseTime} ms`],
-				['Bulk sync passes', 'bulkSyncPasses', stats.bulkSyncPasses],
-				['Single file syncs', 'singleFileSyncCount', stats.singleFileSyncCount],
-				['Files pushed', 'filesPushed', stats.filesPushed],
-				['Files pulled', 'filesPulled', stats.filesPulled],
-				['Files merged', 'filesMerged', stats.filesMerged],
-				['Content conflicts', 'contentConflicts', stats.contentConflicts],
-				['Delete conflicts', 'deleteConflicts', stats.deleteConflicts],
-			];
-			for (const [name, , value] of fields) {
-				new Setting(containerEl)
-					.setName(name)
-					.setDesc(String(value));
-			}
-
-			new Setting(containerEl)
-				.setName('Reset statistics')
-				.setDesc('Reset all counters to zero.')
-				.addButton(btn =>
-					btn
-						.setButtonText('Reset')
-						.setWarning()
-						.onClick(async () => {
-							await this.plugin.statsTracker?.reset();
-							this.display();
-						}),
-				);
-		}
 	}
 }
 
