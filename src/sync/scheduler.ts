@@ -67,6 +67,18 @@ export class SyncScheduler {
 			state.nextHoldDownAt = Date.now() + holdMs;
 		}));
 
+		registerEvent(ctx.app.vault.on('delete', file => {
+			const state = this.fileStates.get(file.path);
+			if (!state) return;
+			// Stop monitoring — no point polling a file that no longer exists.
+			state.monitored = false;
+			state.nextPollAt = Infinity;
+			// Arm hold-down so the deletion propagates after the same delay as an edit.
+			// recomputeVisibleFiles will preserve this entry until the timer fires.
+			const holdMs = ctx.settings().openFileChangeHoldDown * 1000;
+			state.nextHoldDownAt = Date.now() + holdMs;
+		}));
+
 		const intervalId = window.setInterval(() => { void this.tick(); }, 1000);
 		registerInterval(intervalId);
 	}
@@ -197,9 +209,13 @@ export class SyncScheduler {
 			if (view.file?.path) visible.add(view.file.path);
 		});
 
-		// Remove entries for files no longer visible (monitoring state is discarded).
-		for (const path of this.fileStates.keys()) {
-			if (!visible.has(path)) this.fileStates.delete(path);
+		// Remove entries for files no longer visible. Preserve an entry only if it
+		// has a pending hold-down (an edit or delete that hasn't propagated yet).
+		// Pending polls are discarded — no point polling an invisible file.
+		for (const [path, state] of this.fileStates) {
+			if (!visible.has(path) && state.nextHoldDownAt === Infinity) {
+				this.fileStates.delete(path);
+			}
 		}
 
 		// Add entries for newly visible files.

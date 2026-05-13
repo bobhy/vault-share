@@ -1,4 +1,4 @@
-import type { SyncAction, SyncContext, SyncRecord } from './types';
+import type { SyncAction, SyncContext } from './types';
 import { resolveConflict } from './conflict-resolver';
 
 export interface FileSyncResult {
@@ -55,8 +55,20 @@ export async function syncOneFile(
 			const content = await ctx.driveFs.readBinary(driveFileId);
 			await ctx.localFs.write(action.path, content);
 			ctx.statsTracker.recordPull();
+			// Re-stat after write: size and mtime must reflect the written content, not
+			// action.local which carries pre-pull values and would cause a false push on
+			// the next poll when the pulled file is a different size.
 			const localSide = ctx.localFs.stat(action.path);
-			await updateRecord(action, ctx, localSide?.mtime ?? 0);
+			const remoteSide = action.remote;
+			await ctx.store.putRecord({
+				path: action.path,
+				driveFileId: remoteSide?.driveFileId ?? driveFileId,
+				localMtime: localSide?.mtime ?? 0,
+				localSize: localSide?.size ?? 0,
+				remoteMtime: remoteSide?.mtime ?? 0,
+				remoteSize: remoteSide?.size ?? 0,
+				syncedAt: Date.now(),
+			});
 			await ctx.store.putContent(action.path, content);
 			return { changed: true, merged: false, hadConflictMarkers: false };
 		}
@@ -113,26 +125,4 @@ export async function syncOneFile(
 	}
 }
 
-/** Write or update the sync record for a successfully synced file. */
-async function updateRecord(
-	action: SyncAction,
-	ctx: SyncContext,
-	localMtimeOverride: number,
-): Promise<void> {
-	const rootFolderId = ctx.driveFolderId();
-	const remoteSide = action.remote ?? await ctx.driveFs.stat(rootFolderId, action.path);
-	const localSide = action.local ?? ctx.localFs.stat(action.path);
-
-	const existing = await ctx.store.getRecord(action.path);
-	const record: SyncRecord = {
-		path: action.path,
-		driveFileId: remoteSide?.driveFileId ?? existing?.driveFileId ?? '',
-		localMtime: localMtimeOverride || (localSide?.mtime ?? 0),
-		remoteMtime: remoteSide?.mtime ?? 0,
-		localSize: localSide?.size ?? 0,
-		remoteSize: remoteSide?.size ?? 0,
-		syncedAt: Date.now(),
-	};
-	await ctx.store.putRecord(record);
-}
 

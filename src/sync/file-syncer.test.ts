@@ -289,6 +289,25 @@ describe('syncOneFile record mtime correctness', () => {
 		expect(rec.remoteMtime).toBeGreaterThan(0);
 	});
 
+	it('pull: stores post-write local size as localSize, not the pre-pull value', async () => {
+		// Remote has larger content (size 10) than the local file (size 8).
+		// If we store action.local.size (8) instead of the post-write size (10),
+		// the next poll sees a size mismatch and pushes the file back.
+		const pullAction: SyncAction = {
+			type: 'pull',
+			path: 'note.md',
+			local:  { path: 'note.md', mtime: 1000, size: 8 },
+			remote: { path: 'note.md', mtime: 2000, size: 10, driveFileId: 'drive-note-1' },
+		};
+
+		await syncOneFile(pullAction, ctx, true);
+
+		const rec = records.get('note.md')!;
+		expect(rec).toBeDefined();
+		// localSize must match the pulled content (remote size = 10), not the stale pre-pull size (8).
+		expect(rec.localSize).toBe(localFiles.get('note.md')!.content.byteLength);
+	});
+
 	it('merge: stores post-write Drive mtime as remoteMtime, not the pre-write value', async () => {
 		ctx = { ...ctx, settings: () => mockSettings({ fileConflict: 'Merge' }) };
 
