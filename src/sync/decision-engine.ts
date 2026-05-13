@@ -53,6 +53,11 @@ function planWithHistory(entry: MixedEntry): SyncAction {
 	if (localStatus === 'unmodified' && remoteStatus === 'deleted') {
 		return action('deleteLocal', entry);
 	}
+	// deleted | deleted → both gone simultaneously; clean up the orphaned record.
+	// localFs.delete is a no-op when the file is already absent.
+	if (localStatus === 'deleted' && remoteStatus === 'deleted') {
+		return action('deleteLocal', entry);
+	}
 	// deleted | modified  or  modified | deleted → conflict
 	if (
 		(localStatus === 'deleted' && remoteStatus === 'modified') ||

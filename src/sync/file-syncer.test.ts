@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { App } from 'obsidian';
 import type { SyncAction, SyncContext, SyncRecord, FileSide } from './types';
 import type { LocalFs } from './local-fs';
@@ -324,5 +324,115 @@ describe('syncOneFile record mtime correctness', () => {
 		expect(rec).toBeDefined();
 		expect(rec.remoteMtime).not.toBe(1000);
 		expect(rec.remoteMtime).toBeGreaterThan(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Delete action tests
+// ---------------------------------------------------------------------------
+
+describe('syncOneFile delete actions', () => {
+	let localFs: LocalFs;
+	let localFiles: Map<string, { content: ArrayBuffer; mtime: number; size: number }>;
+	let driveFs: DriveFsAdapter;
+	let driveFiles: Map<string, { driveFileId: string; content: ArrayBuffer; mtime: number }>;
+	let store: SyncStore;
+	let records: Map<string, SyncRecord>;
+	let ctx: SyncContext;
+
+	beforeEach(() => {
+		({ localFs, files: localFiles } = makeLocalFs());
+		({ driveFs, files: driveFiles } = makeDriveFs());
+		({ store, records } = makeSyncStore());
+
+		ctx = {
+			app: new App(),
+			localFs,
+			driveFs,
+			store,
+			statsTracker: stubStats,
+			settings: () => mockSettings(),
+			clientId: 'abcd1234-0000-0000-0000-000000000000',
+			driveFolderId: () => 'root-folder-id',
+			logger: stubLogger,
+		};
+
+		localFiles.set('note.md', { content: enc('local text'), mtime: 1000, size: 10 });
+		driveFiles.set('note.md', { driveFileId: 'drive-note-1', content: enc('local text'), mtime: 1000 });
+		records.set('note.md', {
+			path: 'note.md', driveFileId: 'drive-note-1',
+			localMtime: 1000, remoteMtime: 1000,
+			localSize: 10, remoteSize: 10, syncedAt: 0,
+		});
+	});
+
+	it('deleteRemote: removes the file from Drive and the sync record', async () => {
+		const action: SyncAction = {
+			type: 'deleteRemote',
+			path: 'note.md',
+			remote: { path: 'note.md', mtime: 1000, size: 10, driveFileId: 'drive-note-1' },
+		};
+
+		const result = await syncOneFile(action, ctx, true);
+
+		expect(result.changed).toBe(true);
+		expect(driveFiles.has('note.md')).toBe(false);
+		expect(records.has('note.md')).toBe(false);
+		// Local file is untouched.
+		expect(localFiles.has('note.md')).toBe(true);
+	});
+
+	it('deleteRemote: returns changed=false when Drive file is already gone', async () => {
+		// Remote file disappeared between planning and execution.
+		driveFiles.clear();
+
+		const action: SyncAction = {
+			type: 'deleteRemote',
+			path: 'note.md',
+			remote: undefined, // no driveFileId in action; stat will return null
+		};
+
+		const result = await syncOneFile(action, ctx, true);
+
+		// driveFs.stat returns null → no delete attempted, record still cleaned up.
+		expect(result.changed).toBe(true);
+		expect(records.has('note.md')).toBe(false);
+	});
+
+	it('deleteLocal: removes the local file and the sync record', async () => {
+		const action: SyncAction = {
+			type: 'deleteLocal',
+			path: 'note.md',
+			local: { path: 'note.md', mtime: 1000, size: 10 },
+		};
+
+		const result = await syncOneFile(action, ctx, true);
+
+		expect(result.changed).toBe(true);
+		expect(localFiles.has('note.md')).toBe(false);
+		expect(records.has('note.md')).toBe(false);
+		// Drive file is untouched.
+		expect(driveFiles.has('note.md')).toBe(true);
+	});
+
+	it('deleteLocal: no-ops the file delete when local is already gone (both-deleted race), still cleans the record', async () => {
+		// Simulate the race: local was already deleted before syncOneFile runs.
+		localFiles.delete('note.md');
+
+		const deleteSpy = vi.spyOn(localFs, 'delete');
+
+		const action: SyncAction = {
+			type: 'deleteLocal',
+			path: 'note.md',
+			local: undefined, // file gone on local side
+		};
+
+		const result = await syncOneFile(action, ctx, true);
+
+		expect(result.changed).toBe(true);
+		// localFs.delete called (it is a no-op when the TFile is absent).
+		expect(deleteSpy).toHaveBeenCalledWith('note.md');
+		// Orphaned record must be cleaned up.
+		expect(records.has('note.md')).toBe(false);
 	});
 });

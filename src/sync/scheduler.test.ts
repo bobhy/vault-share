@@ -370,6 +370,104 @@ describe('SyncScheduler', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// vault.delete — local file deleted while open in a view
+	// -------------------------------------------------------------------------
+
+	it('vault.delete on a tracked file arms the hold-down timer', async () => {
+		const { scheduler, workspace, app } = makeScheduler({ openFileChangeHoldDown: 5 });
+		scheduler.start();
+
+		workspace.emit('file-open', { path: 'notes/hello.md' });
+		await tick(1000); // initial sync
+		singleFileSyncSpy.mockClear();
+
+		app.vault.emit('delete', { path: 'notes/hello.md' });
+
+		await tick(4000); // 4 s — hold-down not yet due
+		expect(singleFileSyncSpy).not.toHaveBeenCalled();
+
+		await tick(2000); // 6 s total — past the 5 s hold-down
+		expect(singleFileSyncSpy).toHaveBeenCalledWith(
+			'notes/hello.md',
+			expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+		);
+	});
+
+	it('vault.delete on an untracked file does not schedule any sync', async () => {
+		const { scheduler, app } = makeScheduler({ openFileChangeHoldDown: 5 });
+		scheduler.start();
+
+		// No file-open — file is not tracked.
+		app.vault.emit('delete', { path: 'notes/hello.md' });
+
+		await tick(30_000);
+		expect(singleFileSyncSpy).not.toHaveBeenCalled();
+	});
+
+	it('vault.delete disables monitoring so no further polls fire after the hold-down', async () => {
+		const { scheduler, workspace, app } = makeScheduler({ openFilePoll: 10, openFileChangeHoldDown: 5 });
+		scheduler.start();
+
+		workspace.emit('file-open', { path: 'notes/hello.md' });
+		await tick(1000); // initial sync
+		singleFileSyncSpy.mockClear();
+
+		scheduler.enableMonitoring('notes/hello.md');
+		app.vault.emit('delete', { path: 'notes/hello.md' });
+
+		// Hold-down fires once (the deletion propagation sync).
+		await tick(6000);
+		expect(singleFileSyncSpy).toHaveBeenCalledTimes(1);
+		singleFileSyncSpy.mockClear();
+
+		// No further polls — monitoring was disabled by the delete handler.
+		await tick(60_000);
+		expect(singleFileSyncSpy).not.toHaveBeenCalled();
+	});
+
+	it('entry is preserved after layout-change when delete hold-down is still pending', async () => {
+		const { scheduler, workspace, app } = makeScheduler({ openFileChangeHoldDown: 5 });
+		scheduler.start();
+
+		workspace.emit('file-open', { path: 'notes/hello.md' });
+		await tick(1000); // initial sync
+		singleFileSyncSpy.mockClear();
+
+		app.vault.emit('delete', { path: 'notes/hello.md' });
+
+		// Layout-change fires before the hold-down expires (file view closed).
+		(workspace as unknown as { setLeaves: (l: LeafStub[]) => void }).setLeaves([]);
+		workspace.emit('layout-change');
+
+		// Hold-down must still fire even though the file is no longer visible.
+		await tick(6000);
+		expect(singleFileSyncSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it('layout-change removes the entry once the delete hold-down has fired', async () => {
+		const { scheduler, workspace, app } = makeScheduler({ openFileChangeHoldDown: 5 });
+		scheduler.start();
+
+		workspace.emit('file-open', { path: 'notes/hello.md' });
+		await tick(1000);
+		singleFileSyncSpy.mockClear();
+
+		app.vault.emit('delete', { path: 'notes/hello.md' });
+
+		// Let the hold-down fire.
+		await tick(6000);
+		singleFileSyncSpy.mockClear();
+
+		// Now the entry has both timers at Infinity; a layout-change should clean it up.
+		(workspace as unknown as { setLeaves: (l: LeafStub[]) => void }).setLeaves([]);
+		workspace.emit('layout-change');
+
+		// No further syncs ever.
+		await tick(60_000);
+		expect(singleFileSyncSpy).not.toHaveBeenCalled();
+	});
+
+	// -------------------------------------------------------------------------
 	// Pause
 	// -------------------------------------------------------------------------
 
