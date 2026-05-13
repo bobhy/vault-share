@@ -17,6 +17,7 @@ export async function singleFileSync(
 	ctx: SyncContext,
 	workspace: Workspace,
 	setStatusBar: (text: string) => void,
+	clearHoldDown?: (path: string) => void,
 ): Promise<void> {
 	const rootFolderId = ctx.driveFolderId();
 	if (!rootFolderId) return;
@@ -66,6 +67,10 @@ export async function singleFileSync(
 			} else if (action.type === 'pull' || fileResult.merged) {
 				// Content changed on disk — refresh the open view.
 				await refreshOpenViews(path, workspace);
+				// Pull/merge wrote the file, which fires a vault modify event and arms
+				// the holdDown timer. Clear it so the scheduler does not push the file
+				// back immediately after a remote pull.
+				clearHoldDown?.(path);
 			}
 
 			setStatusBar(`Updated ${basename(path)}`);
@@ -116,19 +121,22 @@ async function refreshOpenViews(path: string, workspace: Workspace): Promise<voi
 		const view = leaf.view;
 		if (!(view instanceof MarkdownView)) return;
 		if (view.file?.path !== path) return;
-		// Save scroll position and reload.
 		const scrollTop = view.currentMode?.getScroll?.() ?? 0;
-		refreshes.push(
-			view.app.vault.read(file).then(content => {
-				if (view.getMode() === 'source') {
-					view.editor.setValue(content);
-					view.editor.scrollTo(0, scrollTop);
-				} else {
-					// Preview mode: trigger re-render via state change.
-					void leaf.setViewState(leaf.getViewState());
-				}
-			}),
-		);
+		if (view.getMode() === 'source') {
+			// openFile reloads from disk without marking the editor dirty, so
+			// Obsidian's auto-save is not triggered and the file mtime stays stable.
+			refreshes.push(
+				leaf.openFile(file, { active: false }).then(() => {
+					const freshView = leaf.view;
+					if (freshView instanceof MarkdownView) {
+						freshView.editor.scrollTo(0, scrollTop);
+					}
+				}),
+			);
+		} else {
+			// Preview mode: trigger re-render via state change.
+			void leaf.setViewState(leaf.getViewState());
+		}
 	});
 	await Promise.all(refreshes);
 }

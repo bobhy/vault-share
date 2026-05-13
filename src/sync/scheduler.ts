@@ -129,6 +129,12 @@ export class SyncScheduler {
 		return this.fileStates.get(path)?.monitored ?? false;
 	}
 
+	/** Clear any pending holdDown for path. Called after a pull/merge rewrites the file. */
+	clearHoldDown(path: string): void {
+		const state = this.fileStates.get(path);
+		if (state) state.nextHoldDownAt = Infinity;
+	}
+
 	private async tick(): Promise<void> {
 		if (this.paused) return;
 
@@ -154,7 +160,7 @@ export class SyncScheduler {
 			if (now >= Math.min(state.nextHoldDownAt, state.nextPollAt)) {
 				state.nextHoldDownAt = Infinity;
 				state.nextPollAt = state.monitored ? now + pollMs : Infinity;
-				void singleFileSync(path, ctx, workspace, setStatusBar);
+				void singleFileSync(path, ctx, workspace, setStatusBar, p => this.clearHoldDown(p));
 			}
 		}
 	}

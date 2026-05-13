@@ -144,6 +144,7 @@ describe('SyncScheduler', () => {
 			expect.anything(),
 			expect.anything(),
 			expect.anything(),
+			expect.anything(),
 		);
 	});
 
@@ -187,7 +188,7 @@ describe('SyncScheduler', () => {
 		expect(singleFileSyncSpy).not.toHaveBeenCalled();
 
 		await tick(2000); // now 6 s after edit — past the 5 s holdDown
-		expect(singleFileSyncSpy).toHaveBeenCalledWith('notes/hello.md', expect.anything(), expect.anything(), expect.anything());
+		expect(singleFileSyncSpy).toHaveBeenCalledWith('notes/hello.md', expect.anything(), expect.anything(), expect.anything(), expect.anything());
 	});
 
 	it('resets the holdDown timer on each subsequent edit', async () => {
@@ -396,7 +397,7 @@ describe('SyncScheduler', () => {
 
 		scheduler.setPaused(false);
 		await tick(1000);
-		expect(singleFileSyncSpy).toHaveBeenCalledWith('notes/hello.md', expect.anything(), expect.anything(), expect.anything());
+		expect(singleFileSyncSpy).toHaveBeenCalledWith('notes/hello.md', expect.anything(), expect.anything(), expect.anything(), expect.anything());
 	});
 
 	// -------------------------------------------------------------------------
