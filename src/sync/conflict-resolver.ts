@@ -1,6 +1,7 @@
 import type { SyncAction, SyncContext, SyncRecord } from './types';
 import type { FileConflictStrategy } from '../settings';
 import { isMergeEligible, threeWayMerge } from './merge';
+import { shortClientId } from './client-id';
 
 const PLACEHOLDER_TEXT = 'Placeholder for deleted file';
 
@@ -110,7 +111,7 @@ async function resolveKeepBoth(
 	ctx: SyncContext,
 ): Promise<ConflictResult> {
 	const now = new Date();
-	const localConflictPath = buildConflictFilename(path, ctx.clientId, now);
+	const localConflictPath = buildConflictFilename(path, shortClientId(ctx.clientId), now);
 	const remoteConflictPath = buildConflictFilename(path, 'group', now);
 	const rootFolderId = ctx.driveFolderId();
 	const sampler = { value: false };
@@ -209,7 +210,7 @@ async function resolveMerge(
 	const localText = dec.decode(localBytes);
 	const remoteText = dec.decode(remoteBytes);
 
-	const result = threeWayMerge(baseText, localText, remoteText, ctx.clientId, 'group');
+	const result = threeWayMerge(baseText, localText, remoteText);
 	const mergedBytes = new TextEncoder().encode(result.content).buffer;
 
 	// Write merged content to both sides.
@@ -237,7 +238,7 @@ async function resolveDeleteConflict(
 
 	if (!action.local) {
 		// Local was deleted; remote was modified. Create placeholder locally.
-		const placeholderPath = buildConflictFilename(path, ctx.clientId, now);
+		const placeholderPath = buildConflictFilename(path, shortClientId(ctx.clientId), now);
 		await ctx.localFs.write(placeholderPath, placeholderBytes);
 		// Push placeholder to Drive so all vaults see it.
 		const driveSide = await ctx.driveFs.write(rootFolderId, placeholderPath, placeholderBytes, ctx.statsTracker, sampler);

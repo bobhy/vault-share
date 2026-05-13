@@ -160,7 +160,7 @@ export default class VaultSharePlugin extends Plugin {
 
 		this.addCommand({
 			id: 'toggle-file-monitoring',
-			name: 'Toggle monitoring for remote changes',
+			name: 'Toggle monitoring for remote changes on current file',
 			editorCallback: (_editor, ctx) => {
 				const file = ctx.file;
 				if (!file || this.excludeMatcher.isExcluded(file.path)) return;
@@ -196,8 +196,8 @@ export default class VaultSharePlugin extends Plugin {
 			menu.addItem(item => {
 				item
 					.setTitle(monitored
-						? 'Disable monitoring for remote changes'
-						: 'Enable monitoring for remote changes')
+						? 'Stop monitoring for remote changes to this file'
+						: 'Monitor for remote changes to this file')
 					.setIcon('sync')
 					.onClick(() => { this.toggleMonitoringForFile(abstractFile.path); });
 			});
@@ -210,8 +210,8 @@ export default class VaultSharePlugin extends Plugin {
 			menu.addItem(item => {
 				item
 					.setTitle(monitored
-						? 'Disable monitoring for remote changes'
-						: 'Enable monitoring for remote changes')
+						? 'Stop monitoring for remote changes to this file'
+						: 'Monitor for remote changes to this file')
 					.setIcon('sync')
 					.onClick(() => { this.toggleMonitoringForFile(file.path); });
 			});

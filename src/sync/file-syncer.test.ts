@@ -139,7 +139,7 @@ describe('syncOneFile conflict handling', () => {
 			store,
 			statsTracker: stubStats,
 			settings: () => mockSettings({ fileConflict: 'Keep Both' }),
-			clientId: 'test-client-uuid',
+			clientId: 'abcd1234-0000-0000-0000-000000000000',
 			driveFolderId: () => 'root-folder-id',
 			logger: stubLogger,
 		};
@@ -173,7 +173,7 @@ describe('syncOneFile conflict handling', () => {
 			await syncOneFile(conflictAction, ctx, false);
 
 			const conflictPaths = [...records.keys()].filter(k => k.includes('-conflict-'));
-			const localConflict = conflictPaths.find(k => k.includes('test-client-uuid'));
+			const localConflict = conflictPaths.find(k => k.includes('abcd1234'));
 			expect(localConflict).toBeDefined();
 
 			const rec = records.get(localConflict!)!;
@@ -254,7 +254,7 @@ describe('syncOneFile record mtime correctness', () => {
 			store,
 			statsTracker: stubStats,
 			settings: () => mockSettings(),
-			clientId: 'test-client-uuid',
+			clientId: 'abcd1234-0000-0000-0000-000000000000',
 			driveFolderId: () => 'root-folder-id',
 			logger: stubLogger,
 		};

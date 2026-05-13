@@ -20,22 +20,20 @@ export function isMergeEligible(path: string): boolean {
 
 /**
  * Perform a diff3 three-way merge with vault-share conflict marker format.
- * Markers use an 'x' prefix so they render acceptably in markdown:
+ * Markers use a '> ' prefix so they render as markdown blockquotes:
  *
- *   x<<<<< <localClientId>
+ *   > <<<<< local
  *   ...local lines...
- *   x||||| base
+ *   > ||||| base
  *   ...base lines...
- *   x=====
+ *   > =====
  *   ...remote lines...
- *   x>>>>> <remoteClientId>
+ *   > >>>>> group
  */
 export function threeWayMerge(
 	base: string,
 	local: string,
 	remote: string,
-	localClientId: string,
-	remoteClientId: string,
 ): MergeResult {
 	const baseLines = splitLines(base);
 	const localLines = splitLines(local);
@@ -52,13 +50,13 @@ export function threeWayMerge(
 			outputLines.push(...region.ok);
 		} else if (region.conflict) {
 			hasConflicts = true;
-			outputLines.push(`x<<<<< ${localClientId}`);
+			outputLines.push('> <<<<< local');
 			outputLines.push(...(region.conflict.a ?? []));
-			outputLines.push(`x||||| base`);
+			outputLines.push('> ||||| base');
 			outputLines.push(...(region.conflict.o ?? []));
-			outputLines.push('x=====');
+			outputLines.push('> =====');
 			outputLines.push(...(region.conflict.b ?? []));
-			outputLines.push(`x>>>>> ${remoteClientId}`);
+			outputLines.push('> >>>>> group');
 		}
 	}
 

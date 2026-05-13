@@ -6,6 +6,12 @@ import type { SyncStore } from './store';
  * so each vault installation gets a unique identity even when two vaults
  * run on the same device.
  */
+export function shortClientId(id: string): string {
+	// Use only the first UUID segment (8 hex chars) for human-readable labels.
+	return id.split('-')[0] ?? id.slice(0, 8);
+}
+
+
 export async function resolveClientId(store: SyncStore): Promise<string> {
 	const stored = await store.getClientId();
 	if (stored) return stored;
