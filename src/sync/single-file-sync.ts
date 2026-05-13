@@ -48,15 +48,15 @@ export async function singleFileSync(
 
 		const action = actions[0]!;
 		ctx.logger.debug(`singleFileSync: ${path} — action=${action.type}`);
-		const overlay = showSyncOverlay(path, workspace);
 
-		try {
-			const fileResult = await syncOneFile(action, ctx, hasHistory);
+		const fileResult = await syncOneFile(action, ctx, hasHistory);
 
-			if (!fileResult.changed) return;
+		if (!fileResult.changed) return;
 
-			if (fileResult.conflictLocalPath) {
-				// Conflict files created — reopen view on the local conflict file.
+		if (fileResult.conflictLocalPath) {
+			// Conflict files created — reopen view on the local conflict file.
+			const overlay = showSyncOverlay(path, workspace);
+			try {
 				await reopenOnConflictFile(fileResult.conflictLocalPath, workspace);
 				await ConfirmationModal.prompt(
 					ctx.app,
@@ -64,21 +64,25 @@ export async function singleFileSync(
 					`Sync downloaded a conflicting change to the currently open file. ` +
 					`The conflicting file is <code>${fileResult.conflictRemotePath ?? ''}</code>`,
 				);
-			} else if (action.type === 'pull' || fileResult.merged) {
-				// Content changed on disk — refresh the open view.
+			} finally {
+				overlay();
+			}
+		} else if (action.type === 'pull' || fileResult.merged) {
+			// Content changed on disk — refresh the open view.
+			const overlay = showSyncOverlay(path, workspace);
+			try {
 				await refreshOpenViews(path, workspace);
 				// Pull/merge wrote the file, which fires a vault modify event and arms
 				// the holdDown timer. Clear it so the scheduler does not push the file
 				// back immediately after a remote pull.
 				clearHoldDown?.(path);
+			} finally {
+				overlay();
 			}
-
-			setStatusBar(`Updated ${basename(path)}`);
-			await ctx.statsTracker.flush();
-
-		} finally {
-			overlay();
 		}
+
+		setStatusBar(`Updated ${basename(path)}`);
+		await ctx.statsTracker.flush();
 
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
