@@ -9,7 +9,7 @@ export default defineConfig({
 	},
 	resolve: {
 		alias: {
-			obsidian: "/shares/src/obsidian/obsidian-mock/src/index.ts",
+			obsidian: "obsidian-mock/src/index.ts",
 		},
 	},
 });
