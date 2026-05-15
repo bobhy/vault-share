@@ -328,6 +328,52 @@ describe('syncOneFile record mtime correctness', () => {
 });
 
 // ---------------------------------------------------------------------------
+// noOp and pull edge-cases
+// ---------------------------------------------------------------------------
+
+describe('syncOneFile noOp and pull edge-cases', () => {
+	let ctx: SyncContext;
+
+	beforeEach(() => {
+		const { localFs } = makeLocalFs();
+		const { driveFs } = makeDriveFs();
+		const { store } = makeSyncStore();
+		ctx = {
+			app: new App(),
+			localFs,
+			driveFs,
+			store,
+			statsTracker: stubStats,
+			settings: () => mockSettings(),
+			clientId: 'abcd1234-0000-0000-0000-000000000000',
+			driveFolderId: () => 'root-folder-id',
+			logger: stubLogger,
+		};
+	});
+
+	it('noOp: returns changed=false without touching any store or fs', async () => {
+		const action: SyncAction = { type: 'noOp', path: 'untracked.md' };
+		const result = await syncOneFile(action, ctx, false);
+		expect(result).toEqual({ changed: false, merged: false, hadConflictMarkers: false });
+	});
+
+	it('pull: returns changed=false and logs a warning when the Drive file is gone', async () => {
+		const warnFn = vi.fn();
+		const localLogger = { ...stubLogger, warning: warnFn } as unknown as Logger;
+		ctx = { ...ctx, logger: localLogger };
+		const action: SyncAction = {
+			type: 'pull',
+			path: 'gone.md',
+			// No driveFileId in remote, and driveFs.stat will return null for unknown path.
+			remote: undefined,
+		};
+		const result = await syncOneFile(action, ctx, false);
+		expect(result.changed).toBe(false);
+		expect(warnFn).toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Delete action tests
 // ---------------------------------------------------------------------------
 

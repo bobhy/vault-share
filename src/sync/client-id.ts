@@ -8,7 +8,8 @@ import type { SyncStore } from './store';
  */
 export function shortClientId(id: string): string {
 	// Use only the first UUID segment (8 hex chars) for human-readable labels.
-	return id.split('-')[0] ?? id.slice(0, 8);
+	const hyphen = id.indexOf('-');
+	return hyphen === -1 ? id.slice(0, 8) : id.slice(0, hyphen);
 }
 
 

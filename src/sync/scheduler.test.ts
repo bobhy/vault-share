@@ -468,6 +468,35 @@ describe('SyncScheduler', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// destroy and isPaused
+	// -------------------------------------------------------------------------
+
+	it('destroy clears all file state so no further syncs fire', async () => {
+		const { scheduler, workspace } = makeScheduler();
+		scheduler.start();
+
+		workspace.emit('file-open', { path: 'notes/hello.md' });
+		await tick(1000); // initial sync
+		singleFileSyncSpy.mockClear();
+
+		scheduler.destroy();
+
+		await tick(60_000);
+		expect(singleFileSyncSpy).not.toHaveBeenCalled();
+	});
+
+	it('isPaused reflects the current pause state', () => {
+		const { scheduler } = makeScheduler();
+		scheduler.start();
+
+		expect(scheduler.isPaused()).toBe(false);
+		scheduler.setPaused(true);
+		expect(scheduler.isPaused()).toBe(true);
+		scheduler.setPaused(false);
+		expect(scheduler.isPaused()).toBe(false);
+	});
+
+	// -------------------------------------------------------------------------
 	// Pause
 	// -------------------------------------------------------------------------
 
@@ -518,5 +547,74 @@ describe('SyncScheduler', () => {
 		scheduler.triggerBulkSync();
 		await tick(1000);
 		expect(bulkSyncRunSpy).toHaveBeenCalledTimes(2);
+	});
+
+	// -------------------------------------------------------------------------
+	// clearHoldDown
+	// -------------------------------------------------------------------------
+
+	it('clearHoldDown cancels a pending hold-down so no sync fires', async () => {
+		const { scheduler, workspace, app } = makeScheduler({ openFileChangeHoldDown: 5 });
+		scheduler.start();
+
+		workspace.emit('file-open', { path: 'notes/hello.md' });
+		await tick(1000); // initial sync
+		singleFileSyncSpy.mockClear();
+
+		app.vault.emit('modify', { path: 'notes/hello.md' });
+		// Clear the hold-down before it expires
+		scheduler.clearHoldDown('notes/hello.md');
+
+		await tick(10_000); // well past the 5 s hold-down
+		expect(singleFileSyncSpy).not.toHaveBeenCalled();
+	});
+
+	// -------------------------------------------------------------------------
+	// Background tab filtering
+	// -------------------------------------------------------------------------
+
+	it('does not track a file in a background tab during layout-change', async () => {
+		const { scheduler, workspace } = makeScheduler({ openFilePoll: 10 });
+		scheduler.start();
+
+		// Set up: active leaf and a background leaf in the same tab group.
+		const activeLeaf = { view: { file: { path: 'notes/active.md' } }, parent: null as unknown };
+		const bgLeaf = { view: { file: { path: 'notes/background.md' } }, parent: null as unknown };
+		// Both leaves share a tab group where activeLeaf is the active one.
+		const tabGroup = { activeLeaf };
+		activeLeaf.parent = tabGroup;
+		bgLeaf.parent = tabGroup;
+
+		(workspace as unknown as { setLeaves: (l: LeafStub[]) => void }).setLeaves([activeLeaf as LeafStub, bgLeaf as LeafStub]);
+		workspace.emit('layout-change');
+
+		await tick(1000); // initial sync for visible file
+		// Active file should sync; background file should not.
+		const syncedPaths = (singleFileSyncSpy.mock.calls as string[][]).map(c => c[0]);
+		expect(syncedPaths).toContain('notes/active.md');
+		expect(syncedPaths).not.toContain('notes/background.md');
+
+		expect(scheduler.isMonitored('notes/background.md')).toBe(false);
+	});
+
+	// -------------------------------------------------------------------------
+	// Newly visible files via layout-change
+	// -------------------------------------------------------------------------
+
+	it('adds and syncs a newly visible file when layout-change fires', async () => {
+		const { scheduler, workspace } = makeScheduler();
+		scheduler.start();
+
+		// No file-open — file not tracked yet.
+		expect(scheduler.isMonitored('notes/new.md')).toBe(false);
+
+		(workspace as unknown as { setLeaves: (l: LeafStub[]) => void }).setLeaves([
+			{ view: { file: { path: 'notes/new.md' } } },
+		]);
+		workspace.emit('layout-change');
+
+		await tick(1000); // initial sync
+		const syncedPaths = (singleFileSyncSpy.mock.calls as string[][]).map(c => c[0]);
+		expect(syncedPaths).toContain('notes/new.md');
 	});
 });
