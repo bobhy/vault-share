@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3]
+
+**BETA VERSION**  
+Releasing pre V1.0 because I think it's basically reliable and I'm eager for your feedback (about any aspect of this project).
+However, no part of the user or other accessible interface should be considered stable.  
+
+Once we hit V1.0 (soon), this project will abide by semver semantics and you'll be able to do the stability calculus yourself.
+
+### Changed
+- depend on not-yet-accepted PR version of `obsidian-mocks`; changed dev dependency here to pull from PR branch in Github (no functional difference)
+- cleaned up Settings page.
+- prepare for beta release: add care-and-feeding user doc to README.md
+
+### Removed
+- settings "Modification confirmation threshold" and "Minimum files for confirmantion" removed from settings page.    
+Plugin still can raise a warning if the threshold is exceeded, but the only way to change the limits is to edit `data.json` and restart the plugin.
+
 ## [0.1.2]
 
 ### Added
