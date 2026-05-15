@@ -52,8 +52,12 @@ export class ExcludeMatcher {
 		const normalised = normalisePath(dirPath);
 		// Always descend if not excluded.
 		if (!this.isExcluded(normalised)) return true;
-		// Excluded but a re-inclusion rule targets something inside it.
-		return this.reincludePrefixes.some(p => p === normalised || normalised.startsWith(p + '/'));
+		// Excluded but this directory is a direct ancestor of a re-included path.
+		// reincludePrefixes already contains every ancestor of every re-inclusion rule,
+		// so an exact-match is sufficient — a startsWith check would incorrectly
+		// include sibling directories that share the same prefix (e.g. ".obsidian/themes"
+		// when only ".obsidian/plugins/vault-share" is re-included).
+		return this.reincludePrefixes.some(p => p === normalised);
 	}
 }
 
@@ -100,9 +104,17 @@ function globToRegex(glob: string): RegExp {
 	let i = 0;
 	while (i < glob.length) {
 		if (glob[i] === '*' && glob[i + 1] === '*') {
-			src += '.*';
-			i += 2;
-			if (glob[i] === '/') i++; // consume trailing slash after **
+			if (glob[i + 2] === '/') {
+				// **/ → match zero-or-more complete path segments as a prefix.
+				// Using (.*\/)? rather than .*\/ ensures segment-boundary anchoring:
+				// **/tmp/** must NOT match "notmp/foo" via the "tmp" substring.
+				src += '(.*\\/)?';
+				i += 3;
+			} else {
+				// ** at end of pattern or not followed by / → match any remainder.
+				src += '.*';
+				i += 2;
+			}
 		} else if (glob[i] === '*') {
 			src += '[^/]*';
 			i++;
