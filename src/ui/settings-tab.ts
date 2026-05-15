@@ -138,42 +138,6 @@ export class VaultShareSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		new Setting(containerEl)
-			.setName('Modification confirmation threshold')
-			.setDesc(
-				'Show a confirmation dialog when bulk sync would modify more than this ' +
-				'percentage of vault files (0 = always confirm, 100 = never confirm).',
-			)
-			.addText(text =>
-				text
-					.setValue(String(this.plugin.settings.fileModificationConfirmationThreshold))
-					.onChange(async value => {
-						const n = parseInt(value, 10);
-						if (!isNaN(n) && n >= 0 && n <= 100) {
-							this.plugin.settings.fileModificationConfirmationThreshold = n;
-							await this.plugin.saveData(this.plugin.settings);
-						}
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName('Minimum files for confirmation')
-			.setDesc('Skip the modification confirmation when the vault has fewer than this many syncable files.')
-			.addText(text =>
-				text
-					.setValue(String(this.plugin.settings.fileModificationConfirmationMin))
-					.onChange(async value => {
-						const n = parseInt(value, 10);
-						if (!isNaN(n) && n >= 0) {
-							this.plugin.settings.fileModificationConfirmationMin = n;
-							await this.plugin.saveData(this.plugin.settings);
-						}
-					}),
-			);
-
-		// --- Sync control ---
-		new Setting(containerEl).setName('Sync control').setHeading();
-
 		const isPaused = this.plugin.scheduler?.isPaused() ?? false;
 		new Setting(containerEl)
 			.setName('Sync status')
@@ -181,6 +145,7 @@ export class VaultShareSettingTab extends PluginSettingTab {
 			.addButton(btn =>
 				btn
 					.setButtonText(isPaused ? 'Start sync' : 'Pause sync')
+					.setCta()
 					.onClick(() => {
 						if (isPaused) {
 							this.plugin.scheduler?.setPaused(false);
@@ -220,7 +185,7 @@ export class VaultShareSettingTab extends PluginSettingTab {
 				.addButton(btn =>
 					btn
 						.setButtonText('Reset')
-						.setWarning()
+						.setCta()
 						.onClick(async () => {
 							await this.plugin.statsTracker?.reset();
 							this.display();
@@ -228,8 +193,8 @@ export class VaultShareSettingTab extends PluginSettingTab {
 				);
 		}
 
-		// --- Plugin ---
-		new Setting(containerEl).setName('Plugin').setHeading();
+		// --- Logging ---
+		new Setting(containerEl).setName('Logging').setHeading();
 
 		new Setting(containerEl)
 			.setName('Log level')
@@ -274,6 +239,9 @@ export class VaultShareSettingTab extends PluginSettingTab {
 						}
 					}),
 			);
+
+		// --- Plugin ---
+		new Setting(containerEl).setName('Plugin').setHeading();
 
 		new Setting(containerEl)
 			.setName('Reset plugin')
