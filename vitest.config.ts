@@ -6,6 +6,12 @@ export default defineConfig({
 		passWithNoTests: true,
 		environment: "jsdom",
 		clearMocks: true,
+		coverage: {
+			provider: "v8",
+			include: ["src/**/*.ts"],
+			exclude: ["src/**/*.test.ts", "src/**/__mocks__/**", "src/**/test-helpers.ts"],
+			reporter: ["text", "html"],
+		},
 	},
 	resolve: {
 		alias: {
