@@ -69,7 +69,8 @@ export class DriveFsAdapter {
 		let parentId = rootFolderId;
 
 		for (const segment of segments) {
-			parentId = await this.api.resolveFolder(`${parentId}/${segment}`);
+			const existing = await this.api.findFolder(parentId, segment);
+			parentId = existing ? existing.id : (await this.api.createFolder(parentId, segment)).id;
 		}
 
 		const start = Date.now();
