@@ -8,11 +8,24 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { writeFile } from "node:fs/promises";
+import { secretKeys } from "../../src/gdrive/secret-keys.js";
 
 const execAsync = promisify(exec);
 
+// Get the vault name from the running Obsidian instance so we can derive the
+// correct vault-scoped secret key.
+const { stdout: vaultStdout } = await execAsync(
+	`obsidian eval 'code=app.vault.getName()'`,
+	{ timeout: 10_000 },
+);
+const vaultLine = vaultStdout.split("\n").map(l => l.trim()).find(l => l.startsWith("=> "));
+if (!vaultLine) throw new Error(`Could not read vault name from Obsidian:\n${vaultStdout}`);
+const vaultName = vaultLine.slice(3);
+
+const refreshKey = secretKeys(vaultName).refreshToken;
+
 const { stdout } = await execAsync(
-	`obsidian eval 'code=app.secretStorage.getSecret("vault-share-googledrive-refresh-token")'`,
+	`obsidian eval 'code=app.secretStorage.getSecret("${refreshKey}")'`,
 	{ timeout: 10_000 },
 );
 

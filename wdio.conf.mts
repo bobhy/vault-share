@@ -4,6 +4,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
+import { secretKeys } from "./src/gdrive/secret-keys.js";
 
 // Single-vault e2e tests. Run with: npm run test:e2e:single
 // One-time token setup:  npm run setup:e2e:wdio
@@ -80,8 +81,13 @@ export async function injectAndConfigure(
 	refreshToken: string,
 	driveFolderPath: string,
 ): Promise<void> {
-	await br.executeObsidian(async ({ app }, token, folderPath) => {
-		await app.secretStorage.setSecret("vault-share-googledrive-refresh-token", token);
+	// Derive the vault-scoped secret key in Node before entering the browser context,
+	// so the callback can receive it as a plain string argument.
+	const vaultName = await br.executeObsidian(({ app }) => app.vault.getName()) as unknown as string;
+	const refreshKey = secretKeys(vaultName).refreshToken;
+
+	await br.executeObsidian(async ({ app }, token, folderPath, keyName) => {
+		await app.secretStorage.setSecret(keyName as string, token as string);
 
 		type Plugin = {
 			auth: { loadFromSecretStorage: () => void };
@@ -99,7 +105,7 @@ export async function injectAndConfigure(
 		plugin.settings.driveFolderPath = folderPath;
 		const folderId = await plugin.api.resolveFolder(folderPath);
 		(plugin as unknown as { driveFolderId: string }).driveFolderId = folderId;
-	}, refreshToken, driveFolderPath);
+	}, refreshToken, driveFolderPath, refreshKey);
 }
 
 /**

@@ -1,6 +1,7 @@
 import { App, requestUrl } from 'obsidian';
 import { GDriveError } from './errors';
 import { GOOGLE_CLIENT_ID, RELAY_BASE_URL } from './constants';
+import { secretKeys } from './secret-keys';
 export { GOOGLE_CLIENT_ID, RELAY_BASE_URL };
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -8,19 +9,6 @@ const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 
 const REDIRECT_URI = `${RELAY_BASE_URL}/google/callback`;
-
-// Keys are namespaced per vault so multiple Obsidian instances on the same
-// machine never overwrite each other's tokens.
-// SecretStorage IDs must be lowercase alphanumeric with dashes only, so we
-// sanitize the vault name before embedding it.
-function secretKeys(vaultName: string) {
-	const safe = vaultName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'default';
-	return {
-		refreshToken: `vault-share-${safe}-refresh-token`,
-		accessToken:  `vault-share-${safe}-access-token`,
-		tokenExpiry:  `vault-share-${safe}-token-expiry`,
-	};
-}
 
 /** Millis before expiry at which the plugin proactively refreshes the access token. */
 const PROACTIVE_REFRESH_MS = 60_000;
