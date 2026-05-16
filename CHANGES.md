@@ -11,12 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Many unit tests, trying to get code coverage numbers off the floor.
+  Currently, this project has a devDependency on an unreleased version of `obsidian-mocks` to get broader test coverage.
 
 ### Fixed
 - when creating new files in Google Drive, create them in correct subdirectory, not in GUID folder in root.
 - excludeRules now correctly re-include only the folders that exactly match the pattern. 
   (A bug found by new unit tests!)
 - Updated end-to-end tests to use current credential.
+- fixed [#6](https://github.com/bobhy/vault-share/issues/6); 
+  when user clicks "Disconnect", just forget local copy of credentials, don't revoke the authorization grant.
 
 ## [0.1.3]
 

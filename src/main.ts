@@ -239,9 +239,10 @@ export default class VaultSharePlugin extends Plugin {
 		window.open(url, '_blank');
 	}
 
-	/** Revoke tokens and clear credentials. */
+	/** Clear local credentials without revoking the Google authorization. Revoking
+	 * would invalidate all other connected clients sharing the same Google account. */
 	async disconnect() {
-		await this.auth.revokeToken();
+		this.auth.clearSecretStorage();
 		this.driveFolderId = '';
 		new Notice('Disconnected from Google Drive.');
 	}

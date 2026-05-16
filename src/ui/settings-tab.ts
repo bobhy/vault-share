@@ -39,7 +39,7 @@ export class VaultShareSettingTab extends PluginSettingTab {
 			.setName('Google Drive connection')
 			.setDesc(
 				isConnected
-					? 'Connected. Click disconnect to revoke access and clear stored credentials.'
+					? 'Connected. Click disconnect to clear stored credentials for this vault.'
 					: 'Not connected. Click connect to authenticate with Google Drive.',
 			)
 			.addButton(btn =>
