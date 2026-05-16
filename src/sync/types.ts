@@ -88,6 +88,6 @@ export interface SyncContext {
 	statsTracker: StatsTracker;
 	settings: () => VaultShareSettings;
 	clientId: string;
-	driveFolderId: () => string;  // getter so re-resolution after connect is visible
+	driveFolderId: () => string;  // getter so re-resolution after log in is visible
 	logger: Logger;
 }

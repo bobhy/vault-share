@@ -31,7 +31,7 @@ export class BulkSync {
 
 		const rootFolderId = this.ctx.driveFolderId();
 		if (!rootFolderId) {
-			this.ctx.logger.debug('Bulk sync skipped: not connected to Drive');
+			this.ctx.logger.debug('Bulk sync skipped: not logged in to Drive');
 			return result;
 		}
 

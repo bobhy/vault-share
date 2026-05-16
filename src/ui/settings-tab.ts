@@ -36,22 +36,22 @@ export class VaultShareSettingTab extends PluginSettingTab {
 
 		const isConnected = this.plugin.auth.isAuthenticated;
 		new Setting(containerEl)
-			.setName('Google Drive connection')
+			.setName('Google Drive account')
 			.setDesc(
 				isConnected
-					? 'Connected. Click disconnect to clear stored credentials for this vault.'
-					: 'Not connected. Click connect to authenticate with Google Drive.',
+					? 'Logged in. Click Log Out to clear stored credentials for this vault.'
+					: 'Not logged in. Click Log In to authenticate with Google Drive.',
 			)
 			.addButton(btn =>
 				btn
-					.setButtonText(isConnected ? 'Disconnect' : 'Connect')
+					.setButtonText(isConnected ? 'Log Out' : 'Log In')
 					.setCta()
 					.onClick(async () => {
 						if (this.plugin.auth.isAuthenticated) {
-							await this.plugin.disconnect();
+							await this.plugin.logout();
 							this.display();
 						} else {
-							await this.plugin.connect();
+							await this.plugin.login();
 						}
 					}),
 			);
@@ -259,7 +259,7 @@ export class VaultShareSettingTab extends PluginSettingTab {
 							'Reset plugin?',
 							'This will permanently delete your Google Drive connection, all local ' +
 							'sync records, and statistics. Your vault files will not be affected. ' +
-							'To sync again you will need to reconnect — the plugin will then merge ' +
+							'To sync again you will need to log in again — the plugin will then merge ' +
 							'your local vault with the group vault from scratch.',
 						);
 						if (!confirmed) return;

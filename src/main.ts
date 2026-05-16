@@ -128,7 +128,7 @@ export default class VaultSharePlugin extends Plugin {
 				this.auth.saveToSecretStorage();
 				this.driveFolderId = await this.resolveDriveFolder();
 				this.scheduler?.triggerBulkSync();
-				new Notice('Google Drive connected.');
+				new Notice('Logged in to Google Drive.');
 				this.settingTab.display();
 			} catch (err) {
 				new Notice(`Connection failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -234,17 +234,17 @@ export default class VaultSharePlugin extends Plugin {
 	}
 
 	/** Open the browser to begin the Google OAuth flow. */
-	async connect() {
+	async login() {
 		const url = this.auth.getAuthorizationUrl();
 		window.open(url, '_blank');
 	}
 
 	/** Clear local credentials without revoking the Google authorization. Revoking
 	 * would invalidate all other connected clients sharing the same Google account. */
-	async disconnect() {
+	async logout() {
 		this.auth.clearSecretStorage();
 		this.driveFolderId = '';
-		new Notice('Disconnected from Google Drive.');
+		new Notice('Logged out from Google Drive.');
 	}
 
 	/** Called by settings tab when driveFolderPath changes. */
@@ -257,8 +257,8 @@ export default class VaultSharePlugin extends Plugin {
 			const proceed = await ConfirmationModal.prompt(
 				this.app,
 				'Change group vault',
-				`Changing the group vault will disconnect from <strong>${oldPath}</strong> ` +
-				`and require you to connect to <strong>${newPath}</strong>. ` +
+				`Changing the group vault will log out from <strong>${oldPath}</strong> ` +
+				`and require you to log in to <strong>${newPath}</strong>. ` +
 				`The plugin will then merge with <strong>${newPath}</strong>. Proceed?`,
 			);
 			if (!proceed) return;

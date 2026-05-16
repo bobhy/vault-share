@@ -78,7 +78,7 @@ export class GDriveAuth {
 		this.accessTokenExpiry = 0;
 	}
 
-	/** Clear all stored tokens from SecretStorage and memory. Called on disconnect. */
+	/** Clear all stored tokens from SecretStorage and memory. Called on log out. */
 	clearSecretStorage(): void {
 		const keys = secretKeys(this.app.vault.getName());
 		this.refreshToken = '';
@@ -117,10 +117,10 @@ export class GDriveAuth {
 	 */
 	async handleAuthCallback(params: Record<string, string | undefined>): Promise<void> {
 		if (!this.authState) {
-			throw new GDriveError('No pending auth flow. Start by clicking Connect.', 'unknown');
+			throw new GDriveError('No pending auth flow. Start by clicking Log In.', 'unknown');
 		}
 		if (!params.state || params.state !== this.authState) {
-			throw new GDriveError('State mismatch — possible CSRF. Please try connecting again.', 'unknown');
+			throw new GDriveError('State mismatch — possible CSRF. Please try logging in again.', 'unknown');
 		}
 		this.authState = null;
 
@@ -147,10 +147,10 @@ export class GDriveAuth {
 	 */
 	async getAccessToken(): Promise<string> {
 		if (!this.refreshToken) {
-			throw new GDriveError('Not authenticated. Connect to Google Drive in settings.', 'auth-expired');
+			throw new GDriveError('Not authenticated. Log in to Google Drive in settings.', 'auth-expired');
 		}
 		if (this.authFailedAt > 0 && Date.now() - this.authFailedAt < AUTH_FAILED_COOLDOWN_MS) {
-			throw new GDriveError('Authentication failed. Reconnect in settings.', 'auth-expired');
+			throw new GDriveError('Authentication failed. Log in again in settings.', 'auth-expired');
 		}
 		if (this.accessToken && Date.now() < this.accessTokenExpiry - PROACTIVE_REFRESH_MS) {
 			return this.accessToken;
