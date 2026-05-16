@@ -3,7 +3,7 @@
 	"name": "Vault Share",
 	"version": "0.2.0",
 	"minAppVersion": "1.11.4",
-	"description": "Share Obsidian vaults between devices and users by syncing through Google Drive.",
+	"description": "Share vaults between devices and users by syncing through Google Drive.",
 	"author": "Bob Hyman",
 	"authorUrl": "https://github.com/bobhy",
 	"fundingUrl": "https://github.com/sponsors/bobhy",
