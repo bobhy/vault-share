@@ -93,7 +93,7 @@ The plugin authenticates through a Cloudflare Worker relay (`google-auth-relay/w
 3. Navigate to **APIs & Services → Credentials → Create credentials → OAuth client ID**.
 4. Set application type to **Web application**.
 5. Under **Authorized redirect URIs**, add the relay callback URL:
-   ```
+   ```text
    https://<your-worker-subdomain>.workers.dev/google/callback
    ```
    Replace `<your-worker-subdomain>` with your Cloudflare Worker URL. The current relay URL is in `src/gdrive/auth.ts` as `RELAY_BASE_URL`.
