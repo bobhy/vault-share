@@ -59,17 +59,41 @@ export class VaultShareSettingTab extends PluginSettingTab {
 		// --- Sync ---
 		new Setting(containerEl).setName('Synchronization').setHeading();
 
+		new Setting(containerEl).setName('Conflict resolution').setHeading();
+
 		new Setting(containerEl)
-			.setName('Conflict resolution')
-			.setDesc('How to handle files modified on two devices before syncing.')
+			.setName('For most files')
+			.setDesc(
+				'Applies when both the local vault and the group vault have changed a file since it was last synced. ' +
+				'Keep both: rename both versions with a timestamp suffix. ' +
+				'Use newer: keep whichever was modified most recently.',
+			)
 			.addDropdown(drop =>
 				drop
-					.addOption('Merge', 'Merge (combine changes with conflict markers)')
-					.addOption('Keep Both', 'Keep both (rename both versions)')
-					.addOption('Use Newer', 'Use newer (keep the most recently modified)')
+					.addOption('Keep Both', 'Keep both')
+					.addOption('Use Newer', 'Use newer')
 					.setValue(this.plugin.settings.fileConflict)
 					.onChange(async value => {
 						this.plugin.settings.fileConflict = value as typeof this.plugin.settings.fileConflict;
+						await this.plugin.saveData(this.plugin.settings);
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('For text files (.md, .txt)')
+			.setDesc(
+				'Merge: attempt a 3-way merge; if the same lines were changed on both sides, ' +
+				'inline conflict markers are inserted for manual resolution. ' +
+				'Keep both and Use newer work as described above.',
+			)
+			.addDropdown(drop =>
+				drop
+					.addOption('Merge', 'Merge')
+					.addOption('Keep Both', 'Keep both')
+					.addOption('Use Newer', 'Use newer')
+					.setValue(this.plugin.settings.textFileConflict)
+					.onChange(async value => {
+						this.plugin.settings.textFileConflict = value as typeof this.plugin.settings.textFileConflict;
 						await this.plugin.saveData(this.plugin.settings);
 					}),
 			);

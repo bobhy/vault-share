@@ -138,7 +138,7 @@ describe('syncOneFile conflict handling', () => {
 			driveFs,
 			store,
 			statsTracker: stubStats,
-			settings: () => mockSettings({ fileConflict: 'Keep Both' }),
+			settings: () => mockSettings({ fileConflict: 'Keep Both', textFileConflict: 'Keep Both' }),
 			clientId: 'abcd1234-0000-0000-0000-000000000000',
 			driveFolderId: () => 'root-folder-id',
 			logger: stubLogger,
@@ -213,7 +213,7 @@ describe('syncOneFile conflict handling', () => {
 
 	describe('Use Newer strategy', () => {
 		beforeEach(() => {
-			ctx = { ...ctx, settings: () => mockSettings({ fileConflict: 'Use Newer' }) };
+			ctx = { ...ctx, settings: () => mockSettings({ fileConflict: 'Use Newer', textFileConflict: 'Use Newer' }) };
 		});
 
 		it('retains a sync record for the original path after resolving in-place', async () => {
@@ -309,7 +309,7 @@ describe('syncOneFile record mtime correctness', () => {
 	});
 
 	it('merge: stores post-write Drive mtime as remoteMtime, not the pre-write value', async () => {
-		ctx = { ...ctx, settings: () => mockSettings({ fileConflict: 'Merge' }) };
+		ctx = { ...ctx, settings: () => mockSettings({ textFileConflict: 'Merge' }) };
 
 		const conflictAction: SyncAction = {
 			type: 'conflict',

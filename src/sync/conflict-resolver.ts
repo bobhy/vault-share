@@ -1,5 +1,5 @@
 import type { SyncAction, SyncContext, SyncRecord } from './types';
-import type { FileConflictStrategy } from '../settings';
+import type { FileConflictStrategy, TextFileConflictStrategy } from '../settings';
 import { isMergeEligible, threeWayMerge } from './merge';
 import { shortClientId } from './client-id';
 
@@ -45,12 +45,13 @@ function formatTimestampForFilename(d: Date): string {
 
 /**
  * Resolve a conflict between local and remote versions of a file.
- * Handles all three strategies: Use Newer, Keep Both, Merge.
+ * Text files (.md, .txt) use textStrategy; all other files use fileStrategy.
  * Also handles modify-delete conflicts by creating a placeholder file.
  */
 export async function resolveConflict(
 	action: SyncAction,
-	strategy: FileConflictStrategy,
+	fileStrategy: FileConflictStrategy,
+	textStrategy: TextFileConflictStrategy,
 	ctx: SyncContext,
 ): Promise<ConflictResult> {
 	const { path, local, remote, record } = action;
@@ -60,15 +61,14 @@ export async function resolveConflict(
 		return resolveDeleteConflict(path, action, ctx);
 	}
 
+	const strategy = isMergeEligible(path) ? textStrategy : fileStrategy;
+
 	if (strategy === 'Use Newer') {
 		return resolveUseNewer(path, local.mtime, remote.mtime, ctx);
 	}
-
-	if (strategy === 'Merge' && isMergeEligible(path)) {
+	if (strategy === 'Merge') {
 		return resolveMerge(path, record, ctx);
 	}
-
-	// Keep Both — also the fallback for Merge on non-eligible files.
 	return resolveKeepBoth(path, ctx);
 }
 
@@ -177,7 +177,7 @@ async function resolveKeepBoth(
 	return { localConflictPath, remoteConflictPath, merged: false, hadConflictMarkers: false };
 }
 
-/** Merge: diff3 on text files; fall back to Keep Both for non-eligible files. */
+/** Merge: diff3 three-way merge for text files. */
 async function resolveMerge(
 	path: string,
 	record: SyncRecord | undefined,

@@ -1,4 +1,5 @@
-export type FileConflictStrategy = 'Use Newer' | 'Keep Both' | 'Merge';
+export type FileConflictStrategy = 'Use Newer' | 'Keep Both';
+export type TextFileConflictStrategy = 'Use Newer' | 'Keep Both' | 'Merge';
 export type LogSeverity = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
 
 export interface VaultShareSettings {
@@ -8,8 +9,11 @@ export interface VaultShareSettings {
 	/** Ordered exclude rules (last-match-wins, ! prefix re-includes). */
 	excludeRules: string[];
 
-	/** Conflict resolution strategy for mutually modified files. */
+	/** Conflict resolution strategy for mutually modified non-text files. */
 	fileConflict: FileConflictStrategy;
+
+	/** Conflict resolution strategy for mutually modified text files (.md, .txt). */
+	textFileConflict: TextFileConflictStrategy;
 
 	/** Show confirmation modal before bulk sync modifies more than this % of vault files. */
 	fileModificationConfirmationThreshold: number;
@@ -40,7 +44,8 @@ export const DEFAULT_SETTINGS: VaultShareSettings = {
 	driveFolderPath: '',  // overridden at runtime with /vault-share/<vault-name>; never used as-is
 	// eslint-disable-next-line obsidianmd/hardcoded-config-path -- static constant; Vault#configDir is unavailable here; runtime code should use vault.configDir if overriding
 	excludeRules: ['.obsidian', '!.obsidian/plugins/vault-share'],
-	fileConflict: 'Merge',
+	fileConflict: 'Keep Both',
+	textFileConflict: 'Merge',
 	fileModificationConfirmationThreshold: 10,
 	fileModificationConfirmationMin: 10,
 	bulkSyncPoll: 3600,

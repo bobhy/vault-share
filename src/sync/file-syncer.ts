@@ -88,8 +88,8 @@ export async function syncOneFile(
 		}
 
 		case 'conflict': {
-			const strategy = ctx.settings().fileConflict;
-			const conflictResult = await resolveConflict(action, strategy, ctx);
+			const { fileConflict, textFileConflict } = ctx.settings();
+			const conflictResult = await resolveConflict(action, fileConflict, textFileConflict, ctx);
 			const resolvedInPlace = conflictResult.merged
 				|| (!conflictResult.localConflictPath && !conflictResult.remoteConflictPath);
 			if (resolvedInPlace) {

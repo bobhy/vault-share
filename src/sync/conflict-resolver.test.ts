@@ -97,7 +97,7 @@ describe('resolveConflict: Use Newer', () => {
 			remote: { path: 'test.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
 		};
 
-		const result = await resolveConflict(action, 'Use Newer', ctx);
+		const result = await resolveConflict(action, 'Keep Both', 'Use Newer', ctx);
 
 		expect(ctx.localFs.read).toHaveBeenCalledWith('test.md');
 		expect(ctx.driveFs.write).toHaveBeenCalledWith('root-id', 'test.md', expect.anything(), expect.anything(), expect.anything());
@@ -115,7 +115,7 @@ describe('resolveConflict: Use Newer', () => {
 			remote: { path: 'test.md', mtime: 2000, size: 10, driveFileId: 'remote-id' },
 		};
 
-		const result = await resolveConflict(action, 'Use Newer', ctx);
+		const result = await resolveConflict(action, 'Keep Both', 'Use Newer', ctx);
 
 		expect(ctx.driveFs.stat).toHaveBeenCalledWith('root-id', 'test.md');
 		expect(ctx.driveFs.readBinary).toHaveBeenCalledWith('remote-id');
@@ -140,7 +140,7 @@ describe('resolveConflict: Keep Both', () => {
 			remote: { path: 'note.md', mtime: 1000, size: 10, driveFileId: 'original-drive-id' },
 		};
 
-		const result = await resolveConflict(action, 'Keep Both', ctx);
+		const result = await resolveConflict(action, 'Keep Both', 'Keep Both', ctx);
 
 		expect(ctx.localFs.rename).toHaveBeenCalled();
 		expect(ctx.localFs.write).toHaveBeenCalled();
@@ -171,7 +171,7 @@ describe('resolveConflict: Merge', () => {
 			remote: { path: 'note.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
 		};
 
-		const result = await resolveConflict(action, 'Merge', ctx);
+		const result = await resolveConflict(action, 'Keep Both', 'Merge', ctx);
 
 		expect(ctx.localFs.write).toHaveBeenCalledWith('note.md', expect.anything());
 		expect(ctx.driveFs.write).toHaveBeenCalledWith('root-id', 'note.md', expect.anything(), expect.anything(), expect.anything());
@@ -192,7 +192,7 @@ describe('resolveConflict: Merge', () => {
 			remote: { path: 'note.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
 		};
 
-		await resolveConflict(action, 'Merge', ctx);
+		await resolveConflict(action, 'Keep Both', 'Merge', ctx);
 
 		expect(ctx.statsTracker.recordContentConflict).toHaveBeenCalled();
 	});
@@ -207,7 +207,7 @@ describe('resolveConflict: Merge', () => {
 			remote: { path: 'note.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
 		};
 
-		const result = await resolveConflict(action, 'Merge', ctx);
+		const result = await resolveConflict(action, 'Keep Both', 'Merge', ctx);
 
 		expect(ctx.driveFs.write).toHaveBeenCalled();
 		expect(ctx.statsTracker.recordPush).toHaveBeenCalled();
@@ -228,12 +228,12 @@ describe('resolveConflict: Merge', () => {
 			record: { path: 'note.md', driveFileId: 'remote-id', localMtime: 0, remoteMtime: 0, localSize: 0, remoteSize: 0, syncedAt: 0 },
 		};
 
-		await resolveConflict(action, 'Merge', ctx);
+		await resolveConflict(action, 'Keep Both', 'Merge', ctx);
 
 		expect(ctx.store.getContent).toHaveBeenCalledWith('note.md');
 	});
 
-	it('falls back to Keep Both for non-eligible file extensions', async () => {
+	it('uses fileStrategy (Keep Both) for non-eligible file extensions even when textStrategy is Merge', async () => {
 		const ctx = makeMockCtx();
 		ctx.driveFs.stat.mockResolvedValue(makeDriveSide({ driveFileId: 'original-id' }));
 		const action = {
@@ -243,7 +243,7 @@ describe('resolveConflict: Merge', () => {
 			remote: { path: 'image.png', mtime: 1000, size: 100, driveFileId: 'original-id' },
 		};
 
-		const result = await resolveConflict(action, 'Merge', ctx);
+		const result = await resolveConflict(action, 'Keep Both', 'Merge', ctx);
 
 		// Keep Both path: renames local and writes remote copy
 		expect(ctx.localFs.rename).toHaveBeenCalled();
@@ -266,7 +266,7 @@ describe('resolveConflict: delete conflicts', () => {
 			remote: { path: 'note.md', mtime: 2000, size: 10, driveFileId: 'remote-id' },
 		};
 
-		const result = await resolveConflict(action, 'Keep Both', ctx);
+		const result = await resolveConflict(action, 'Keep Both', 'Merge', ctx);
 
 		expect(ctx.localFs.write).toHaveBeenCalled();
 		expect(ctx.driveFs.write).toHaveBeenCalled();
@@ -284,7 +284,7 @@ describe('resolveConflict: delete conflicts', () => {
 			remote: undefined,
 		};
 
-		const result = await resolveConflict(action, 'Keep Both', ctx);
+		const result = await resolveConflict(action, 'Keep Both', 'Merge', ctx);
 
 		expect(ctx.localFs.write).toHaveBeenCalled();
 		expect(ctx.driveFs.write).toHaveBeenCalled();
