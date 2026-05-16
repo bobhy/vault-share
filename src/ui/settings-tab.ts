@@ -23,7 +23,7 @@ export class VaultShareSettingTab extends PluginSettingTab {
 			.setDesc(
 				'Slash-separated path to the group vault folder in Google Drive. ' +
 				'Must start with a separator. Full path is created if it does not exist. ' +
-				'Example: /vault-share/shared',
+				'Example: /vault-share/my-local-vault',
 			)
 			.addText(text => {
 				text
@@ -56,9 +56,7 @@ export class VaultShareSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		// --- Sync ---
-		new Setting(containerEl).setName('Synchronization').setHeading();
-
+		// --- Conflict resolution ---
 		new Setting(containerEl).setName('Conflict resolution').setHeading();
 
 		new Setting(containerEl)
@@ -97,6 +95,9 @@ export class VaultShareSettingTab extends PluginSettingTab {
 						await this.plugin.saveData(this.plugin.settings);
 					}),
 			);
+
+		// --- Sync ---
+		new Setting(containerEl).setName('Synchronization').setHeading();
 
 		new Setting(containerEl)
 			.setName('Exclude rules')
@@ -162,61 +163,6 @@ export class VaultShareSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		const isPaused = this.plugin.scheduler?.isPaused() ?? false;
-		new Setting(containerEl)
-			.setName('Sync status')
-			.setDesc(isPaused ? 'Sync is paused.' : 'Sync is running.')
-			.addButton(btn =>
-				btn
-					.setButtonText(isPaused ? 'Start sync' : 'Pause sync')
-					.setCta()
-					.onClick(() => {
-						if (isPaused) {
-							this.plugin.scheduler?.setPaused(false);
-							this.plugin.scheduler?.triggerBulkSync();
-						} else {
-							this.plugin.scheduler?.setPaused(true);
-						}
-						this.display();
-					}),
-			);
-
-		// --- Statistics (read-only) ---
-		new Setting(containerEl).setName('Statistics').setHeading();
-
-		const stats = this.plugin.statsTracker?.getCurrent();
-		if (stats) {
-			const fields: Array<[string, string, string | number]> = [
-				['Server clock skew', 'serverClockSkew', `${stats.serverClockSkew} ms`],
-				['Api response time', 'APIResponseTime', `${stats.APIResponseTime} ms`],
-				['Bulk sync passes', 'bulkSyncPasses', stats.bulkSyncPasses],
-				['Single file syncs', 'singleFileSyncCount', stats.singleFileSyncCount],
-				['Files pushed', 'filesPushed', stats.filesPushed],
-				['Files pulled', 'filesPulled', stats.filesPulled],
-				['Files merged', 'filesMerged', stats.filesMerged],
-				['Content conflicts', 'contentConflicts', stats.contentConflicts],
-				['Delete conflicts', 'deleteConflicts', stats.deleteConflicts],
-			];
-			for (const [name, , value] of fields) {
-				new Setting(containerEl)
-					.setName(name)
-					.setDesc(String(value));
-			}
-
-			new Setting(containerEl)
-				.setName('Reset statistics')
-				.setDesc('Reset all counters to zero.')
-				.addButton(btn =>
-					btn
-						.setButtonText('Reset')
-						.setCta()
-						.onClick(async () => {
-							await this.plugin.statsTracker?.reset();
-							this.display();
-						}),
-				);
-		}
-
 		// --- Logging ---
 		new Setting(containerEl).setName('Logging').setHeading();
 
@@ -264,13 +210,49 @@ export class VaultShareSettingTab extends PluginSettingTab {
 					}),
 			);
 
+		// --- Statistics (read-only) ---
+		new Setting(containerEl).setName('Statistics').setHeading();
+
+		const stats = this.plugin.statsTracker?.getCurrent();
+		if (stats) {
+			const fields: Array<[string, string, string | number]> = [
+				['Server clock skew', 'serverClockSkew', `${stats.serverClockSkew} ms`],
+				['Api response time', 'APIResponseTime', `${stats.APIResponseTime} ms`],
+				['Bulk sync passes', 'bulkSyncPasses', stats.bulkSyncPasses],
+				['Single file syncs', 'singleFileSyncCount', stats.singleFileSyncCount],
+				['Files pushed', 'filesPushed', stats.filesPushed],
+				['Files pulled', 'filesPulled', stats.filesPulled],
+				['Files merged', 'filesMerged', stats.filesMerged],
+				['Content conflicts', 'contentConflicts', stats.contentConflicts],
+				['Delete conflicts', 'deleteConflicts', stats.deleteConflicts],
+			];
+			for (const [name, , value] of fields) {
+				new Setting(containerEl)
+					.setName(name)
+					.setDesc(String(value));
+			}
+
+			new Setting(containerEl)
+				.setName('Reset statistics')
+				.setDesc('Reset all counters to zero.')
+				.addButton(btn =>
+					btn
+						.setButtonText('Reset')
+						.setCta()
+						.onClick(async () => {
+							await this.plugin.statsTracker?.reset();
+							this.display();
+						}),
+				);
+		}
+
 		// --- Plugin ---
 		new Setting(containerEl).setName('Plugin').setHeading();
 
 		new Setting(containerEl)
 			.setName('Reset plugin')
 			.setDesc(
-				'Deletes connection to cloud service and local sync history and statistics ' +
+				'Logs out of the cloud service and clears local sync history and statistics ' +
 				'for the plugin. Does not delete any vault files.',
 			)
 			.addButton(btn =>
@@ -281,9 +263,9 @@ export class VaultShareSettingTab extends PluginSettingTab {
 						const confirmed = await ConfirmationModal.prompt(
 							this.plugin.app,
 							'Reset plugin?',
-							'This will permanently delete your Google Drive connection, all local ' +
-							'sync records, and statistics. Your vault files will not be affected. ' +
-							'To sync again you will need to log in again — the plugin will then merge ' +
+							'This will log you out of your Google Drive connection, clear all local ' +
+							'sync records and statistics. Your vault files will not be affected. ' +
+							'To resume, you will need to log in again and the plugin will merge ' +
 							'your local vault with the group vault from scratch.',
 						);
 						if (!confirmed) return;
