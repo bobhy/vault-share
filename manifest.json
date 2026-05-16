@@ -6,5 +6,6 @@
 	"description": "Share Obsidian vaults between devices and users by syncing through Google Drive.",
 	"author": "Bob Hyman",
 	"authorUrl": "https://github.com/bobhy",
+	"fundingUrl": "https://github.com/sponsors/bobhy",
 	"isDesktopOnly": false
 }
