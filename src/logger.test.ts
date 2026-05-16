@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { MockInstance } from 'vitest';
 import { Logger } from './logger';
 import type { LogSeverity } from './logger';
 
@@ -148,34 +149,38 @@ describe('Logger', () => {
 	});
 
 	describe('console output', () => {
+		let logSpy: MockInstance;
+		let warnSpy: MockInstance;
+		let errorSpy: MockInstance;
+
 		beforeEach(() => {
-			vi.spyOn(console, 'log').mockImplementation(() => {});
-			vi.spyOn(console, 'warn').mockImplementation(() => {});
-			vi.spyOn(console, 'error').mockImplementation(() => {});
+			logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+			warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		});
 
 		it('uses console.log for DEBUG', () => {
 			const logger = makeLogger();
 			logger.debug('d');
-			expect(console.log).toHaveBeenCalledWith(expect.stringContaining('[DEBUG]'), 'd', '');
+			expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[DEBUG]'), 'd', '');
 		});
 
 		it('uses console.log for INFO', () => {
 			const logger = makeLogger();
 			logger.info('i');
-			expect(console.log).toHaveBeenCalledWith(expect.stringContaining('[INFO]'), 'i', '');
+			expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[INFO]'), 'i', '');
 		});
 
 		it('uses console.warn for WARNING', () => {
 			const logger = makeLogger();
 			logger.warning('w');
-			expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('[WARNING]'), 'w', '');
+			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[WARNING]'), 'w', '');
 		});
 
 		it('uses console.error for ERROR', () => {
 			const logger = makeLogger();
 			logger.error('e', 'detail');
-			expect(console.error).toHaveBeenCalledWith(expect.stringContaining('[ERROR]'), 'e', 'detail');
+			expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('[ERROR]'), 'e', 'detail');
 		});
 	});
 });

@@ -4,6 +4,7 @@ import { SyncStore, EMPTY_STATS } from './store';
 import type { SyncRecord, SyncStats } from './types';
 
 beforeEach(() => {
+	// eslint-disable-next-line obsidianmd/prefer-active-doc -- test env setup, not production UI code
 	globalThis.indexedDB = new IDBFactory();
 });
 
@@ -86,7 +87,7 @@ describe('SyncStore', () => {
 		});
 
 		it('round-trips binary content', async () => {
-			const buf = new TextEncoder().encode('hello world').buffer as ArrayBuffer;
+			const buf = new TextEncoder().encode('hello world').buffer;
 			await store.putContent('doc.md', buf);
 			const result = await store.getContent('doc.md');
 			expect(result).toBeDefined();
@@ -94,8 +95,8 @@ describe('SyncStore', () => {
 		});
 
 		it('overwrites existing content', async () => {
-			const first = new TextEncoder().encode('v1').buffer as ArrayBuffer;
-			const second = new TextEncoder().encode('v2').buffer as ArrayBuffer;
+			const first = new TextEncoder().encode('v1').buffer;
+			const second = new TextEncoder().encode('v2').buffer;
 			await store.putContent('f.md', first);
 			await store.putContent('f.md', second);
 			const result = await store.getContent('f.md');

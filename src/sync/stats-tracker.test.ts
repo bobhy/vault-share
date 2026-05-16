@@ -14,16 +14,20 @@ function makeMockStore(initial: SyncStats = { ...EMPTY_STATS }): SyncStore {
 describe('StatsTracker', () => {
 	let store: SyncStore;
 	let tracker: StatsTracker;
+	let getStatsMock: ReturnType<typeof vi.fn>;
+	let putStatsMock: ReturnType<typeof vi.fn>;
 
 	beforeEach(async () => {
-		store = makeMockStore();
+		getStatsMock = vi.fn().mockResolvedValue({ ...EMPTY_STATS });
+		putStatsMock = vi.fn().mockResolvedValue(undefined);
+		store = { getStats: getStatsMock, putStats: putStatsMock } as unknown as SyncStore;
 		tracker = new StatsTracker(store);
 		await tracker.load();
 	});
 
 	describe('load', () => {
 		it('reads stats from store on load', () => {
-			expect(store.getStats).toHaveBeenCalledOnce();
+			expect(getStatsMock).toHaveBeenCalledOnce();
 		});
 
 		it('reflects persisted values after load', async () => {
@@ -108,7 +112,7 @@ describe('StatsTracker', () => {
 			tracker.recordPush();
 			tracker.recordPush();
 			await tracker.flush();
-			expect(store.putStats).toHaveBeenCalledWith(
+			expect(putStatsMock).toHaveBeenCalledWith(
 				expect.objectContaining({ filesPushed: 2 }),
 			);
 		});
@@ -126,7 +130,7 @@ describe('StatsTracker', () => {
 		it('persists the zeroed stats to store', async () => {
 			tracker.recordPush();
 			await tracker.reset();
-			expect(store.putStats).toHaveBeenCalledWith(EMPTY_STATS);
+			expect(putStatsMock).toHaveBeenCalledWith(EMPTY_STATS);
 		});
 	});
 });
