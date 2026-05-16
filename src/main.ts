@@ -142,16 +142,16 @@ export default class VaultSharePlugin extends Plugin {
 		// 15. Commands
 		this.addCommand({
 			id: 'pause-sync',
-			name: 'Pause sync',
+			name: 'Pause sharing',
 			callback: () => {
 				this.scheduler?.setPaused(true);
-				setStatusBar('Sync paused');
+				setStatusBar('Sharing paused');
 			},
 		});
 
 		this.addCommand({
 			id: 'start-sync',
-			name: 'Start sync',
+			name: 'Start or resume sharing',
 			callback: () => {
 				this.scheduler?.setPaused(false);
 				this.scheduler?.triggerBulkSync();
@@ -170,7 +170,7 @@ export default class VaultSharePlugin extends Plugin {
 
 		this.addCommand({
 			id: 'copy-sync-log',
-			name: 'Copy sync log to clipboard',
+			name: 'Copy share log to clipboard',
 			callback: () => {
 				const lines: string[] = [];
 				for (const entry of this.logger.getEntries()) {
@@ -184,7 +184,7 @@ export default class VaultSharePlugin extends Plugin {
 
 		this.addCommand({
 			id: 'clear-sync-log',
-			name: 'Clear sync log',
+			name: 'Clear share log',
 			callback: () => { this.logger.clear(); },
 		});
 

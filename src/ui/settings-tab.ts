@@ -62,7 +62,7 @@ export class VaultShareSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName('For most files')
 			.setDesc(
-				'Applies when both the local vault and the group vault have changed a file since it was last synced. ' +
+				'Applies when both the local vault and the group vault have changed a file since it was last shared. ' +
 				'Keep both: rename both versions with a timestamp suffix. ' +
 				'Use newer: keep whichever was modified most recently.',
 			)
@@ -96,13 +96,13 @@ export class VaultShareSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		// --- Sync ---
-		new Setting(containerEl).setName('Synchronization').setHeading();
+		// --- Sharing ---
+		new Setting(containerEl).setName('Sharing').setHeading();
 
 		new Setting(containerEl)
 			.setName('Exclude rules')
 			.setDesc(
-				'Ordered rules controlling which files are synced. ' +
+				'Ordered rules controlling which files are shared. ' +
 				'One rule per line. A ! prefix re-includes a previously excluded path. ' +
 				'Last matching rule wins.',
 			)
@@ -119,8 +119,8 @@ export class VaultShareSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
-			.setName('Bulk sync interval')
-			.setDesc('How often (in seconds) a full vault sync runs in the background.')
+			.setName('Sharing interval')
+			.setDesc('How often (in seconds) vault sharing runs in the background.')
 			.addText(text =>
 				text
 					.setValue(String(this.plugin.settings.bulkSyncPoll))
@@ -150,7 +150,7 @@ export class VaultShareSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Edit holddown')
-			.setDesc('Seconds to wait after the last keystroke before syncing an edited file.')
+			.setDesc('Seconds to wait after the last keystroke before sharing an edited file.')
 			.addText(text =>
 				text
 					.setValue(String(this.plugin.settings.openFileChangeHoldDown))
@@ -218,8 +218,8 @@ export class VaultShareSettingTab extends PluginSettingTab {
 			const fields: Array<[string, string, string | number]> = [
 				['Server clock skew', 'serverClockSkew', `${stats.serverClockSkew} ms`],
 				['Api response time', 'APIResponseTime', `${stats.APIResponseTime} ms`],
-				['Bulk sync passes', 'bulkSyncPasses', stats.bulkSyncPasses],
-				['Single file syncs', 'singleFileSyncCount', stats.singleFileSyncCount],
+				['Bulk sharing passes', 'bulkSyncPasses', stats.bulkSyncPasses],
+				['Single file shares', 'singleFileSyncCount', stats.singleFileSyncCount],
 				['Files pushed', 'filesPushed', stats.filesPushed],
 				['Files pulled', 'filesPulled', stats.filesPulled],
 				['Files merged', 'filesMerged', stats.filesMerged],
@@ -252,7 +252,7 @@ export class VaultShareSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName('Reset plugin')
 			.setDesc(
-				'Logs out of the cloud service and clears local sync history and statistics ' +
+				'Logs out of the cloud service and clears local share history and statistics ' +
 				'for the plugin. Does not delete any vault files.',
 			)
 			.addButton(btn =>
@@ -264,7 +264,7 @@ export class VaultShareSettingTab extends PluginSettingTab {
 							this.plugin.app,
 							'Reset plugin?',
 							'This will log you out of your Google Drive connection, clear all local ' +
-							'sync records and statistics. Your vault files will not be affected. ' +
+							'share records and statistics. Your vault files will not be affected. ' +
 							'To resume, you will need to log in again and the plugin will merge ' +
 							'your local vault with the group vault from scratch.',
 						);

@@ -4,12 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-## [unreleased]
+
+## [0.2.2]
 
 ### Changed
 - refactored settings Connect/Disconnect button into Log in/Log out, which better clarifies its actual behavior
 - refactored settings Conflict Resolution to create independent sections for text and for non-text files, each with all the relevant options.  
   This is an incompatible change!  Delete your `data.json` file in the plugin folder before logging back into Google Drive!
+- Changed wording throughout UI: it's "sharing", not "synchronization"
 
 ### Removed
 - The Start/Pause sync button was removed from Settings.  There's a plugin command for that!

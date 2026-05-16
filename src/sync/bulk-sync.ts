@@ -35,7 +35,7 @@ export class BulkSync {
 			return result;
 		}
 
-		this.setStatusBar('Syncing');
+		this.setStatusBar('Sharing');
 		this.ctx.logger.info('Bulk sync started');
 		this.ctx.statsTracker.recordBulkSyncPass();
 
@@ -71,7 +71,7 @@ export class BulkSync {
 				);
 				if (!proceed) {
 					result.abortedByUser = true;
-					this.setStatusBar('Sync cancelled');
+					this.setStatusBar('Sharing cancelled');
 					return result;
 				}
 			}
@@ -100,14 +100,14 @@ export class BulkSync {
 
 			await this.ctx.statsTracker.flush();
 
-			const summary = `Synced: ${result.downloaded} downloaded, ${result.uploaded} uploaded, ${result.deleted} deleted`;
+			const summary = `Shared: ${result.downloaded} downloaded, ${result.uploaded} uploaded, ${result.deleted} deleted`;
 			this.setStatusBar(summary);
 			this.ctx.logger.info(summary);
 
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			result.error = err instanceof Error ? err : new Error(msg);
-			this.setStatusBar(`Sync interrupted: ${msg}`);
+			this.setStatusBar(`Sharing interrupted: ${msg}`);
 			this.ctx.logger.error('Bulk sync interrupted', msg);
 		}
 
