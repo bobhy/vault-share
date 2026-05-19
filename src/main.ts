@@ -31,6 +31,7 @@ export default class VaultSharePlugin extends Plugin {
 	statsTracker?: StatsTracker;
 	scheduler?: SyncScheduler;
 	sharePreview?: SharePreview;
+	sharePreviewPending = false;
 
 	private clientId = '';
 	private driveFolderId = '';
@@ -50,6 +51,15 @@ export default class VaultSharePlugin extends Plugin {
 			{ driveFolderPath: `/vault-share/${this.app.vault.getName()}` },
 			stored,
 		);
+		// Enum fields from older versions may not match current valid values; reset to defaults.
+		const validFileConflict: string[] = ['Keep Both', 'Use Newer'];
+		const validTextFileConflict: string[] = ['Keep Both', 'Use Newer', 'Merge'];
+		if (!validFileConflict.includes(this.settings.fileConflict)) {
+			this.settings.fileConflict = DEFAULT_SETTINGS.fileConflict;
+		}
+		if (!validTextFileConflict.includes(this.settings.textFileConflict)) {
+			this.settings.textFileConflict = DEFAULT_SETTINGS.textFileConflict;
+		}
 
 		// 2. Auth + API
 		this.auth = new GDriveAuth(this.app);
@@ -109,11 +119,24 @@ export default class VaultSharePlugin extends Plugin {
 		this.sharePreview = new SharePreview(ctx, this.excludeMatcher);
 
 		// 11. Bulk sync + scheduler
-		const bulkSync = new BulkSync(ctx, this.excludeMatcher, this.app, setStatusBar);
+		const bulkSync = new BulkSync(ctx, this.excludeMatcher, setStatusBar);
 		bulkSync.setOnPlanComplete(preview => {
 			for (const leaf of this.app.workspace.getLeavesOfType(VAULT_SHARING_VIEW_TYPE)) {
 				(leaf.view as VaultShareView).onBulkSyncPlanComplete(preview);
 			}
+		});
+		bulkSync.setOnTooManyChanges(() => {
+			this.scheduler?.setPaused(true);
+			this.sharePreviewPending = true;
+			const notice = new Notice(
+				'Bulk sharing paused — too many pending changes detected. Open the vault share view to review.',
+				0,
+			);
+			notice.messageEl.createEl('button', { text: 'Open status view', cls: 'vs-notice-btn' })
+				.addEventListener('click', () => {
+					notice.hide();
+					void this.activateVaultSharingView();
+				});
 		});
 		this.scheduler = new SyncScheduler({
 			ctx,

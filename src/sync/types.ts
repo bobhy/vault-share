@@ -100,17 +100,22 @@ export interface SyncPreviewResult {
 	groupNew: number;
 	groupUpdated: number;
 	groupDeleted: number;
+	groupDeletedPaths: string[];
 
 	/** Local-side changes (files pulled to this vault). */
 	localNew: number;
 	localUpdated: number;
 	localDeleted: number;
+	localDeletedPaths: string[];
 
 	/** Conflict breakdown. */
 	contentConflicts: number;
+	contentConflictPaths: string[];
 	deleteConflicts: number;
+	deleteConflictPaths: string[];
 	/** Content conflicts on .md/.txt files where the Merge strategy applies. */
 	textMergeFiles: number;
+	textMergeFilePaths: string[];
 
 	/** Epoch ms when this snapshot was taken. */
 	collectedAt: number;

@@ -1,4 +1,5 @@
-import { ItemView, WorkspaceLeaf } from 'obsidian';
+import { App, ItemView, Modal, WorkspaceLeaf } from 'obsidian';
+import { ConfirmationModal } from './confirmation-modal';
 import type VaultSharePlugin from '../main';
 import type { SyncPreviewResult } from '../sync/types';
 
@@ -8,7 +9,7 @@ export const VAULT_SHARING_VIEW_TYPE = 'vault-share-view';
  * Instrumentation view for Vault Share.
  * Shows cumulative statistics and a live preview of what the next bulk sync
  * would do. Opens in the right-hand sidebar via the "Open Vault Sharing view"
- * command; collapses to headings in narrow mode, side-by-side in wide mode.
+ * command; displays side-by-side columns when the pane is wide enough.
  */
 export class VaultShareView extends ItemView {
 	private preview: SyncPreviewResult | null = null;
@@ -27,7 +28,7 @@ export class VaultShareView extends ItemView {
 	}
 
 	getViewType(): string { return VAULT_SHARING_VIEW_TYPE; }
-	getDisplayText(): string { return 'Vault shareing'; }
+	getDisplayText(): string { return 'Vault share'; }
 	getIcon(): string { return 'bar-chart'; }
 
 	async onOpen(): Promise<void> {
@@ -42,11 +43,26 @@ export class VaultShareView extends ItemView {
 		this.renderStats();
 		this.renderPreview();
 
-		// Kick off the initial preview computation without blocking onOpen.
-		void this.refreshPreview();
+		// Auto-fetch preview only when flagged (e.g. after too-many-changes auto-pause).
+		if (this.plugin.sharePreviewPending) {
+			this.plugin.sharePreviewPending = false;
+			void this.refreshPreview();
+		}
 	}
 
 	async onClose(): Promise<void> {
+		if (this.plugin.scheduler?.getStatus() === 'paused') {
+			const unpause = await ConfirmationModal.prompt(
+				this.app,
+				'Sharing is paused',
+				'Bulk sharing is currently paused. Resume sharing before closing?',
+				{ ok: 'Resume sharing', cancel: 'Leave paused' },
+			);
+			if (unpause) {
+				this.plugin.scheduler.setPaused(false);
+				this.plugin.scheduler.triggerBulkSync();
+			}
+		}
 		this.containerEl.children[1]?.empty();
 	}
 
@@ -61,7 +77,7 @@ export class VaultShareView extends ItemView {
 
 	/** Called by SyncScheduler when paused/running/enabled state changes. */
 	onStatusChange(): void {
-		this.renderPreviewStatusRow();
+		this.renderPreview();
 	}
 
 	// --- Stats section ---
@@ -71,34 +87,28 @@ export class VaultShareView extends ItemView {
 		sec.empty();
 
 		const heading = sec.createDiv({ cls: 'vs-section-heading' });
-		this.makeCollapseToggle(heading, sec, 'vs-stats-collapsed');
-
-		const titleSpan = heading.createSpan({ text: 'Statistics', cls: 'vs-heading-text' });
-		// In wide mode the buttons sit in the heading row; in narrow they stack below.
-		const btnRow = heading.createDiv({ cls: 'vs-heading-btns' });
-		btnRow.createEl('button', { text: 'Refresh', cls: 'vs-btn' }).addEventListener('click', () => {
-			this.renderStats();
-		});
-		btnRow.createEl('button', { text: 'Reset', cls: 'vs-btn vs-btn-warning' }).addEventListener('click', () => {
-			void (async () => {
-				await this.plugin.statsTracker?.reset();
-				this.renderStats();
-			})();
-		});
-		// Suppress unused-var lint — titleSpan is created for DOM side-effect only.
-		void titleSpan;
+		heading.createSpan({ text: 'Statistics', cls: 'vs-heading-text' });
+		heading.createDiv({ cls: 'vs-heading-btns' })
+			.createEl('button', { text: 'Refresh', cls: 'vs-btn' })
+			.addEventListener('click', () => { this.renderStats(); });
 
 		const body = sec.createDiv({ cls: 'vs-section-body' });
 
 		const stats = this.plugin.statsTracker?.getCurrent();
 
+		// "Last reset: timestamp  [Reset]" row — Reset lives here, not in heading.
 		const resetAt = stats?.statsResetAt ?? 0;
-		body.createDiv({
-			cls: 'vs-reset-line',
-			text: resetAt > 0
-				? `Last reset: ${formatDatetime(resetAt)}`
-				: 'Last reset: Never',
+		const resetRow = body.createDiv({ cls: 'vs-reset-line' });
+		resetRow.createSpan({
+			text: resetAt > 0 ? `Last reset: ${formatDatetime(resetAt)}` : 'Last reset: Never',
 		});
+		resetRow.createEl('button', { text: 'Reset', cls: 'vs-btn vs-btn-warning' })
+			.addEventListener('click', () => {
+				void (async () => {
+					await this.plugin.statsTracker?.reset();
+					this.renderStats();
+				})();
+			});
 
 		if (!stats) {
 			body.createDiv({ cls: 'vs-empty', text: 'Statistics unavailable.' });
@@ -149,63 +159,31 @@ export class VaultShareView extends ItemView {
 		sec.empty();
 
 		const heading = sec.createDiv({ cls: 'vs-section-heading' });
-		this.makeCollapseToggle(heading, sec, 'vs-preview-collapsed');
-		heading.createSpan({ text: 'Sharing status', cls: 'vs-heading-text' });
+		heading.createSpan({ text: 'Bulk sharing status', cls: 'vs-heading-text' });
+		heading.createDiv({ cls: 'vs-heading-btns' })
+			.createEl('button', { text: 'Refresh', cls: 'vs-btn' })
+			.addEventListener('click', () => { void this.refreshPreview(); });
 
 		const body = sec.createDiv({ cls: 'vs-section-body' });
 
-		// Status row (always rendered; updated in-place by onStatusChange)
-		this.renderPreviewStatusRow();
+		body.createSpan({
+			cls: 'vs-collected-at',
+			text: this.preview ? `Collected: ${formatDatetime(this.preview.collectedAt)}` : 'Click Refresh to compute.',
+		});
 
-		if (this.previewLoading) {
-			body.createDiv({ cls: 'vs-loading', text: 'Computing…' });
-			return;
-		}
-
-		body.createDiv({ cls: 'vs-next-label', text: 'Next bulk share will:' });
-
-		if (this.previewError) {
-			body.createDiv({ cls: 'vs-error', text: this.previewError });
-		} else if (!this.preview) {
-			body.createDiv({ cls: 'vs-empty', text: 'Click Refresh to compute.' });
-		} else {
-			this.renderPreviewData(body, this.preview);
-		}
-
-		// Footer
-		const footer = body.createDiv({ cls: 'vs-preview-footer' });
-		if (this.preview) {
-			footer.createSpan({
-				cls: 'vs-collected-at',
-				text: `Collected: ${formatDatetime(this.preview.collectedAt)}`,
-			});
-		}
-		footer.createEl('button', { text: 'Refresh', cls: 'vs-btn' })
-			.addEventListener('click', () => { void this.refreshPreview(); });
-	}
-
-	private renderPreviewStatusRow(): void {
-		// Remove any existing status row and rebuild it in the section body.
-		const body = this.previewSection.querySelector('.vs-section-body');
-		if (!body) return;
-
-		const existing = body.querySelector('.vs-status-row');
-		existing?.remove();
-
+		// Status row: badge on the left, Pause/Resume button pushed to the right.
 		const status = this.plugin.scheduler?.getStatus() ?? 'enabled';
-		const statusRow = createDiv({ cls: 'vs-status-row' });
-		statusRow.createSpan({ text: 'Status: ' });
+		const statusRow = body.createDiv({ cls: 'vs-status-row' });
+		statusRow.createSpan({ text: 'Status: ' });
 		statusRow.createSpan({
 			text: status.charAt(0).toUpperCase() + status.slice(1),
 			cls: `vs-status-badge vs-status-${status}`,
 		});
-
 		const isPaused = status === 'paused';
-		const btn = statusRow.createEl('button', {
+		statusRow.createEl('button', {
 			text: isPaused ? 'Resume sharing' : 'Pause sharing',
-			cls: 'vs-btn',
-		});
-		btn.addEventListener('click', () => {
+			cls: 'vs-btn vs-status-action-btn',
+		}).addEventListener('click', () => {
 			if (isPaused) {
 				this.plugin.scheduler?.setPaused(false);
 				this.plugin.scheduler?.triggerBulkSync();
@@ -215,11 +193,21 @@ export class VaultShareView extends ItemView {
 			}
 		});
 
-		// Insert before the first child of the body so it leads the section.
-		body.insertBefore(statusRow, body.firstChild);
+		if (this.previewLoading) {
+			body.createDiv({ cls: 'vs-loading', text: 'Computing…' });
+			return;
+		}
+
+		if (this.previewError) {
+			body.createDiv({ cls: 'vs-error', text: this.previewError });
+		} else if (this.preview) {
+			this.renderPreviewData(body, this.preview);
+		}
 	}
 
 	private renderPreviewData(body: HTMLElement, p: SyncPreviewResult): void {
+		const isPaused = this.plugin.scheduler?.getStatus() === 'paused';
+
 		const subsection = (title: string): HTMLElement => {
 			body.createDiv({ cls: 'vs-sub-heading', text: title });
 			return body.createEl('dl', { cls: 'vs-stat-table' });
@@ -230,18 +218,33 @@ export class VaultShareView extends ItemView {
 			dl.createEl('dd', { text: String(value), cls: 'vs-stat-value' });
 		};
 
+		const reviewRow = (dl: HTMLElement, label: string, value: number, paths: string[]): void => {
+			dl.createEl('dt', { text: label, cls: 'vs-stat-label' });
+			const dd = dl.createEl('dd', { cls: 'vs-stat-value-cell' });
+			dd.createSpan({ text: String(value), cls: 'vs-stat-value' });
+			const btn = dd.createEl('button', { text: 'Review…', cls: 'vs-btn vs-review-btn' });
+			if (!isPaused) {
+				btn.setAttribute('disabled', 'true');
+				btn.setAttribute('title', 'Pause sync to enable');
+			} else {
+				btn.addEventListener('click', () => {
+					new ReviewModal(this.app, label, paths).open();
+				});
+			}
+		};
+
 		const group = subsection('Group vault');
-		row(group, 'New files', p.groupNew);
-		row(group, 'Updated files', p.groupUpdated);
-		row(group, 'Deleted files', p.groupDeleted);
+		row(group, 'New files pushed', p.groupNew);
+		row(group, 'Updated files pushed', p.groupUpdated);
+		reviewRow(group, 'Deleted files', p.groupDeleted, p.groupDeletedPaths);
 
 		const local = subsection('Local vault');
-		row(local, 'New files', p.localNew);
-		row(local, 'Updated files', p.localUpdated);
-		row(local, 'Deleted files', p.localDeleted);
-		row(local, 'Content conflicts', p.contentConflicts);
-		row(local, 'Delete conflicts', p.deleteConflicts);
-		row(local, 'Text files to merge', p.textMergeFiles);
+		row(local, 'New files pulled', p.localNew);
+		row(local, 'Updated files pulled', p.localUpdated);
+		reviewRow(local, 'Deleted files', p.localDeleted, p.localDeletedPaths);
+		reviewRow(local, 'Content conflicts', p.contentConflicts, p.contentConflictPaths);
+		reviewRow(local, 'Delete conflicts', p.deleteConflicts, p.deleteConflictPaths);
+		reviewRow(local, 'Text files to merge', p.textMergeFiles, p.textMergeFilePaths);
 	}
 
 	// --- Refresh actions ---
@@ -260,27 +263,39 @@ export class VaultShareView extends ItemView {
 		}
 		this.renderPreview();
 	}
+}
 
-	// --- Collapse toggle ---
+/** Read-only modal listing the files in a preview category. */
+class ReviewModal extends Modal {
+	constructor(
+		app: App,
+		private readonly heading: string,
+		private readonly paths: string[],
+	) {
+		super(app);
+	}
 
-	/**
-	 * Attach a ▼/▶ toggle to headingEl that hides/shows the section body.
-	 * Collapse state is stored as a CSS class on the section element so the
-	 * wide-mode stylesheet can override visibility via container query.
-	 */
-	private makeCollapseToggle(
-		headingEl: HTMLElement,
-		sectionEl: HTMLElement,
-		collapsedClass: string,
-	): void {
-		const arrow = headingEl.createSpan({ cls: 'vs-collapse-arrow' });
-		const isCollapsed = (): boolean => sectionEl.hasClass(collapsedClass);
-		const update = (): void => { arrow.setText(isCollapsed() ? '▶' : '▼'); };
-		update();
-		arrow.addEventListener('click', () => {
-			sectionEl.toggleClass(collapsedClass, !isCollapsed());
-			update();
-		});
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.createEl('h2', { text: this.heading });
+
+		if (this.paths.length === 0) {
+			contentEl.createDiv({ cls: 'vs-empty', text: 'No files in this category.' });
+		} else {
+			const list = contentEl.createEl('ul', { cls: 'vs-review-list' });
+			for (const path of this.paths) {
+				list.createEl('li', { text: path, cls: 'vs-review-list-item' });
+			}
+		}
+
+		contentEl.createDiv({ cls: 'modal-button-container' })
+			.createEl('button', { text: 'Close', cls: 'mod-cta' })
+			.addEventListener('click', () => { this.close(); });
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
 	}
 }
 

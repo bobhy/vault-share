@@ -1,11 +1,9 @@
-import type { App } from 'obsidian';
 import type { SyncContext, SyncPassResult, SyncPreviewResult } from './types';
 import type { ExcludeMatcher } from './exclude';
 import { buildMixedEntries } from './change-detector';
 import { planActions } from './decision-engine';
 import { syncOneFile } from './file-syncer';
 import { classifyActions } from './share-preview';
-import { ConfirmationModal } from '../ui/confirmation-modal';
 
 /**
  * Orchestrates a full vault synchronization pass.
@@ -15,11 +13,11 @@ import { ConfirmationModal } from '../ui/confirmation-modal';
 export class BulkSync {
 	private abortSignal = false;
 	private onPlanComplete?: (preview: SyncPreviewResult) => void;
+	private onTooManyChanges?: () => void;
 
 	constructor(
 		private readonly ctx: SyncContext,
 		private readonly excludeMatcher: ExcludeMatcher,
-		private readonly app: App,
 		private readonly setStatusBar: (text: string) => void,
 	) {}
 
@@ -31,6 +29,11 @@ export class BulkSync {
 	/** Register a callback invoked with the planned actions before they execute. */
 	setOnPlanComplete(cb: (preview: SyncPreviewResult) => void): void {
 		this.onPlanComplete = cb;
+	}
+
+	/** Register a callback invoked when too many changes are detected; caller should pause sharing. */
+	setOnTooManyChanges(cb: () => void): void {
+		this.onTooManyChanges = cb;
 	}
 
 	async run(): Promise<SyncPassResult> {
@@ -67,15 +70,12 @@ export class BulkSync {
 			const actions = planActions(entries, hasHistory).filter(a => a.type !== 'noOp');
 
 			// Emit preview snapshot before any actions execute.
-			if (this.onPlanComplete) {
-				this.onPlanComplete(classifyActions(actions, this.ctx.settings()));
-			}
+			const preview = classifyActions(actions, this.ctx.settings());
+			this.onPlanComplete?.(preview);
 
-			// Confirmation guard.
+			// Too-many-changes guard: auto-pause instead of prompting.
 			const syncableCount = localFiles.length;
-			const modifyCount = actions.filter(
-				a => a.type !== 'noOp' && a.type !== 'deleteLocal',
-			).length;
+			const modifyCount = actions.length; // already filtered to non-noOp above
 
 			const settings = this.ctx.settings();
 			if (
@@ -83,17 +83,17 @@ export class BulkSync {
 				syncableCount > 0 &&
 				(modifyCount / syncableCount) * 100 > settings.fileModificationConfirmationThreshold
 			) {
-				const proceed = await ConfirmationModal.prompt(
-					this.app,
-					'Sync confirmation',
-					`Bulk sync will modify <strong>${modifyCount}</strong> of ` +
-					`<strong>${syncableCount}</strong> files in your vault. Proceed?`,
+				const groupCount = preview.groupNew + preview.groupUpdated + preview.groupDeleted;
+				const localCount = preview.localNew + preview.localUpdated + preview.localDeleted;
+				this.ctx.logger.error(
+					'Bulk sharing paused: too many pending changes',
+					`Group vault: ${groupCount} (${preview.groupNew} new, ${preview.groupUpdated} updated, ${preview.groupDeleted} deleted); ` +
+					`Local vault: ${localCount} (${preview.localNew} new, ${preview.localUpdated} updated, ${preview.localDeleted} deleted)`,
 				);
-				if (!proceed) {
-					result.abortedByUser = true;
-					this.setStatusBar('Sharing cancelled');
-					return result;
-				}
+				this.onTooManyChanges?.();
+				result.abortedByUser = true;
+				this.setStatusBar('Sharing paused — too many changes');
+				return result;
 			}
 
 			// Process one file at a time, yielding between each.

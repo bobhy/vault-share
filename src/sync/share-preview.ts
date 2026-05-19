@@ -26,12 +26,17 @@ export function classifyActions(
 		groupNew: 0,
 		groupUpdated: 0,
 		groupDeleted: 0,
+		groupDeletedPaths: [],
 		localNew: 0,
 		localUpdated: 0,
 		localDeleted: 0,
+		localDeletedPaths: [],
 		contentConflicts: 0,
+		contentConflictPaths: [],
 		deleteConflicts: 0,
+		deleteConflictPaths: [],
 		textMergeFiles: 0,
+		textMergeFilePaths: [],
 		collectedAt: Date.now(),
 	};
 
@@ -45,9 +50,11 @@ export function classifyActions(
 				break;
 			case 'deleteRemote':
 				result.groupDeleted++;
+				result.groupDeletedPaths.push(action.path);
 				break;
 			case 'deleteLocal':
 				result.localDeleted++;
+				result.localDeletedPaths.push(action.path);
 				break;
 			case 'conflict': {
 				const localStatus = classifyStatus(action.local, action.record, true);
@@ -55,10 +62,13 @@ export function classifyActions(
 				const isDeleteConflict = localStatus === 'deleted' || remoteStatus === 'deleted';
 				if (isDeleteConflict) {
 					result.deleteConflicts++;
+					result.deleteConflictPaths.push(action.path);
 				} else {
 					result.contentConflicts++;
+					result.contentConflictPaths.push(action.path);
 					if (isTextFile(action.path) && settings.textFileConflict === 'Merge') {
 						result.textMergeFiles++;
+						result.textMergeFilePaths.push(action.path);
 					}
 				}
 				break;
@@ -83,9 +93,11 @@ export class SharePreview {
 		const rootFolderId = this.ctx.driveFolderId();
 		if (!rootFolderId) {
 			return {
-				groupNew: 0, groupUpdated: 0, groupDeleted: 0,
-				localNew: 0, localUpdated: 0, localDeleted: 0,
-				contentConflicts: 0, deleteConflicts: 0, textMergeFiles: 0,
+				groupNew: 0, groupUpdated: 0, groupDeleted: 0, groupDeletedPaths: [],
+				localNew: 0, localUpdated: 0, localDeleted: 0, localDeletedPaths: [],
+				contentConflicts: 0, contentConflictPaths: [],
+				deleteConflicts: 0, deleteConflictPaths: [],
+				textMergeFiles: 0, textMergeFilePaths: [],
 				collectedAt: Date.now(),
 			};
 		}

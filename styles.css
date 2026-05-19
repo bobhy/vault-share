@@ -33,12 +33,12 @@
 /* ── Vault Share instrumentation view ─────────────────────────────────── */
 
 .vs-view-root {
+	container-type: inline-size;
 	padding: var(--size-4-3);
 }
 
 /* Responsive grid: 1 column by default; 2 columns when the pane is wide. */
 .vs-grid {
-	container-type: inline-size;
 	display: grid;
 	gap: 1.5em;
 }
@@ -47,15 +47,6 @@
 	.vs-grid {
 		grid-template-columns: 1fr 1fr;
 		align-items: start;
-	}
-	/* In wide mode hide the collapse arrow — sections are always expanded. */
-	.vs-collapse-arrow {
-		display: none;
-	}
-	/* In wide mode always show the section body regardless of collapse class. */
-	.vs-section.vs-stats-collapsed .vs-section-body,
-	.vs-section.vs-preview-collapsed .vs-section-body {
-		display: block !important;
 	}
 }
 
@@ -76,13 +67,6 @@
 	cursor: default;
 }
 
-.vs-collapse-arrow {
-	cursor: pointer;
-	user-select: none;
-	color: var(--text-muted);
-	font-size: 0.75em;
-}
-
 .vs-heading-text {
 	flex: 1;
 }
@@ -90,12 +74,6 @@
 .vs-heading-btns {
 	display: flex;
 	gap: 0.4em;
-}
-
-/* Collapse: hide the body when the collapsed class is present (narrow only). */
-.vs-stats-collapsed .vs-section-body,
-.vs-preview-collapsed .vs-section-body {
-	display: none;
 }
 
 .vs-section-body {
@@ -113,6 +91,11 @@
 	margin: 0;
 }
 
+/* Rows with a Review button use a 3-column layout: label / value+button */
+.vs-stat-table:has(.vs-stat-value-cell) {
+	grid-template-columns: 1fr auto;
+}
+
 .vs-stat-label {
 	color: var(--text-normal);
 	font-size: var(--font-ui-small);
@@ -126,6 +109,43 @@
 	white-space: nowrap;
 }
 
+/* Value cell that contains both a number and a Review button */
+.vs-stat-value-cell {
+	display: flex;
+	align-items: center;
+	gap: 0.4em;
+	justify-content: flex-end;
+}
+
+.vs-review-btn {
+	font-size: var(--font-ui-smaller);
+	padding: 1px 6px;
+}
+
+.vs-review-btn:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+/* Notice button for the too-many-changes notification */
+.vs-notice-btn {
+	display: block;
+	margin-top: 0.4em;
+	font-size: var(--font-ui-smaller);
+}
+
+/* ReviewModal file list */
+.vs-review-list {
+	padding-left: 1.2em;
+	margin: 0.5em 0 0;
+}
+
+.vs-review-list-item {
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	padding: 0.1em 0;
+}
+
 .vs-subheading,
 .vs-sub-heading {
 	font-size: var(--font-ui-small);
@@ -134,9 +154,21 @@
 	margin-top: 0.4em;
 }
 
+/* "Last reset: timestamp  [Reset]" — text on left, button on right. */
 .vs-reset-line {
+	display: flex;
+	align-items: center;
+	gap: 0.5em;
 	font-size: var(--font-ui-smaller);
 	color: var(--text-muted);
+}
+
+/* "Collected: timestamp" or "Click Refresh to compute." — subtitle under section heading. */
+.vs-collected-at {
+	display: block;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	margin-bottom: 0.3em;
 }
 
 /* ── Status row ─── */
@@ -159,26 +191,12 @@
 .vs-status-running  { color: var(--color-blue); }
 .vs-status-paused   { color: var(--color-yellow); }
 
-/* ── Next-label, footer, loading, error ─── */
-
-.vs-next-label {
-	font-size: var(--font-ui-small);
-	font-weight: var(--font-semibold);
+/* Push Pause/Resume button to the right margin of the status row. */
+.vs-status-action-btn {
+	margin-left: auto;
 }
 
-.vs-preview-footer {
-	display: flex;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: 0.5em;
-	margin-top: 0.4em;
-}
-
-.vs-collected-at {
-	flex: 1;
-	font-size: var(--font-ui-smaller);
-	color: var(--text-muted);
-}
+/* ── Loading, error ─── */
 
 .vs-loading,
 .vs-empty {
