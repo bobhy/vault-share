@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [unreleased]
+
+### Added
+- New "vault sharing" view in sidebar to show sharing statistics and current sharing differences between vaults.  New "Open Sharing" command to open view, which is not in sidebar by default.
+
+### Changed
+- Pause Sync command stops the remainder of the bulk share opeeration, if it is running.  
+Also pauses future runs, as before.
+
 ## [0.2.2]
 
 ### Changed

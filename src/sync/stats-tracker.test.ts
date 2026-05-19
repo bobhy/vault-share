@@ -119,18 +119,30 @@ describe('StatsTracker', () => {
 	});
 
 	describe('reset', () => {
-		it('zeros all counters in memory', async () => {
+		it('zeros all counters in memory and records reset timestamp', async () => {
+			const before = Date.now();
 			tracker.recordPush();
 			tracker.recordPull();
 			await tracker.reset();
+			const after = Date.now();
 			const stats = tracker.getCurrent();
-			expect(stats).toEqual(EMPTY_STATS);
+			// All counters should be zero — compare without statsResetAt which is intentionally non-zero.
+			const { statsResetAt, ...rest } = stats;
+			const { statsResetAt: _ignored, ...emptyCounters } = EMPTY_STATS;
+			void _ignored;
+			expect(rest).toEqual(emptyCounters);
+			// statsResetAt should be a current timestamp.
+			expect(statsResetAt).toBeGreaterThanOrEqual(before);
+			expect(statsResetAt).toBeLessThanOrEqual(after);
 		});
 
-		it('persists the zeroed stats to store', async () => {
+		it('persists the zeroed stats to store with reset timestamp', async () => {
 			tracker.recordPush();
 			await tracker.reset();
-			expect(putStatsMock).toHaveBeenCalledWith(EMPTY_STATS);
+			const persisted = tracker.getCurrent();
+			expect(persisted.filesPushed).toBe(0);
+			expect(persisted.statsResetAt).toBeGreaterThan(0);
+			expect(putStatsMock).toHaveBeenCalled();
 		});
 	});
 });

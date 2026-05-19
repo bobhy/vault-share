@@ -77,6 +77,43 @@ export interface SyncStats {
 	filesMerged: number;
 	contentConflicts: number;
 	deleteConflicts: number;
+
+	/** Epoch ms when stats were last reset; 0 = never. */
+	statsResetAt: number;
+
+	/** Google Drive API call counts (one counter per public GDriveApi method). */
+	driveListChildren: number;
+	driveGetFile: number;
+	driveReadFile: number;
+	driveReadFileBinary: number;
+	driveWriteFile: number;
+	driveDeleteFile: number;
+	driveCreateFolder: number;
+	driveResolveFolder: number;
+	driveFindFolder: number;
+	driveFindFile: number;
+}
+
+/** Snapshot of what a bulk-sync pass would do at a given moment. */
+export interface SyncPreviewResult {
+	/** Drive-side changes (files pushed to the group vault). */
+	groupNew: number;
+	groupUpdated: number;
+	groupDeleted: number;
+
+	/** Local-side changes (files pulled to this vault). */
+	localNew: number;
+	localUpdated: number;
+	localDeleted: number;
+
+	/** Conflict breakdown. */
+	contentConflicts: number;
+	deleteConflicts: number;
+	/** Content conflicts on .md/.txt files where the Merge strategy applies. */
+	textMergeFiles: number;
+
+	/** Epoch ms when this snapshot was taken. */
+	collectedAt: number;
 }
 
 /** Context object threaded through all sync operations. */

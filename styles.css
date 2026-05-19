@@ -30,6 +30,181 @@
 	word-break: break-word;
 }
 
+/* ── Vault Share instrumentation view ─────────────────────────────────── */
+
+.vs-view-root {
+	padding: var(--size-4-3);
+}
+
+/* Responsive grid: 1 column by default; 2 columns when the pane is wide. */
+.vs-grid {
+	container-type: inline-size;
+	display: grid;
+	gap: 1.5em;
+}
+
+@container (min-width: 550px) {
+	.vs-grid {
+		grid-template-columns: 1fr 1fr;
+		align-items: start;
+	}
+	/* In wide mode hide the collapse arrow — sections are always expanded. */
+	.vs-collapse-arrow {
+		display: none;
+	}
+	/* In wide mode always show the section body regardless of collapse class. */
+	.vs-section.vs-stats-collapsed .vs-section-body,
+	.vs-section.vs-preview-collapsed .vs-section-body {
+		display: block !important;
+	}
+}
+
+.vs-section {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5em;
+}
+
+/* Section heading row: triangle + title + action buttons */
+.vs-section-heading {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.4em;
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-semibold);
+	cursor: default;
+}
+
+.vs-collapse-arrow {
+	cursor: pointer;
+	user-select: none;
+	color: var(--text-muted);
+	font-size: 0.75em;
+}
+
+.vs-heading-text {
+	flex: 1;
+}
+
+.vs-heading-btns {
+	display: flex;
+	gap: 0.4em;
+}
+
+/* Collapse: hide the body when the collapsed class is present (narrow only). */
+.vs-stats-collapsed .vs-section-body,
+.vs-preview-collapsed .vs-section-body {
+	display: none;
+}
+
+.vs-section-body {
+	display: flex;
+	flex-direction: column;
+	gap: 0.6em;
+}
+
+/* ── Stat table (shared by both sections) ─── */
+
+.vs-stat-table {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	gap: 1px 0.75em;
+	margin: 0;
+}
+
+.vs-stat-label {
+	color: var(--text-normal);
+	font-size: var(--font-ui-small);
+}
+
+.vs-stat-value {
+	text-align: right;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.vs-subheading,
+.vs-sub-heading {
+	font-size: var(--font-ui-small);
+	font-weight: var(--font-semibold);
+	color: var(--text-muted);
+	margin-top: 0.4em;
+}
+
+.vs-reset-line {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+/* ── Status row ─── */
+
+.vs-status-row {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.4em;
+	font-size: var(--font-ui-small);
+}
+
+.vs-status-badge {
+	font-weight: var(--font-semibold);
+	padding: 0 0.35em;
+	border-radius: var(--radius-s);
+}
+
+.vs-status-enabled  { color: var(--color-green); }
+.vs-status-running  { color: var(--color-blue); }
+.vs-status-paused   { color: var(--color-yellow); }
+
+/* ── Next-label, footer, loading, error ─── */
+
+.vs-next-label {
+	font-size: var(--font-ui-small);
+	font-weight: var(--font-semibold);
+}
+
+.vs-preview-footer {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.5em;
+	margin-top: 0.4em;
+}
+
+.vs-collected-at {
+	flex: 1;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.vs-loading,
+.vs-empty {
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+.vs-error {
+	font-size: var(--font-ui-small);
+	color: var(--color-red);
+}
+
+/* ── Shared button style ─── */
+
+.vs-btn {
+	font-size: var(--font-ui-smaller);
+	padding: 2px 8px;
+}
+
+.vs-btn-warning {
+	color: var(--color-red);
+}
+
+/* ── End instrumentation view ──────────────────────────────────────────── */
+
 .vault-share-sync-overlay {
 	position: absolute;
 	inset: 0;

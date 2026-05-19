@@ -1,6 +1,7 @@
 import { requestUrl } from 'obsidian';
 import { GDriveAuth } from './auth';
 import { GDriveError, codeFromStatus } from './errors';
+import type { StatsTracker } from '../sync/stats-tracker';
 
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
@@ -37,7 +38,14 @@ function assertDriveFileList(v: unknown): asserts v is DriveFileList {
  * All methods obtain a fresh access token via GDriveAuth before each request.
  */
 export class GDriveApi {
+	private statsTracker?: StatsTracker;
+
 	constructor(private readonly auth: GDriveAuth) {}
+
+	/** Inject the stats tracker after construction (tracker is created after API). */
+	setStatsTracker(tracker: StatsTracker): void {
+		this.statsTracker = tracker;
+	}
 
 	/** List files (and folders) that are direct children of parentId, handling pagination. */
 	async listChildren(parentId: string): Promise<DriveFile[]> {
@@ -49,6 +57,7 @@ export class GDriveApi {
 		let pageToken: string | undefined;
 
 		do {
+			this.statsTracker?.recordDriveListChildren();
 			const token = await this.auth.getAccessToken();
 			const url = pageToken ? `${base}&pageToken=${encodeURIComponent(pageToken)}` : base;
 			const response = await requestUrl({
@@ -68,6 +77,7 @@ export class GDriveApi {
 
 	/** Return a single file's metadata. */
 	async getFile(fileId: string): Promise<DriveFile> {
+		this.statsTracker?.recordDriveGetFile();
 		const token = await this.auth.getAccessToken();
 		const fields = encodeURIComponent('id,name,mimeType,modifiedTime');
 		const response = await requestUrl({
@@ -83,6 +93,7 @@ export class GDriveApi {
 
 	/** Read a file's raw content. Returns string for text, Uint8Array for binary. */
 	async readFile(fileId: string): Promise<string> {
+		this.statsTracker?.recordDriveReadFile();
 		const token = await this.auth.getAccessToken();
 		const response = await requestUrl({
 			url: `${DRIVE_API}/files/${fileId}?alt=media`,
@@ -95,6 +106,7 @@ export class GDriveApi {
 
 	/** Read a file's raw content as binary. */
 	async readFileBinary(fileId: string): Promise<Uint8Array> {
+		this.statsTracker?.recordDriveReadFileBinary();
 		const token = await this.auth.getAccessToken();
 		const response = await requestUrl({
 			url: `${DRIVE_API}/files/${fileId}?alt=media`,
@@ -110,6 +122,7 @@ export class GDriveApi {
 	 * If a file with name already exists in that folder, it is overwritten.
 	 */
 	async writeFile(parentFolderId: string, name: string, content: string | Uint8Array): Promise<DriveFile> {
+		this.statsTracker?.recordDriveWriteFile();
 		const existing = await this.findFile(parentFolderId, name);
 		const mimeType = typeof content === 'string' ? 'text/plain' : 'application/octet-stream';
 
@@ -121,6 +134,7 @@ export class GDriveApi {
 
 	/** Delete a file or folder by ID. */
 	async deleteFile(fileId: string): Promise<void> {
+		this.statsTracker?.recordDriveDeleteFile();
 		const token = await this.auth.getAccessToken();
 		const response = await requestUrl({
 			url: `${DRIVE_API}/files/${fileId}`,
@@ -135,6 +149,7 @@ export class GDriveApi {
 
 	/** Create a folder under parentId. */
 	async createFolder(parentId: string, name: string): Promise<DriveFile> {
+		this.statsTracker?.recordDriveCreateFolder();
 		const token = await this.auth.getAccessToken();
 		const response = await requestUrl({
 			url: `${DRIVE_API}/files`,
@@ -158,6 +173,7 @@ export class GDriveApi {
 	 * Example: '/vault-share/shared' → Drive file ID of 'shared'.
 	 */
 	async resolveFolder(path: string): Promise<string> {
+		this.statsTracker?.recordDriveResolveFolder();
 		const segments = path.split(/[/\\]/).filter(s => s.length > 0);
 		if (segments.length === 0) return 'root';
 
@@ -171,11 +187,13 @@ export class GDriveApi {
 
 	/** Find a folder by name under parentId. Returns null if not found. */
 	async findFolder(parentId: string, name: string): Promise<DriveFile | null> {
+		this.statsTracker?.recordDriveFindFolder();
 		return this.findChild(parentId, name, FOLDER_MIME);
 	}
 
 	/** Find a non-folder file by name under parentId. Returns null if not found. */
 	async findFile(parentId: string, name: string): Promise<DriveFile | null> {
+		this.statsTracker?.recordDriveFindFile();
 		return this.findChild(parentId, name, null);
 	}
 

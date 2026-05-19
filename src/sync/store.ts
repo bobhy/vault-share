@@ -19,6 +19,17 @@ export const EMPTY_STATS: SyncStats = {
 	filesMerged: 0,
 	contentConflicts: 0,
 	deleteConflicts: 0,
+	statsResetAt: 0,
+	driveListChildren: 0,
+	driveGetFile: 0,
+	driveReadFile: 0,
+	driveReadFileBinary: 0,
+	driveWriteFile: 0,
+	driveDeleteFile: 0,
+	driveCreateFolder: 0,
+	driveResolveFolder: 0,
+	driveFindFolder: 0,
+	driveFindFile: 0,
 };
 
 /**
@@ -110,7 +121,8 @@ export class SyncStore {
 				const row = req.result;
 				if (!row) return { ...EMPTY_STATS };
 				const { key: _key, ...stats } = row;
-				return stats;
+				// Merge with EMPTY_STATS so new fields default to 0 in existing vaults.
+				return { ...EMPTY_STATS, ...stats };
 			};
 		});
 	}

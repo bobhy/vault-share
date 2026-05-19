@@ -1,9 +1,10 @@
 import type { App } from 'obsidian';
-import type { SyncContext, SyncPassResult } from './types';
+import type { SyncContext, SyncPassResult, SyncPreviewResult } from './types';
 import type { ExcludeMatcher } from './exclude';
 import { buildMixedEntries } from './change-detector';
 import { planActions } from './decision-engine';
 import { syncOneFile } from './file-syncer';
+import { classifyActions } from './share-preview';
 import { ConfirmationModal } from '../ui/confirmation-modal';
 
 /**
@@ -12,6 +13,9 @@ import { ConfirmationModal } from '../ui/confirmation-modal';
  * single-file sync operations can run in the same event loop.
  */
 export class BulkSync {
+	private abortSignal = false;
+	private onPlanComplete?: (preview: SyncPreviewResult) => void;
+
 	constructor(
 		private readonly ctx: SyncContext,
 		private readonly excludeMatcher: ExcludeMatcher,
@@ -19,7 +23,18 @@ export class BulkSync {
 		private readonly setStatusBar: (text: string) => void,
 	) {}
 
+	/** Signal the running pass to stop after the current file completes. */
+	abortCurrentPass(): void {
+		this.abortSignal = true;
+	}
+
+	/** Register a callback invoked with the planned actions before they execute. */
+	setOnPlanComplete(cb: (preview: SyncPreviewResult) => void): void {
+		this.onPlanComplete = cb;
+	}
+
 	async run(): Promise<SyncPassResult> {
+		this.abortSignal = false;
 		const result: SyncPassResult = {
 			downloaded: 0,
 			uploaded: 0,
@@ -51,6 +66,11 @@ export class BulkSync {
 			const entries = buildMixedEntries(localFiles, remoteFiles, allRecords);
 			const actions = planActions(entries, hasHistory).filter(a => a.type !== 'noOp');
 
+			// Emit preview snapshot before any actions execute.
+			if (this.onPlanComplete) {
+				this.onPlanComplete(classifyActions(actions, this.ctx.settings()));
+			}
+
 			// Confirmation guard.
 			const syncableCount = localFiles.length;
 			const modifyCount = actions.filter(
@@ -78,6 +98,7 @@ export class BulkSync {
 
 			// Process one file at a time, yielding between each.
 			for (const action of actions) {
+				if (this.abortSignal) { result.abortedByUser = true; break; }
 				this.ctx.logger.debug(`sync ${action.path}: ${action.type}`);
 				const fileResult = await syncOneFile(action, this.ctx, hasHistory);
 
