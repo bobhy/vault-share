@@ -1,6 +1,7 @@
 # Vault Share
 
-Share your Obsidian vault with all your devices via Google Drive.
+Share all or part of an Obsidian vault with multiple devices via Google Drive.
+
 Changes on one device are uploaded quickly, but are shared to other devices lazily or on demand.  This conserves network bandwidth while
 ensuring you'll see the latest version of a file when you open it, wherever you choose to open it (and have a cloud backup of the vault, to boot).
 
@@ -54,7 +55,7 @@ It is not presumed to have been *deleted* from the other: without history, we ca
 This can get ugly if the group vault is similar to, but not an exact replica of the local vault.  
 You could end up with lots of conflict file pairs or merged text files to resolve by hand.  
 
-For this reason, we recommend that you do initial sharing only with a group vault that is empty or is one you recently logged out of.
+For this reason, we recommend that you do first-time sharing only with a group vault that is empty or is one you recently logged out of and is likely to be very similar o your local vault.  To reduce the risk of unintended conflicts, the plugin will prompt for manual confirmation if any bulk share operation would change more that 10% of the files.
 
 ### Timing of share operations
 
