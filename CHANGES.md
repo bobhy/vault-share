@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Pause Sync command stops the remainder of the bulk share opeeration, if it is running.  
 Also pauses future runs, as before.
+- Moved statistics out of Settings to new vault sharing view.
 
 ## [0.2.2]
 
