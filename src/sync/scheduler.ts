@@ -45,28 +45,8 @@ export class SyncScheduler {
 	private readonly fileStates = new Map<string, PerFileState>();
 	private paused = false;
 	private bulkRunning = false;
-	private onStatusChangeCb?: () => void;
 
 	constructor(private readonly deps: SyncSchedulerDeps) {}
-
-	/** Returns the current sharing status for display in the instrumentation view. */
-	getStatus(): 'paused' | 'running' | 'enabled' {
-		if (this.paused) return 'paused';
-		if (this.bulkRunning) return 'running';
-		return 'enabled';
-	}
-
-	/** Register a callback invoked whenever the sharing status changes. */
-	setOnStatusChange(cb: () => void): void {
-		this.onStatusChangeCb = cb;
-	}
-
-	/** Abort the current bulk-sync pass after the in-progress file completes. */
-	abortCurrentPass(): void {
-		if (this.bulkRunning) {
-			this.deps.bulkSync.abortCurrentPass();
-		}
-	}
 
 	start(): void {
 		const { workspace, registerEvent, registerInterval, ctx } = this.deps;
@@ -108,9 +88,7 @@ export class SyncScheduler {
 	}
 
 	setPaused(paused: boolean): void {
-		if (this.paused === paused) return;
 		this.paused = paused;
-		this.onStatusChangeCb?.();
 	}
 
 	isPaused(): boolean {
@@ -180,13 +158,9 @@ export class SyncScheduler {
 		const doc: Document = this.deps.workspace.containerEl.doc ?? window.document;
 		if (!this.bulkRunning && now >= this.bulkNextRunAt && doc.visibilityState === 'visible') {
 			this.bulkRunning = true;
-			this.onStatusChangeCb?.();
 			const intervalMs = ctx.settings().bulkSyncPoll * 1000;
 			this.bulkNextRunAt = now + intervalMs;
-			void bulkSync.run().finally(() => {
-				this.bulkRunning = false;
-				this.onStatusChangeCb?.();
-			});
+			void bulkSync.run().finally(() => { this.bulkRunning = false; });
 		}
 
 		// Dispatch single-file syncs that are due.

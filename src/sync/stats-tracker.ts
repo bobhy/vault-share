@@ -36,25 +36,14 @@ export class StatsTracker {
 		this.current.serverClockSkew = ms;
 	}
 
-	recordDriveListChildren(): void { this.current.driveListChildren++; }
-	recordDriveGetFile(): void { this.current.driveGetFile++; }
-	recordDriveReadFile(): void { this.current.driveReadFile++; }
-	recordDriveReadFileBinary(): void { this.current.driveReadFileBinary++; }
-	recordDriveWriteFile(): void { this.current.driveWriteFile++; }
-	recordDriveDeleteFile(): void { this.current.driveDeleteFile++; }
-	recordDriveCreateFolder(): void { this.current.driveCreateFolder++; }
-	recordDriveResolveFolder(): void { this.current.driveResolveFolder++; }
-	recordDriveFindFolder(): void { this.current.driveFindFolder++; }
-	recordDriveFindFile(): void { this.current.driveFindFile++; }
-
 	/** Persist current in-memory stats to IDB. */
 	flush(): Promise<void> {
 		return this.store.putStats(this.current);
 	}
 
-	/** Reset all stats to zero in memory and IDB, recording the reset timestamp. */
+	/** Reset all stats to zero in memory and IDB. */
 	async reset(): Promise<void> {
-		this.current = { ...EMPTY_STATS, statsResetAt: Date.now() };
+		this.current = { ...EMPTY_STATS };
 		await this.store.putStats(this.current);
 	}
 }

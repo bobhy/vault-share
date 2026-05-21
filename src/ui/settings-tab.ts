@@ -210,6 +210,42 @@ export class VaultShareSettingTab extends PluginSettingTab {
 					}),
 			);
 
+		// --- Statistics (read-only) ---
+		new Setting(containerEl).setName('Statistics').setHeading();
+
+		const stats = this.plugin.statsTracker?.getCurrent();
+		if (stats) {
+			const fields: Array<[string, string, string | number]> = [
+				['Server clock skew', 'serverClockSkew', `${stats.serverClockSkew} ms`],
+				['Api response time', 'APIResponseTime', `${stats.APIResponseTime} ms`],
+				['Bulk sharing passes', 'bulkSyncPasses', stats.bulkSyncPasses],
+				['Single file shares', 'singleFileSyncCount', stats.singleFileSyncCount],
+				['Files pushed', 'filesPushed', stats.filesPushed],
+				['Files pulled', 'filesPulled', stats.filesPulled],
+				['Files merged', 'filesMerged', stats.filesMerged],
+				['Content conflicts', 'contentConflicts', stats.contentConflicts],
+				['Delete conflicts', 'deleteConflicts', stats.deleteConflicts],
+			];
+			for (const [name, , value] of fields) {
+				new Setting(containerEl)
+					.setName(name)
+					.setDesc(String(value));
+			}
+
+			new Setting(containerEl)
+				.setName('Reset statistics')
+				.setDesc('Reset all counters to zero.')
+				.addButton(btn =>
+					btn
+						.setButtonText('Reset')
+						.setCta()
+						.onClick(async () => {
+							await this.plugin.statsTracker?.reset();
+							this.display();
+						}),
+				);
+		}
+
 		// --- Plugin ---
 		new Setting(containerEl).setName('Plugin').setHeading();
 

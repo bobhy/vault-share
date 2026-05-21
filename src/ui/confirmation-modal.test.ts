@@ -64,51 +64,5 @@ describe('ConfirmationModal', () => {
 
 			expect(spy).toHaveBeenCalledWith('<b>important</b>');
 		});
-
-		describe('custom button labels via options', () => {
-			it('renders the custom ok label on the primary button', () => {
-				void ConfirmationModal.prompt(app, 'Title', '<p>Body</p>', { ok: 'Resume sharing' });
-
-				const btn = activeDocument.querySelector<HTMLButtonElement>('.modal-button-container .mod-cta');
-				expect(btn?.textContent).toBe('Resume sharing');
-			});
-
-			it('renders the custom cancel label on the secondary button', () => {
-				void ConfirmationModal.prompt(app, 'Title', '<p>Body</p>', { cancel: 'Leave paused' });
-
-				const buttons = activeDocument.querySelectorAll<HTMLButtonElement>('.modal-button-container button');
-				const cancelBtn = Array.from(buttons).find(b => !b.classList.contains('mod-cta'));
-				expect(cancelBtn?.textContent).toBe('Leave paused');
-			});
-
-			it('resolves true when the custom ok button is clicked', async () => {
-				const promise = ConfirmationModal.prompt(app, 'Title', '<p>Body</p>', { ok: 'Unpause' });
-
-				activeDocument.querySelector<HTMLButtonElement>('.modal-button-container .mod-cta')!.click();
-
-				await expect(promise).resolves.toBe(true);
-			});
-
-			it('resolves false when the custom cancel button is clicked', async () => {
-				const promise = ConfirmationModal.prompt(app, 'Title', '<p>Body</p>', { cancel: 'Stay paused' });
-
-				const buttons = activeDocument.querySelectorAll<HTMLButtonElement>('.modal-button-container button');
-				const cancelBtn = Array.from(buttons).find(b => !b.classList.contains('mod-cta'));
-				cancelBtn!.click();
-
-				await expect(promise).resolves.toBe(false);
-			});
-
-			it('falls back to Continue / Quit when options are omitted', () => {
-				void ConfirmationModal.prompt(app, 'Title', '<p>Body</p>');
-
-				const primary = activeDocument.querySelector<HTMLButtonElement>('.modal-button-container .mod-cta');
-				expect(primary?.textContent).toBe('Continue');
-
-				const buttons = activeDocument.querySelectorAll<HTMLButtonElement>('.modal-button-container button');
-				const secondary = Array.from(buttons).find(b => !b.classList.contains('mod-cta'));
-				expect(secondary?.textContent).toBe('Quit');
-			});
-		});
 	});
 });

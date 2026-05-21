@@ -14,9 +14,7 @@ import { SyncScheduler } from './sync/scheduler';
 import { SyncContext } from './sync/types';
 import { VaultShareSettingTab } from './ui/settings-tab';
 import { SyncLogView, SYNC_LOG_VIEW_TYPE } from './ui/sync-log-view';
-import { VaultShareView, VAULT_SHARING_VIEW_TYPE} from './ui/vault-share-view';
 import { ConfirmationModal } from './ui/confirmation-modal';
-import { SharePreview } from './sync/share-preview';
 
 /**
  * Vault Share plugin entry point.
@@ -30,8 +28,6 @@ export default class VaultSharePlugin extends Plugin {
 	store?: SyncStore;
 	statsTracker?: StatsTracker;
 	scheduler?: SyncScheduler;
-	sharePreview?: SharePreview;
-	sharePreviewPending = false;
 
 	private clientId = '';
 	private driveFolderId = '';
@@ -51,15 +47,6 @@ export default class VaultSharePlugin extends Plugin {
 			{ driveFolderPath: `/vault-share/${this.app.vault.getName()}` },
 			stored,
 		);
-		// Enum fields from older versions may not match current valid values; reset to defaults.
-		const validFileConflict: string[] = ['Keep Both', 'Use Newer'];
-		const validTextFileConflict: string[] = ['Keep Both', 'Use Newer', 'Merge'];
-		if (!validFileConflict.includes(this.settings.fileConflict)) {
-			this.settings.fileConflict = DEFAULT_SETTINGS.fileConflict;
-		}
-		if (!validTextFileConflict.includes(this.settings.textFileConflict)) {
-			this.settings.textFileConflict = DEFAULT_SETTINGS.textFileConflict;
-		}
 
 		// 2. Auth + API
 		this.auth = new GDriveAuth(this.app);
@@ -82,7 +69,6 @@ export default class VaultSharePlugin extends Plugin {
 		// 6. Stats
 		this.statsTracker = new StatsTracker(this.store);
 		await this.statsTracker.load();
-		this.api.setStatsTracker(this.statsTracker);
 
 		// 7. File system adapters
 		this.excludeMatcher = new ExcludeMatcher(this.settings.excludeRules);
@@ -115,29 +101,8 @@ export default class VaultSharePlugin extends Plugin {
 			logger: this.logger,
 		};
 
-		// 10b. Share preview (needs ctx)
-		this.sharePreview = new SharePreview(ctx, this.excludeMatcher);
-
 		// 11. Bulk sync + scheduler
-		const bulkSync = new BulkSync(ctx, this.excludeMatcher, setStatusBar);
-		bulkSync.setOnPlanComplete(preview => {
-			for (const leaf of this.app.workspace.getLeavesOfType(VAULT_SHARING_VIEW_TYPE)) {
-				(leaf.view as VaultShareView).onBulkSyncPlanComplete(preview);
-			}
-		});
-		bulkSync.setOnTooManyChanges(() => {
-			this.scheduler?.setPaused(true);
-			this.sharePreviewPending = true;
-			const notice = new Notice(
-				'Bulk sharing paused — too many pending changes detected. Open the vault share view to review.',
-				0,
-			);
-			notice.messageEl.createEl('button', { text: 'Open status view', cls: 'vs-notice-btn' })
-				.addEventListener('click', () => {
-					notice.hide();
-					void this.activateVaultSharingView();
-				});
-		});
+		const bulkSync = new BulkSync(ctx, this.excludeMatcher, this.app, setStatusBar);
 		this.scheduler = new SyncScheduler({
 			ctx,
 			bulkSync,
@@ -145,13 +110,6 @@ export default class VaultSharePlugin extends Plugin {
 			setStatusBar,
 			registerEvent: ref => this.registerEvent(ref),
 			registerInterval: id => this.registerInterval(id),
-		});
-
-		// 11b. Scheduler status-change → notify open VaultShareView instances
-		this.scheduler.setOnStatusChange(() => {
-			for (const leaf of this.app.workspace.getLeavesOfType(VAULT_SHARING_VIEW_TYPE)) {
-				(leaf.view as VaultShareView).onStatusChange();
-			}
 		});
 
 		// 12. Sidebar log view
@@ -162,9 +120,6 @@ export default class VaultSharePlugin extends Plugin {
 		if (this.settings.logToSidebar) {
 			this.app.workspace.onLayoutReady(() => { void this.activateSidebarLogView(); });
 		}
-
-		// 12b. Vault Share instrumentation view
-		this.registerView(VAULT_SHARING_VIEW_TYPE, leaf => new VaultShareView(leaf, this));
 
 		// 13. OAuth callback
 		this.registerObsidianProtocolHandler('vault-share-auth', async params => {
@@ -186,17 +141,10 @@ export default class VaultSharePlugin extends Plugin {
 
 		// 15. Commands
 		this.addCommand({
-			id: 'open-view',
-			name: 'Open view',
-			callback: () => { void this.activateVaultSharingView(); },
-		});
-
-		this.addCommand({
 			id: 'pause-sync',
 			name: 'Pause sharing',
 			callback: () => {
 				this.scheduler?.setPaused(true);
-				this.scheduler?.abortCurrentPass();
 				setStatusBar('Sharing paused');
 			},
 		});
@@ -370,23 +318,6 @@ export default class VaultSharePlugin extends Plugin {
 
 	private async resolveDriveFolder(): Promise<string> {
 		return this.api.resolveFolder(this.settings.driveFolderPath);
-	}
-
-	private async activateVaultSharingView(): Promise<void> {
-		const existing = this.app.workspace.getLeavesOfType(VAULT_SHARING_VIEW_TYPE);
-		if (existing[0]) {
-			await this.app.workspace.revealLeaf(existing[0]);
-			return;
-		}
-		let leaf: WorkspaceLeaf | null = null;
-		try {
-			leaf = this.app.workspace.getRightLeaf(false);
-		} catch {
-			return;
-		}
-		if (!leaf) return;
-		await leaf.setViewState({ type: VAULT_SHARING_VIEW_TYPE, active: true });
-		await this.app.workspace.revealLeaf(leaf);
 	}
 
 	private async activateSidebarLogView(): Promise<void> {
