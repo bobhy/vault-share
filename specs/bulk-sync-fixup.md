@@ -1,120 +1,196 @@
 # Bulk Sync fixup
 This is the user experience for correcting a potentially run-away bulk share cycle.
-Scenario is that bulk share detected it was going to make "too many" changes and paused itself, somehow informing the user and  inviting him/her do manual fixups.
+Scenario: bulk share detected it was going to make "too many" changes, paused itself, notified
+the user via the status bar and a startup notice, and offered manual fixups.
 
 ## Deferred state for a share operation
-Currently, when sharing checks a candidate file pair, it's comparing *current* metadata about the files in local and group vaults. Now, we're introducing the possibility for a share operation to be *deferred*, meaning that there needs to be some persistent state information about these candidates as well.  
+When sharing checks a candidate file pair it compares *current* metadata about the files in local
+and group vaults. This spec introduces the possibility for a share operation to be *deferred* —
+meaning the plugin must persist enough state to identify and skip that candidate in future sync
+passes. The term "share operation candidate" (or "candidate") is used throughout for this concept.
 
-The code currently has type `SyncAction` which has all the relevant data, but this is not currently persistent, we'll have to design something later.
-I don't want to presume what the actual implementation will be, so I'm going to use the term "share operation candidate", or "candidate" as a placeholder in this spec.
+When bulk sync plans a share cycle it generates a list of candidates. If that list is "too" long,
+the plugin pauses sync, marks all candidates as deferred, and allows manual recovery.
 
-So, when bulk sync plans a share cycle, it generates a list of candidates.  If that list of candidates is "too" long, we will pause sync, mark all those candidates as deferred and allow manual recovery.
+We also want the deferred status to be dropped automatically if the user makes a further change to either of the candidate files through normal Obsidian operations: edit a note, copy, move or delete files in vault index, etc.
 
-We also want the deferred status to be dropped automatically if the user makes a further change to either of the candidate files through normal Obsidian operations: edit a note, copy, move or delete files in vault index, etc. 
+### Auto-revocation by mtime comparison
 
-How to represent this deferred state?
-- must be per candidate file pair granularity
-- should be efficient in time and space
-- should automatically be revoked if user subsequently does some normal obsidian operation on either file (edit or delete, copy, move in vault tree, etc)
+Auto-revocation is designed to be implicit — requiring no explicit "undefer" calls anywhere in the
+codebase. When a candidate is deferred, the plugin stores the local and remote file mtimes *at the
+time of deferral* alongside the candidate record.
+
+At the start of each bulk sync pass, after enumerating current local and remote file states, each
+deferred candidate is compared against the current file states for its path:
+
+- If either side's current mtime differs from the stored mtime at deferral time, the candidate is
+  silently dropped from the deferred list and the path is processed normally by the decision engine.
+- If both mtimes still match, the candidate remains deferred and is skipped for this pass.
+
+This single comparison handles all cases without extra code at each event site:
+- **Edit:** local mtime changes → candidate auto-drops on next bulk sync pass.
+- **Delete:** local mtime becomes absent (0) → mismatch → auto-drops.
+- **Rename:** old path's local file is absent → mismatch → old candidate auto-drops; new path enters as a fresh candidate.
+- **Remote change:** remote mtime changes → mismatch → auto-drops.
+
+The deferred candidate record must therefore persist across plugin restarts. It will be stored in a
+new IndexedDB object store (alongside the existing `sync-records`, `sync-content`, `sync-stats`,
+and `device` stores). Each record stores: the planned operation type, the vault path, the local and
+remote mtimes at deferral time, and the timestamp when the candidate was deferred.
+
+The sync-paused flag is also stored in IndexedDB (not in plugin settings / `data.json`). Plugin
+settings are shared to other devices by the sync mechanism, so device-local state such as "this
+device has paused sync" must not live there.
 
 ## Bulk Sharing Status panel
-This is the entrypoint for user to do manual fixups of deferred candidate share operations
+This is the entrypoint for manual fixups of deferred candidate share operations.
 
-Might be a section of the existing Vault Share view, or separate.
+When the "too many changes" threshold is exceeded, bulk sync pauses itself, defers all candidates,
+and directs the user here. Bulk sync remains paused while the user performs manual fixups.
+
+### Accessing the panel
+
+The panel must be reachable at any time so the user always has access to the pause/resume control:
+- Via a command palette entry: "Open bulk sharing fixup panel."
+- By clicking the persistent status bar indicator (see below).
+- Navigating to the Vault Share sidebar view (if the panel lives there).
+
+### Status bar indicator
+
+When sync is paused or deferred candidates exist, a persistent status bar item is shown
+(separate from the transient sync-progress messages). It is always visible and clickable.
+
+- While paused with candidates pending: displays e.g. "⚠ Sharing paused – 12 files pending".
+  Clicking opens the Bulk Sharing Status panel.
+- While running with no candidates: the indicator is hidden.
+
+### Startup notification
+
+On plugin load, if the deferred-candidates store contains any records, show an Obsidian Notice
+with a clickable link: "Bulk sharing has N deferred files — tap to review." Tapping opens the
+Bulk Sharing Status panel.
+
+### Panel contents
 
 User can see:
-- current state of bulk sharing (paused, running, currently active)
-- what the next bulk share sync operation was going to do
-    - count of candidates for each of the share operation listed below:
-- a button to pause/unpause sharing 
+- Current state of bulk sharing (paused or running).
+- A button to manually pause or resume sharing at any time.
+- Count of deferred candidates per operation type, in the table below. Tapping a row opens the
+  deferred list popup for that operation type.
 
+| Vault affected | What sharing plans to do |
+| --- | --- |
+| Group vault | Push a file that only exists locally |
+| Group vault | Push to update a file with the newer local version |
+| Group vault | Delete a file (you deleted it locally) |
+| Local vault | Pull a file that only exists in the group vault |
+| Local vault | Pull to update a file with the newer group vault version |
+| Local vault | Delete a file (it was deleted in the group vault) |
+| Local vault | Merge conflicting edits to a text file (includes the case where one vault deleted the file — treated as a merge where one side is empty) |
+| Local vault | Create a conflict copy for a non-text file with conflicting edits |
 
-| vault to be affected | operation bulk share wants to do |
-| ----- | ---------------------------------|
-| group | create new file (push) | 
-| group | overwrite existing file (push, or conflict with "keep newer" policy) |
-| group | delete file (deleteRemote) |
-| local | create new file (pull) |
-| local | overwrite existing file (pull, or conflict with "keep newer") |
-| local | delete file (deleteLocal) |
-| local | create conflict pair in (conflict, non-text or deleteConflict) |
-| local | 3-way diff merge (text type file and (conflict or deleteConflict)) |
-
-User can click on one of these rows to open a "deferred list" popup
-
-User will be directed here when "too many changes" threshold exceeded, but can open this panel and do things at any time.
+When the user closes this panel while sharing is still paused, a confirmation dialog asks:
+"Bulk sharing is paused. Resume sharing before closing?" with Resume and Keep Paused buttons.
 
 ## Deferred list popup
 
-Lists all the deferred candidates for a particular kind of share operation
+Lists all the deferred candidates for a particular kind of share operation.
+Designed to render well in portrait orientation on mobile.
 
-Header: 
-- explaination of the share operation for these candidates.
-- "select all" checkbox
+Header:
+- Plain-language description of what sharing will do for each accepted candidate
+  (e.g. "Sharing will push these files to the group vault. Accept the ones you want to allow.").
+- "Select all" checkbox.
+- Apply and Cancel buttons.
 
-List: 
-- vault path of the candidate
-- a checkbox to mark the candidate as undeferred (doesn't actually change state till popup closes)
-- clicking the list row opens the "manual review" popup
+List:
+- Each row shows the vault path of the candidate and a checkbox.
+  Checking the checkbox means "I accept this planned operation."
+  Checkbox changes are pending — no state changes until Apply is tapped.
+- Tapping a row (not the checkbox) expands it inline to show the Manual Review detail (accordion).
+  Only one row is expanded at a time; expanding a new row collapses the previous one.
 
-Closing the deferred list popup applies all the undefer state changes (no state change until this point).
-Once the undefer state change happens, the candidate is immediately available for bulk sharing.
-And the state change updates the count of deferred candidates  shown in the Bulk Sharing Status panel.
+Tapping Apply removes all accepted candidates from the deferred list. They will be processed in the
+next bulk sync pass — immediately if sharing is running, or when the user resumes sharing if paused.
+The counts in the Bulk Sharing Status panel update to reflect the change.
+Tapping Cancel discards all pending checkbox changes and closes the popup.
 
-## Manual Review popup
+### Manual Review (inline expansion)
 
-Visualizes the share candidate details, so user can manually complete the share operation or leave it unchanged.
+Visualizes the candidate's details so the user can resolve it manually or leave it unchanged.
+Rendered as an expanded section within the deferred list row — no separate modal.
 
-Layout of the popup has a common header above a one or two "file panel"(s) depending on the kind of share operation.
+The expanded section has a header and one or two file panels depending on the operation.
 
 Header shows:
-- vault path of the candidate
-- the pending share operation
+- Vault path of the candidate.
+- The pending share operation in plain language.
 
-"File Panel" Depending on the kind of share operation, one or two tabs or panes in a splitter.
+**File panel layout:** all operations use a single read-only file panel except:
+- Text conflict uses a single editable file panel showing the 3-way merged result (one side may be
+  empty if one vault deleted the file). The user edits this file to resolve conflict markers before
+  completing the merge.
+- Non-text conflict uses two read-only panels stacked vertically: local vault file on top,
+  group vault file below (downloaded on demand).
 
-File panel shows:
-- header
-    - vault the file lives in (local or group)
-    - vault path
-    - resolution choices: "cancel", "keep this", "merge" (only for text conflict), "delete both", "keep other"
-- body
-    - (for a file in the local vault) an editable view of the file (or view only if the file type is not editable)
-    - (for a file in remote vault) a read-only view of the file (implies the group file is downloaded to show in the view)
+| Operation type | File panel content |
+| --- | --- |
+| Push | Local vault file (read-only) |
+| Pull | Group vault file (read-only; downloaded on demand) |
+| Delete local | Local vault file (read-only) |
+| Delete remote | Group vault file (read-only; downloaded on demand) |
+| Text conflict (including delete+modify) | Merged file in local vault (editable) |
+| Non-text conflict | Local vault file (top, read-only) · Group vault file (bottom, read-only; downloaded on demand) |
 
-When user makes a resolution choice, the operation is perfomed immediately and the deferred state goes away.
-- "cancel" - file panel closes with no change to files or to deferred status of the candidate
-- "keep this" - the selected file is copied to the "other" vault so it's present in both vaults with metadata adjusted so share will consider the files identical.
-- "keep other" - the file in the "other" file panel is copied to "this" vault, so it's present in both vaults with metadata adjusted so share will consider files identical.
-- "merge" - when clicked plugin checks status of merged file displayed in file panel.  
-  If no 3-way conflict markers, merged file is written to both vaults (not waiting for bulk sync)
-  If file has conflict markers, user sees message "resolve merge conflicts" and focus is set on the file panel.
-- "delete both" - file is deleted from both vaults.  (for local vault, moved to trash)
+Resolution buttons (performed immediately; removes the candidate from the deferred list):
+
+| Operation type | Available resolution buttons |
+| --- | --- |
+| Push | **Proceed** · **Back out** (delete local file) · **Skip** |
+| Pull | **Proceed** · **Back out** (delete from group vault) · **Skip** |
+| Delete local | **Proceed** · **Back out** (restore from group vault to local) · **Skip** |
+| Delete remote | **Proceed** · **Back out** (restore from local vault to group) · **Skip** |
+| Text conflict | **Merge** · **Back out** (restore common base to both vaults) · **Skip** |
+| Non-text conflict | **Keep local** · **Keep group** · **Delete both** · **Skip** |
+
+Resolution semantics:
+- **Proceed** — executes the planned operation immediately without waiting for bulk sync.
+- **Back out** — resolves the discrepancy in the opposite direction from what sharing planned:
+    - Push → delete the local file (moved to trash).
+    - Pull → delete the file from the group vault.
+    - Delete local → restore the file by copying from the group vault to local.
+    - Delete remote → restore the file by copying from the local vault to the group vault.
+    - Text conflict → copy the common base (last synced version, from the sync-content cache or Drive) to both vaults, discarding both sides' changes.
+  Sync records are updated so sharing considers both sides reconciled.
+- **Skip** — collapses the row, leaving the candidate deferred.
+- **Keep local** — local file is copied to the group vault; sync records updated so both sides are considered identical.
+- **Keep group** — group file is copied to the local vault; sync records updated so both sides are considered identical.
+- **Merge** — checks the merged file currently in the editor for remaining conflict markers.
+  If none remain, writes the file to both vaults immediately.
+  If markers remain, shows "Resolve all conflict markers first" and keeps focus in the editor.
+- **Delete both** — deletes the file from both vaults (local side is moved to trash).
 
 ## Edit action - Resolve conflict markers
-This is an edit action provided by the plugin that can be used in the edit view for any 3diff merged file.  It is not specific to manual review.
+This command is provided by the plugin for use in the edit view of any 3-way merged file.
+It is not specific to manual review.
 
-Action provides a "find next conflict" and "find previous conflict" edit action.
-- action moves cursor to beginning of the next or previous marked conflict region.  Search wraps around the bottom or top of file, but stops where it started if none found. If none is found, or cursor was already at the only one, user sees message "No other conflicts" and cursor stays where it was.
-- at the beginning of the conflict region, offers options:
-    - "skip" -- does a find next conflict operation.
-    - "keep all" -- action removes all the conflict markers and their newline, squashing all the alternatives onto adjacent lines
-    - "keep `<firstOption>`", "keep `<lastOption>`, "revert to original" -- remove the "other" alternatives and all conflict markers and their newline, leaving only the text of the selected alternative.
+This command provides "find next conflict" and "find previous conflict" actions.
+- Moves the cursor to the beginning of the next or previous marked conflict region. Search wraps
+  around the bottom or top of the file but stops where it started if none are found. If none is
+  found, or the cursor was already at the only one, the user sees "No other conflicts" and the
+  cursor stays where it was.
+- At the beginning of the conflict region, offers options:
+    - "Skip" — does a find-next-conflict operation without resolving the current region.
+    - "Keep all" — removes all conflict markers and their newlines, squashing all alternatives onto adjacent lines.
+    - "Keep local version" / "Keep group version" / "Revert to base" — removes the other alternatives and all conflict markers, leaving only the text of the selected version.
+        - "Keep local version": the local vault's edits.
+        - "Keep group version": the group vault's edits.
+        - "Revert to base": the common ancestor version at last sync.
 
-After completing the edit, action leaves cursor where it is, so user can see the completed edit (and manually fix it up if needed).
+After completing the edit, the cursor stays in place so the user can review (and manually adjust if needed).
 
-Open question: default keybindings for find next and find previous conflict?
+## Open questions
 
-## open questions:
-- concrete representation of deferred state -- maybe `SyncAction`, persisted in IndexedDB?
-- Design of "defer list" -- Popup modal or pop out window?
-- When "too many" threshold exceeded and sharing is paused, should all the affected candidates start off in deferred state, or left as is but with sharing guaranteed to be paused?
-  - Pausing sharing but not deferring all the current candidates is a bit fragile.  If sharing get unpaused unexpectedly, user gets deluged with the undesired share operations.
-  - Could do *both*, pause sharing *and* mark all the current candidates as deferred.  More robust.
-  - Or we could just defer all the candidates and not pause bulk sharing.  
-    Then the undesired share operations don't happen, but user could proceed with editing existing files normally and those changes would be shared.  
-    But we would need to periodically remind the user that s/he must deal with the backlog of deferred candidates eventually.  
-    Also, bulk share must not get slowed down by presence of many deferred candidates.  This situation might persist over many bulk share cycles.
-  - [A] Yes, after threshold exceeded, all candidates should be in deferred state.  Still not sure whether sharing should be paused or left running.
-
-User can open the panel at any time, so the status information has to be correct for any state of bulk sharing.
+- Should the Bulk Sharing Status panel be a section of the existing Vault Share sidebar view, or a separate view?
+- Default keybindings for "find next conflict" and "find previous conflict" edit actions?
+- Concrete schema for the deferred-candidates IndexedDB store (TBD at design time).
