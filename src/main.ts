@@ -10,6 +10,8 @@ import { ExcludeMatcher } from './sync/exclude';
 import { LocalFs } from './sync/local-fs';
 import { DriveFsAdapter } from './sync/drive-fs';
 import { BulkSync } from './sync/bulk-sync';
+import { DeferralStore } from './sync/deferral-store';
+import { DeferralManager } from './sync/deferral-manager';
 import { SyncScheduler } from './sync/scheduler';
 import { SyncContext } from './sync/types';
 import { VaultShareSettingTab } from './ui/settings-tab';
@@ -36,6 +38,7 @@ export default class VaultSharePlugin extends Plugin {
 	private driveFs!: DriveFsAdapter;
 	private settingTab!: VaultShareSettingTab;
 	private statusBarEl!: HTMLElement;
+	private deferralStatusBarEl!: HTMLElement;
 	private monitoringStatusBarEl!: HTMLElement;
 
 	async onload() {
@@ -75,9 +78,10 @@ export default class VaultSharePlugin extends Plugin {
 		this.localFs = new LocalFs(this.app);
 		this.driveFs = new DriveFsAdapter(this.api);
 
-		// 8. Status bar (sync status) + monitoring status bar
+		// 8. Status bar items: sync status, deferral indicator, monitoring
 		this.statusBarEl = this.addStatusBarItem();
 		const setStatusBar = (text: string) => { this.statusBarEl.setText(text); };
+		this.deferralStatusBarEl = this.addStatusBarItem();
 		this.monitoringStatusBarEl = this.addStatusBarItem();
 
 		// 9. Resolve Drive folder (best-effort at load; scheduler retries on each bulk pass)
@@ -101,8 +105,11 @@ export default class VaultSharePlugin extends Plugin {
 			logger: this.logger,
 		};
 
-		// 11. Bulk sync + scheduler
-		const bulkSync = new BulkSync(ctx, this.excludeMatcher, this.app, setStatusBar);
+		// 11. Deferral layer + bulk sync + scheduler
+		const deferralStore = new DeferralStore(this.store.getIdb());
+		const deferralManager = new DeferralManager(deferralStore, () => { this.updateDeferralStatusBar(deferralManager); });
+		void this.initDeferralNotice(deferralManager);
+		const bulkSync = new BulkSync(ctx, this.excludeMatcher, this.app, setStatusBar, deferralManager);
 		this.scheduler = new SyncScheduler({
 			ctx,
 			bulkSync,
@@ -314,6 +321,32 @@ export default class VaultSharePlugin extends Plugin {
 		} else {
 			this.monitoringStatusBarEl.setText('');
 		}
+	}
+
+	/** Show a startup Notice if deferred candidates are waiting for review. */
+	private async initDeferralNotice(manager: DeferralManager): Promise<void> {
+		const count = await manager.getTotalCount();
+		if (count === 0) return;
+		const frag = createFragment();
+		frag.appendText(`Bulk sharing has ${count} deferred file${count === 1 ? '' : 's'} — `);
+		const link = frag.createEl('a', { text: 'Tap to review' });
+		link.addEventListener('click', () => { this.updateDeferralStatusBar(manager); });
+		new Notice(frag);
+	}
+
+	/** Update the persistent deferral status bar item. */
+	private updateDeferralStatusBar(manager: DeferralManager): void {
+		void manager.getTotalCount().then(count => {
+			void manager.isPaused().then(paused => {
+				if (paused || count > 0) {
+					this.deferralStatusBarEl.setText(
+						`Sharing paused – ${count} file${count === 1 ? '' : 's'} pending`,
+					);
+				} else {
+					this.deferralStatusBarEl.setText('');
+				}
+			});
+		});
 	}
 
 	private async resolveDriveFolder(): Promise<string> {

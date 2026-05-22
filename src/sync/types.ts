@@ -55,6 +55,28 @@ export interface SyncAction {
 	record?: SyncRecord;
 }
 
+/**
+ * A planned sync action that has been deferred for manual user review.
+ *
+ * Stores only the minimal fields needed for auto-revocation (mtime comparison) and
+ * manual review (driveFileId to fetch the group vault file). Persisted in IndexedDB
+ * on the local device and never shared to other vaults.
+ */
+export interface DeferredCandidate {
+	/** Vault path; used as the IndexedDB key. */
+	path: string;
+	/** The operation that bulk sync planned when this candidate was deferred. */
+	actionType: SyncActionType;
+	/** Local file mtime at deferral time; 0 if the local file was absent. */
+	localMtime: number;
+	/** Remote file mtime at deferral time; 0 if the remote file was absent. */
+	remoteMtime: number;
+	/** Drive file ID at deferral time; undefined if the remote file was absent. */
+	driveFileId?: string;
+	/** Epoch ms when the candidate was deferred. */
+	deferredAt: number;
+}
+
 /** Result of a single bulk sync pass. */
 export interface SyncPassResult {
 	downloaded: number;
@@ -62,7 +84,8 @@ export interface SyncPassResult {
 	deleted: number;
 	conflicts: number;
 	merges: number;
-	abortedByUser: boolean;
+	/** True if the pass was halted because the action count exceeded the deferral threshold. */
+	deferredByThreshold: boolean;
 	error?: Error;
 }
 

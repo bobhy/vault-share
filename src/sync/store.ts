@@ -1,11 +1,13 @@
 import { IDBHelper, idbRequest, sanitizeDbName } from './idb';
 import type { SyncRecord, SyncStats } from './types';
 
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_RECORDS = 'sync-records';
 const STORE_CONTENT = 'sync-content';
 const STORE_STATS = 'sync-stats';
 const STORE_DEVICE = 'device';
+const STORE_DEFERRED = 'deferred-candidates';
+const STORE_SYNC_STATE = 'sync-state';
 const STATS_KEY = 'stats';
 const CLIENT_ID_KEY = 'clientId';
 
@@ -22,7 +24,7 @@ export const EMPTY_STATS: SyncStats = {
 };
 
 /**
- * Manages all four IndexedDB object stores for vault-share.
+ * Manages all IndexedDB object stores for vault-share.
  * On schema version change, all stores are dropped and recreated (cold-start).
  */
 export class SyncStore {
@@ -43,8 +45,18 @@ export class SyncStore {
 				db.createObjectStore(STORE_CONTENT, { keyPath: 'path' });
 				db.createObjectStore(STORE_STATS, { keyPath: 'key' });
 				db.createObjectStore(STORE_DEVICE, { keyPath: 'key' });
+				db.createObjectStore(STORE_DEFERRED, { keyPath: 'path' });
+				db.createObjectStore(STORE_SYNC_STATE, { keyPath: 'key' });
 			},
 		});
+	}
+
+	/**
+	 * Returns the underlying IDBHelper for use by peer store classes (e.g. DeferralStore)
+	 * that share this database connection and schema.
+	 */
+	getIdb(): IDBHelper {
+		return this.idb;
 	}
 
 	open(): Promise<void> {

@@ -1,15 +1,20 @@
 import type { App } from 'obsidian';
 import type { SyncContext, SyncPassResult } from './types';
 import type { ExcludeMatcher } from './exclude';
+import type { DeferralManager } from './deferral-manager';
 import { buildMixedEntries } from './change-detector';
 import { planActions } from './decision-engine';
 import { syncOneFile } from './file-syncer';
-import { ConfirmationModal } from '../ui/confirmation-modal';
 
 /**
  * Orchestrates a full vault synchronization pass.
  * Processes one file at a time, yielding between files so queued
  * single-file sync operations can run in the same event loop.
+ *
+ * When the planned action count exceeds the configured threshold,
+ * all actions are deferred and sync is paused rather than prompting
+ * the user with a modal. The {@link DeferralManager} handles persistence
+ * and auto-revocation of deferred candidates.
  */
 export class BulkSync {
 	constructor(
@@ -17,6 +22,7 @@ export class BulkSync {
 		private readonly excludeMatcher: ExcludeMatcher,
 		private readonly app: App,
 		private readonly setStatusBar: (text: string) => void,
+		private readonly deferralManager: DeferralManager,
 	) {}
 
 	async run(): Promise<SyncPassResult> {
@@ -26,12 +32,18 @@ export class BulkSync {
 			deleted: 0,
 			conflicts: 0,
 			merges: 0,
-			abortedByUser: false,
+			deferredByThreshold: false,
 		};
 
 		const rootFolderId = this.ctx.driveFolderId();
 		if (!rootFolderId) {
 			this.ctx.logger.debug('Bulk sync skipped: not logged in to Drive');
+			return result;
+		}
+
+		// Bail immediately if paused — no enumeration needed.
+		if (await this.deferralManager.isPaused()) {
+			this.ctx.logger.debug('Bulk sync skipped: sync is paused');
 			return result;
 		}
 
@@ -49,31 +61,31 @@ export class BulkSync {
 
 			const hasHistory = allRecords.length > 0;
 			const entries = buildMixedEntries(localFiles, remoteFiles, allRecords);
-			const actions = planActions(entries, hasHistory).filter(a => a.type !== 'noOp');
 
-			// Confirmation guard.
+			// Auto-revoke stale deferred candidates; get the set of paths to skip.
+			const deferredPaths = await this.deferralManager.reconcile(entries);
+
+			// Plan actions, filtering out noOps and currently-deferred paths.
+			const actions = planActions(entries, hasHistory).filter(
+				a => a.type !== 'noOp' && !deferredPaths.has(a.path),
+			);
+
+			// Threshold guard: too many changes → defer all and pause instead of executing.
 			const syncableCount = localFiles.length;
-			const modifyCount = actions.filter(
-				a => a.type !== 'noOp' && a.type !== 'deleteLocal',
-			).length;
-
+			const modifyCount = actions.filter(a => a.type !== 'deleteLocal').length;
 			const settings = this.ctx.settings();
+
 			if (
 				syncableCount >= settings.fileModificationConfirmationMin &&
 				syncableCount > 0 &&
 				(modifyCount / syncableCount) * 100 > settings.fileModificationConfirmationThreshold
 			) {
-				const proceed = await ConfirmationModal.prompt(
-					this.app,
-					'Sync confirmation',
-					`Bulk sync will modify <strong>${modifyCount}</strong> of ` +
-					`<strong>${syncableCount}</strong> files in your vault. Proceed?`,
-				);
-				if (!proceed) {
-					result.abortedByUser = true;
-					this.setStatusBar('Sharing cancelled');
-					return result;
-				}
+				await this.deferralManager.deferAllAndPause(actions);
+				result.deferredByThreshold = true;
+				const msg = `Sharing paused: ${actions.length} changes deferred for review`;
+				this.setStatusBar(msg);
+				this.ctx.logger.info(msg);
+				return result;
 			}
 
 			// Process one file at a time, yielding between each.
