@@ -56,6 +56,20 @@ describe('ConfirmationModal', () => {
 			expect(quitBtn).toBeDefined();
 		});
 
+		it('supports custom button labels', async () => {
+			const promise = ConfirmationModal.prompt(app, 'Title', '<p>Body</p>', 'Resume', 'Keep paused');
+
+			const continueBtn = activeDocument.querySelector<HTMLButtonElement>('.modal-button-container .mod-cta');
+			expect(continueBtn?.textContent).toBe('Resume');
+
+			const buttons = activeDocument.querySelectorAll<HTMLButtonElement>('.modal-button-container button');
+			const cancelBtn = Array.from(buttons).find(b => b.textContent === 'Keep paused');
+			expect(cancelBtn).toBeDefined();
+
+			continueBtn!.click();
+			await expect(promise).resolves.toBe(true);
+		});
+
 		it('calls sanitizeHTMLToDom with the provided body HTML', async () => {
 			const { sanitizeHTMLToDom } = await import('obsidian');
 			const spy = vi.mocked(sanitizeHTMLToDom);
