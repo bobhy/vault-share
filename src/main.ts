@@ -86,6 +86,7 @@ export default class VaultSharePlugin extends Plugin {
 		this.statusBarEl = this.addStatusBarItem();
 		const setStatusBar = (text: string) => { this.statusBarEl.setText(text); };
 		this.deferralStatusBarEl = this.addStatusBarItem();
+		this.deferralStatusBarEl.setText('Checking…');  // replaced once the first plan completes
 		this.registerDomEvent(this.deferralStatusBarEl, 'click', () => { void this.activateSharingStatusView(); });
 		this.monitoringStatusBarEl = this.addStatusBarItem();
 
@@ -271,6 +272,14 @@ export default class VaultSharePlugin extends Plugin {
 		// 18. Start scheduler (triggers initial bulk sync)
 		this.scheduler.start();
 		this.scheduler.triggerBulkSync();
+
+		// If sharing is already paused at startup, the scheduler's bulk sync bails
+		// immediately (before calling doPlanning), so onPlanChanged would never fire
+		// and the status bar would stay "Checking…" forever.  Run planOnly() now to
+		// populate the status bar and, if applicable, the startup notice.
+		if (deferralManager.isPausedSync()) {
+			void bulkSync.planOnly();
+		}
 	}
 
 	onunload() {
@@ -364,9 +373,13 @@ export default class VaultSharePlugin extends Plugin {
 
 	/** Update the persistent deferral status bar item. */
 	private updateDeferralStatusBar(): void {
-		const count = this.bulkSync?.getPendingCount() ?? 0;
+		// getPendingCount() returns null until the first planning pass completes.
+		// Keep showing the startup placeholder until we have real data.
+		const count = this.bulkSync?.getPendingCount() ?? null;
 		const paused = this.deferralManager?.isPausedSync() ?? false;
-		if (paused || count > 0) {
+		if (count === null) {
+			this.deferralStatusBarEl.setText('Checking…');
+		} else if (paused || count > 0) {
 			this.deferralStatusBarEl.setText(
 				`Sharing paused – ${count} file${count === 1 ? '' : 's'} pending`,
 			);
