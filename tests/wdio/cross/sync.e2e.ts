@@ -92,15 +92,6 @@ describe("Cross-vault sync", () => {
 		await runBulkSync(primary); // push base to Drive
 		await runBulkSync(peer);    // pull base into peer; both vaults now have sync records
 
-		// Fetch peer's client ID now — needed to predict the conflict marker label.
-		const peerClientId = await peer.executeObsidian(async ({ app }) => {
-			const plugin = (app as unknown as {
-				plugins: { plugins: Record<string, object> };
-			}).plugins.plugins["vault-share"];
-			if (!plugin) throw new Error("vault-share plugin not loaded");
-			return (plugin as unknown as { clientId: string }).clientId;
-		}) as unknown as string;
-
 		// Phase 2: apply conflicting edits in each vault without syncing.
 		await primary.executeObsidian(async ({ app }, path, content) => {
 			const file = app.vault.getFileByPath(path);
@@ -121,15 +112,16 @@ describe("Cross-vault sync", () => {
 		await runBulkSync(primary); // Drive mtime changed → primary pulls merged content
 
 		// Expected diff3 output: peer is local, primary became remote after its push.
+		// Markers use '> ' prefix (markdown blockquote) with fixed labels.
 		const expectedMerged = [
 			"line 1",
-			`x<<<<< ${peerClientId}`,
+			"> <<<<< local",
 			"peer edit",
-			"x||||| base",
+			"> ||||| base",
 			"shared line",
-			"x=====",
+			"> =====",
 			"primary edit",
-			"x>>>>> group",
+			"> >>>>> group",
 			"line 3",
 		].join("\n");
 
