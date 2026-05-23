@@ -1,5 +1,5 @@
 import type { App } from 'obsidian';
-import type { SyncContext, SyncPassResult } from './types';
+import type { SyncAction, SyncContext, SyncPassResult } from './types';
 import type { ExcludeMatcher } from './exclude';
 import type { DeferralManager } from './deferral-manager';
 import { buildMixedEntries } from './change-detector';
@@ -26,6 +26,34 @@ export class BulkSync {
 		private readonly setStatusBar: (text: string) => void,
 		private readonly deferralManager: DeferralManager,
 	) {}
+
+	/**
+	 * Enumerate both vaults and plan actions without executing anything.
+	 *
+	 * Intended for the Sharing Status panel's Refresh button.
+	 * Calls {@link DeferralManager.reconcile} to auto-revoke stale deferred candidates,
+	 * then returns the set of pending (non-deferred, non-noOp) actions.
+	 *
+	 * Unlike {@link run}, this method does not check the paused flag, does not apply
+	 * the threshold guard, and does not update the status bar.
+	 */
+	async planOnly(): Promise<SyncAction[]> {
+		const rootFolderId = this.ctx.driveFolderId();
+		if (!rootFolderId) return [];
+
+		const [localFiles, remoteFiles, allRecords] = await Promise.all([
+			this.ctx.localFs.list(this.excludeMatcher),
+			this.ctx.driveFs.listAll(rootFolderId),
+			this.ctx.store.getAllRecords(),
+		]);
+
+		const hasHistory = allRecords.length > 0;
+		const entries = buildMixedEntries(localFiles, remoteFiles, allRecords);
+		const deferredPaths = await this.deferralManager.reconcile(entries);
+		return planActions(entries, hasHistory).filter(
+			a => a.type !== 'noOp' && !deferredPaths.has(a.path),
+		);
+	}
 
 	async run(): Promise<SyncPassResult> {
 		if (this.running) {

@@ -16,7 +16,7 @@ import { SyncScheduler } from './sync/scheduler';
 import { SyncContext } from './sync/types';
 import { VaultShareSettingTab } from './ui/settings-tab';
 import { SyncLogView, SYNC_LOG_VIEW_TYPE } from './ui/sync-log-view';
-import { BulkSharingStatusView, BULK_STATUS_VIEW_TYPE } from './ui/bulk-sharing-status-view';
+import { SharingStatusView, SHARING_STATUS_VIEW_TYPE } from './ui/sharing-status-view';
 import { ConfirmationModal } from './ui/confirmation-modal';
 
 /**
@@ -84,7 +84,7 @@ export default class VaultSharePlugin extends Plugin {
 		this.statusBarEl = this.addStatusBarItem();
 		const setStatusBar = (text: string) => { this.statusBarEl.setText(text); };
 		this.deferralStatusBarEl = this.addStatusBarItem();
-		this.registerDomEvent(this.deferralStatusBarEl, 'click', () => { void this.activateBulkStatusView(); });
+		this.registerDomEvent(this.deferralStatusBarEl, 'click', () => { void this.activateSharingStatusView(); });
 		this.monitoringStatusBarEl = this.addStatusBarItem();
 
 		// 9. Resolve Drive folder (best-effort at load; scheduler retries on each bulk pass)
@@ -112,7 +112,7 @@ export default class VaultSharePlugin extends Plugin {
 		const deferralStore = new DeferralStore(this.store.getIdb());
 		this.deferralManager = new DeferralManager(deferralStore, () => {
 			this.updateDeferralStatusBar(this.deferralManager!);
-			this.refreshBulkStatusViews();
+			this.refreshSharingStatusViews();
 		});
 		const deferralManager = this.deferralManager;
 		void this.initDeferralNotice(deferralManager);
@@ -135,8 +135,10 @@ export default class VaultSharePlugin extends Plugin {
 			this.app.workspace.onLayoutReady(() => { void this.activateSidebarLogView(); });
 		}
 
-		// 12a. Bulk sharing status view
-		this.registerView(BULK_STATUS_VIEW_TYPE, leaf => new BulkSharingStatusView(leaf, deferralManager));
+		// 12a. Sharing status view
+		this.registerView(SHARING_STATUS_VIEW_TYPE, leaf =>
+			new SharingStatusView(leaf, deferralManager, () => bulkSync.planOnly()),
+		);
 
 		// 13. OAuth callback
 		this.registerObsidianProtocolHandler('vault-share-auth', async params => {
@@ -158,9 +160,9 @@ export default class VaultSharePlugin extends Plugin {
 
 		// 15. Commands
 		this.addCommand({
-			id: 'open-bulk-sharing-fixup',
-			name: 'Open bulk sharing fixup panel',
-			callback: () => { void this.activateBulkStatusView(); },
+			id: 'open-sharing-status',
+			name: 'Open sharing status panel',
+			callback: () => { void this.activateSharingStatusView(); },
 		});
 
 		this.addCommand({
@@ -344,9 +346,9 @@ export default class VaultSharePlugin extends Plugin {
 		const count = await manager.getTotalCount();
 		if (count === 0) return;
 		const frag = createFragment();
-		frag.appendText(`Bulk sharing has ${count} deferred file${count === 1 ? '' : 's'} — `);
+		frag.appendText(`Sharing has ${count} deferred file${count === 1 ? '' : 's'} — `);
 		const link = frag.createEl('a', { text: 'Tap to review' });
-		link.addEventListener('click', () => { void this.activateBulkStatusView(); });
+		link.addEventListener('click', () => { void this.activateSharingStatusView(); });
 		new Notice(frag);
 	}
 
@@ -369,9 +371,9 @@ export default class VaultSharePlugin extends Plugin {
 		return this.api.resolveFolder(this.settings.driveFolderPath);
 	}
 
-	/** Open (or reveal) the Bulk Sharing Status panel in the right sidebar. */
-	private async activateBulkStatusView(): Promise<void> {
-		const existing = this.app.workspace.getLeavesOfType(BULK_STATUS_VIEW_TYPE);
+	/** Open (or reveal) the Sharing Status panel in the right sidebar. */
+	private async activateSharingStatusView(): Promise<void> {
+		const existing = this.app.workspace.getLeavesOfType(SHARING_STATUS_VIEW_TYPE);
 		if (existing[0]) {
 			await this.app.workspace.revealLeaf(existing[0]);
 			return;
@@ -383,14 +385,14 @@ export default class VaultSharePlugin extends Plugin {
 			return;
 		}
 		if (!leaf) return;
-		await leaf.setViewState({ type: BULK_STATUS_VIEW_TYPE, active: true });
+		await leaf.setViewState({ type: SHARING_STATUS_VIEW_TYPE, active: true });
 		await this.app.workspace.revealLeaf(leaf);
 	}
 
-	/** Refresh all currently open Bulk Sharing Status panels. */
-	private refreshBulkStatusViews(): void {
-		for (const leaf of this.app.workspace.getLeavesOfType(BULK_STATUS_VIEW_TYPE)) {
-			void (leaf.view as BulkSharingStatusView).refresh();
+	/** Refresh all currently open Sharing Status panels. */
+	private refreshSharingStatusViews(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(SHARING_STATUS_VIEW_TYPE)) {
+			void (leaf.view as SharingStatusView).refresh();
 		}
 	}
 

@@ -1,12 +1,12 @@
 /**
- * End-to-end tests for the bulk sharing fixup feature (single vault).
+ * End-to-end tests for the manual sharing control feature (single vault).
  *
  * Prerequisites: same as other single-vault tests — run setup:e2e:wdio once.
  *
  * Test strategy
  * -------------
  * Each test requires a set of files whose sharing operations cover every
- * distinct SyncActionType. The helper {@link setupBulkFixupScenario} creates
+ * distinct SyncActionType. The helper {@link setupScenario} creates
  * this set using a two-phase approach:
  *
  * Phase 1 — Baseline sync (threshold disabled):
@@ -68,7 +68,7 @@ type PluginHandle = {
  * After this function returns the threshold is already set to 0 / min=1.
  * Call {@link runBulkSync} once to trigger deferral of all planned actions.
  */
-async function setupBulkFixupScenario(): Promise<void> {
+async function setupScenario(): Promise<void> {
 	// ── Pre-cleanup: remove any bsf- leftovers from previous runs ───────────
 
 	await browser.executeObsidian(async ({ app }) => {
@@ -164,12 +164,70 @@ async function setupBulkFixupScenario(): Promise<void> {
 	);
 }
 
-// ── Suite ────────────────────────────────────────────────────────────────────
+// ── Auto-pause on open ───────────────────────────────────────────────────────
 
-describe('Bulk sharing fixup', () => {
+describe('Sharing status panel — auto-pause on open', () => {
 
 	before(async () => {
-		await setupBulkFixupScenario();
+		// Ensure sharing starts unpaused with no deferred candidates.
+		await browser.executeObsidian(async ({ app }) => {
+			const plugin = (app as unknown as {
+				plugins: { plugins: Record<string, PluginHandle> };
+			}).plugins.plugins['vault-share']!;
+			const grouped = await plugin.deferralManager.getGroupedByType();
+			const paths = [...grouped.values()].flatMap(cs => cs.map(c => c.path));
+			if (paths.length > 0) await plugin.deferralManager.releaseByPath(paths);
+			await plugin.deferralManager.setPaused(false);
+		});
+	});
+
+	after(async () => {
+		// Close any open sharing status panel and restore unpaused state.
+		await browser.executeObsidian(async ({ app }) => {
+			const plugin = (app as unknown as {
+				plugins: { plugins: Record<string, PluginHandle> };
+			}).plugins.plugins['vault-share']!;
+			app.workspace.getLeavesOfType('vault-share-sharing-status')
+				.forEach(leaf => leaf.detach());
+			await plugin.deferralManager.setPaused(false);
+		});
+	});
+
+	it('pauses sharing when the panel is opened while sharing is running', async () => {
+		// Confirm sharing is running before opening the panel.
+		const pausedBefore = await browser.executeObsidian(async ({ app }) => {
+			return (app as unknown as {
+				plugins: { plugins: Record<string, PluginHandle> };
+			}).plugins.plugins['vault-share']!.deferralManager.isPaused();
+		}) as unknown as boolean;
+		expect(pausedBefore).toBe(false);
+
+		// Open the panel — onOpen() calls setPaused(true) as its first await.
+		await browser.executeObsidian(({ app }) => {
+			(app as unknown as {
+				commands: { executeCommandById: (id: string) => void };
+			}).commands.executeCommandById('vault-share:open-sharing-status');
+		});
+
+		// setPaused(true) is a single IndexedDB write; 500 ms is ample time for it
+		// to complete before the subsequent planOnly() Drive call finishes.
+		await browser.pause(500);
+
+		const pausedAfter = await browser.executeObsidian(async ({ app }) => {
+			return (app as unknown as {
+				plugins: { plugins: Record<string, PluginHandle> };
+			}).plugins.plugins['vault-share']!.deferralManager.isPaused();
+		}) as unknown as boolean;
+		expect(pausedAfter).toBe(true);
+	});
+});
+
+// ── Suite ────────────────────────────────────────────────────────────────────
+
+describe('Manual sharing control', () => {
+
+	before(async () => {
+		await setupScenario();
 
 		// Trigger the deferral sync.  With threshold=0, all planned actions are
 		// deferred and the manager auto-pauses sharing.
@@ -221,18 +279,19 @@ describe('Bulk sharing fixup', () => {
 		expect(paused).toBe(true);
 	});
 
-	it('opens the bulk sharing fixup panel via the command palette', async () => {
+	it('opens the sharing status panel via the command palette', async () => {
 		await browser.executeObsidian(({ app }) => {
 			(app as unknown as {
 				commands: { executeCommandById: (id: string) => void };
-			}).commands.executeCommandById('vault-share:open-bulk-sharing-fixup');
+			}).commands.executeCommandById('vault-share:open-sharing-status');
 		});
 
-		// Allow the async ItemView.onOpen() and refresh() to complete.
-		await browser.pause(1000);
+		// Allow the async onOpen() to complete: it pauses sharing, runs planOnly()
+		// (a real Drive API call), then renders the view.
+		await browser.pause(3000);
 
 		const tableVisible = await browser.executeObsidian(() => {
-			return !!activeDocument.querySelector('.vault-share-bulk-status-table');
+			return !!activeDocument.querySelector('.vault-share-sharing-status-table');
 		}) as unknown as boolean;
 
 		expect(tableVisible).toBe(true);
@@ -325,7 +384,7 @@ describe('Bulk sharing fixup', () => {
 		const rows = await browser.executeObsidian(() => {
 			return Array.from(
 				activeDocument.querySelectorAll<HTMLTableRowElement>(
-					'.vault-share-bulk-status-table tbody tr',
+					'.vault-share-sharing-status-table tbody tr',
 				),
 			).map(tr => ({
 				vault:     tr.cells[0]?.textContent?.trim() ?? '',

@@ -1,20 +1,57 @@
-# Bulk Sync fixup
-This is the user experience for correcting a potentially run-away bulk share cycle.
+# Manual Sharing Control
+Note: originally this feature was called "bulk sync fixuup" and was focused on 
+helping user correct a potentially run-away bulk share cycle.
+On mature reconsideration, we realize that the tools in this view are more generally useful
+so we're renaming it "Manual Syaring Control" and tweaking the user experience to match.
+
+In all of the UI and docs, and in most of the codebase, we call the synchronization process "sharing" rather than "sync".  It's a goal to standardize on "sharing" everywhere.
+
 Scenario: bulk share detected it was going to make "too many" changes, paused itself, notified
 the user via the status bar and a startup notice, and offered manual fixups.
 
-## Deferred state for a share operation
-When sharing checks a candidate file pair it compares *current* metadata about the files in local
-and group vaults. This spec introduces the possibility for a share operation to be *deferred* —
-meaning the plugin must persist enough state to identify and skip that candidate in future sync
-passes. The term "share operation candidate" (or "candidate") is used throughout for this concept.
+Scenario: user is just not sure what's going on and wants to visualize the normally background process of vault sharing.
+So user manually pauses sharing by plugin command, then opens a specialized view to check things out.
 
-When bulk sync plans a share cycle it generates a list of candidates. If that list is "too" long,
-the plugin pauses sync, marks all candidates as deferred, and allows manual recovery.
+## Highlight of significant changes "bulk sync" -> "manual sharing control"
 
-We also want the deferred status to be dropped automatically if the user makes a further change to either of the candidate files through normal Obsidian operations: edit a note, copy, move or delete files in vault index, etc.
+- Name changes "bulk sync fixup" -> "manual sharing control"; main view renamed "bulk sharing status" -> "sharing status"
+- pausing sharing affects all sharing, single-file and bulk alike.
+- Opening the sharing status view pauses sharing, even if it was not already paused due to previous error.
+- status view now includes a "refresh" button to update counts of all pending share operations
+- status view now deals with a mixed collection of ordinary pending and deferred candidates.
 
-### Auto-revocation by mtime comparison
+## Pausing and resuming sharing
+Sharing can be paused by the user and automatically, due to error detection.  
+When it is paused, both bulk and single-file sharing are paused.  Any currently active file sharing operation is not interrupted is allowed to complete normally.
+
+The plugin prefers to have sharing unpaused.  A visible indicator appears in the status bar when sharing is paused, and the user receives confirmation prompts when trying to close the plugin or Obsidian with sharing paused.
+
+But if the user chooses to leave with sharing paused, the paused state persists across plugin restarts.  So it is not an error (but still unusual) for the plugin to start with sharing paused.
+
+## Pending and deferred share operations
+During planning for a bulk run, sharing compares *current* metadata about related files in local
+and group vaults.  These are the "candidate" files, and there's a data structure that represents this potential 
+sharing operation, called a "candidate".
+
+So the candidate represents a "pending" share operation - one that will be performed sooner or later.
+
+This spec introduces the possibility for the share operation to be put into a *deferred* state, which 
+persists until manually changed.  
+While a candidate is deferred, sync operations will not operate on either file.
+The plugin must persist enough state to identify and skip that candidate in future sync passes. 
+
+The candidate can get into deferred state either automatically, when bulk sharing discovers "too many" 
+pending candidates and marks them all as deferred, or manually, by the user working in the Sharing Status view.
+
+The deferred status is normally cleared by the user working in the Sharing Status view, but 
+can also happen automatically as described in [](#auto-revocation-by-mtime-comparison).
+
+## Auto-revocation by mtime comparison
+
+If a candidate file pair gets deferred and then the user makes changes to a file by Obsidian or any external means, 
+the candidate should automatically become undeferred.  That's what we mean by auto-revocation.
+
+Deferred state is cleared by any changes to either of the candidate files through normal Obsidian operations: edit a note, copy, move or delete files in vault index, etc.
 
 Auto-revocation is designed to be implicit — requiring no explicit "undefer" calls anywhere in the
 codebase. When a candidate is deferred, the plugin stores the local and remote file mtimes *at the
@@ -42,20 +79,7 @@ The sync-paused flag is also stored in IndexedDB (not in plugin settings / `data
 settings are shared to other devices by the sync mechanism, so device-local state such as "this
 device has paused sync" must not live there.
 
-## Bulk Sharing Status panel
-This is the entrypoint for manual fixups of deferred candidate share operations.
-
-When the "too many changes" threshold is exceeded, bulk sync pauses itself, defers all candidates,
-and directs the user here. Bulk sync remains paused while the user performs manual fixups.
-
-### Accessing the panel
-
-The panel must be reachable at any time so the user always has access to the pause/resume control:
-- Via a command palette entry: "Open bulk sharing fixup panel."
-- By clicking the persistent status bar indicator (see below).
-- Navigating to the Vault Share sidebar view (if the panel lives there).
-
-### Status bar indicator
+## Status bar indicator
 
 When sync is paused or deferred candidates exist, a persistent status bar item is shown
 (separate from the transient sync-progress messages). It is always visible and clickable.
@@ -64,19 +88,34 @@ When sync is paused or deferred candidates exist, a persistent status bar item i
   Clicking opens the Bulk Sharing Status panel.
 - While running with no candidates: the indicator is hidden.
 
-### Startup notification
+## Startup notification
 
 On plugin load, if the deferred-candidates store contains any records, show an Obsidian Notice
 with a clickable link: "Bulk sharing has N deferred files — tap to review." Tapping opens the
 Bulk Sharing Status panel.
 
+## Sharing Status panel
+This is the entrypoint for manual inspection and fixup of sharing operations.
+Opened via:
+- command palette entry: "Open sharing status panel."
+- clicking the persistent status bar indicator (see below).
+- navigating to the Vault Share sidebar view (if the panel lives there).
+
+When the panel is opened, it first pauses sharing if it was not already paused by previous error detection.
+Then it collects a fresh candidate list so it can display current candidate counts on first render.
+
 ### Panel contents
 
+Panel contents are responsive, and reflect live data changes.
+
 User can see:
-- Current state of bulk sharing (paused or running).
-- A button to manually pause or resume sharing at any time.
-- Count of deferred candidates per operation type, in the table below. Tapping a row opens the
-  deferred list popup for that operation type.
+- Overall sharing state: paused or running (meaning not paused).  Bulk sharing: paused (because overall sharing is paused)waiting (scheduled) or running (currently active in the background).
+  Note that sharing is paused when view first opens, but user can resume sharing, then the sharing state could show active.
+- Sharing status: a toggle button to manually pause or resume sharing.
+- Refresh candidate counts: recomputes all candidate status and updates counts and lists of candidates.  
+  Basically plans a bulk share without doing the sharing operations.
+- Count of candidates per operation type, in the table below. Tapping a row opens the
+  list popup for that operation type.
 
 | Vault affected | What sharing plans to do |
 | --- | --- |
@@ -90,11 +129,11 @@ User can see:
 | Local vault | Create a conflict copy for a non-text file with conflicting edits |
 
 When the user closes this panel while sharing is still paused, a confirmation dialog asks:
-"Bulk sharing is paused. Resume sharing before closing?" with Resume and Keep Paused buttons.
+"Sharing is paused. Resume sharing before closing?" with Resume and Keep Paused buttons.
 
-## Deferred list popup
+## Candidate list popup
 
-Lists all the deferred candidates for a particular kind of share operation.
+Lists all candidates for a particular kind of share operation.
 Designed to render well in portrait orientation on mobile.
 
 Header:
@@ -105,19 +144,20 @@ Header:
 
 List:
 - Each row shows the vault path of the candidate and a checkbox.
+  If the candidate is deferred, the checkbox is cleared.  If candidate is just pending, checkbox is set.
   Checking the checkbox means "I accept this planned operation."
-  Checkbox changes are pending — no state changes until Apply is tapped.
+  Changing the checkbox doesn't take effect till Apply is tapped.
 - Tapping a row (not the checkbox) expands it inline to show the Manual Review detail (accordion).
   Only one row is expanded at a time; expanding a new row collapses the previous one.
 
-Tapping Apply removes all accepted candidates from the deferred list. They will be processed in the
+Tapping Apply removes clears deferred status for all checked candidates. They will be processed in the
 next bulk sync pass — immediately if sharing is running, or when the user resumes sharing if paused.
 The counts in the Bulk Sharing Status panel update to reflect the change.
 Tapping Cancel discards all pending checkbox changes and closes the popup.
 
 ### Manual Review (inline expansion)
 
-Visualizes the candidate's details so the user can resolve it manually or leave it unchanged.
+Visualizes the individual candidate's details so the user can resolve it manually or leave it unchanged.
 Rendered as an expanded section within the deferred list row — no separate modal.
 
 The expanded section has a header and one or two file panels depending on the operation.
@@ -142,7 +182,7 @@ Header shows:
 | Text conflict (including delete+modify) | Merged file in local vault (editable) |
 | Non-text conflict | Local vault file (top, read-only) · Group vault file (bottom, read-only; downloaded on demand) |
 
-Resolution buttons (performed immediately; removes the candidate from the deferred list):
+Resolution buttons (performed immediately; clears candidate's deferred state):
 
 | Operation type | Available resolution buttons |
 | --- | --- |
@@ -191,6 +231,5 @@ After completing the edit, the cursor stays in place so the user can review (and
 
 ## Open questions
 
-- Should the Bulk Sharing Status panel be a section of the existing Vault Share sidebar view, or a separate view?
 - Default keybindings for "find next conflict" and "find previous conflict" edit actions?
 - Concrete schema for the deferred-candidates IndexedDB store (TBD at design time).

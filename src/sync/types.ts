@@ -77,6 +77,19 @@ export interface DeferredCandidate {
 	deferredAt: number;
 }
 
+/**
+ * A candidate for a sharing operation as displayed in the Sharing Status panel.
+ * Represents either a pending (not deferred) action or a deferred candidate.
+ */
+export interface ViewCandidate {
+	path: string;
+	actionType: SyncActionType;
+	/** True if the user or threshold guard has explicitly deferred this candidate. */
+	isDeferred: boolean;
+	/** Drive file ID, if known; used for on-demand remote file downloads in Manual Review. */
+	driveFileId?: string;
+}
+
 /** Result of a single bulk sync pass. */
 export interface SyncPassResult {
 	downloaded: number;

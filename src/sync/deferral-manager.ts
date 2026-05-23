@@ -8,7 +8,7 @@ import type { DeferredCandidate, MixedEntry, SyncAction, SyncActionType } from '
  * {@link BulkSync}:
  * - Decides when to pause sync and defer all candidates based on the threshold.
  * - Performs auto-revocation by comparing stored mtimes against current file state.
- * - Exposes grouped candidate data for the Bulk Sharing Status panel UI.
+ * - Exposes grouped candidate data for the Sharing Status panel UI.
  *
  * The `onChanged` callback is invoked whenever deferred state or the paused flag
  * changes, allowing the status bar and status panel to refresh reactively.
@@ -110,7 +110,7 @@ export class DeferralManager {
 
 	/**
 	 * Returns all current deferred candidates grouped by {@link SyncActionType}.
-	 * Used by the Bulk Sharing Status panel to show per-type counts and lists.
+	 * Used by the Sharing Status panel to show per-type counts and lists.
 	 */
 	async getGroupedByType(): Promise<Map<SyncActionType, DeferredCandidate[]>> {
 		const candidates = await this.store.getAllCandidates();
