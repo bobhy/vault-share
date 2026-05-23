@@ -17,6 +17,8 @@ import { syncOneFile } from './file-syncer';
  * and auto-revocation of deferred candidates.
  */
 export class BulkSync {
+	private running = false;
+
 	constructor(
 		private readonly ctx: SyncContext,
 		private readonly excludeMatcher: ExcludeMatcher,
@@ -26,6 +28,19 @@ export class BulkSync {
 	) {}
 
 	async run(): Promise<SyncPassResult> {
+		if (this.running) {
+			this.ctx.logger.debug('Bulk sync skipped: already running');
+			return { downloaded: 0, uploaded: 0, deleted: 0, conflicts: 0, merges: 0, deferredByThreshold: false };
+		}
+		this.running = true;
+		try {
+			return await this.doRun();
+		} finally {
+			this.running = false;
+		}
+	}
+
+	private async doRun(): Promise<SyncPassResult> {
 		const result: SyncPassResult = {
 			downloaded: 0,
 			uploaded: 0,
