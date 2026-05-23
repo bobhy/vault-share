@@ -49,6 +49,18 @@ export class GDriveAuth {
 		return this.refreshToken.length > 0;
 	}
 
+	/**
+	 * Inject a refresh token directly into memory without touching SecretStorage.
+	 * Used by the wdio e2e test harness, which runs Obsidian in a sandboxed
+	 * --user-data-dir where no keyring daemon is available.
+	 */
+	injectRefreshToken(token: string): void {
+		this.refreshToken = token;
+		this.accessToken = '';
+		this.accessTokenExpiry = 0;
+		this.authFailedAt = 0;
+	}
+
 	/** Load persisted tokens from SecretStorage into memory. Called at plugin load. */
 	loadFromSecretStorage(): void {
 		const keys = secretKeys(this.app.vault.getName());

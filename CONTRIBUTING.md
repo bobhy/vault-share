@@ -4,8 +4,9 @@
 
 1. [Setting up a dev machine](#1-setting-up-a-dev-machine)
 2. [npm scripts reference](#2-npm-scripts-reference)
-3. [Creating a Google OAuth credential](#3-creating-a-google-oauth-credential)
-4. [Bumping the version and cutting a release](#4-bumping-the-version-and-cutting-a-release)
+3. [Continuous integration](#3-continuous-integration)
+4. [Creating a Google OAuth credential](#4-creating-a-google-oauth-credential)
+5. [Bumping the version and cutting a release](#5-bumping-the-version-and-cutting-a-release)
 
 ---
 
@@ -81,17 +82,50 @@ The e2e test runner injects it into the sandboxed vault at startup.
 | `npm test` | Run unit tests with Vitest (single pass). |
 | `npm run test:watch` | Run Vitest in watch mode. |
 | `npm run setup:e2e:wdio` | One-time e2e setup — saves the GDrive refresh token for test injection (see above). |
-| `npm run test:e2e:single` | Build then run the single-vault e2e test suite via WebdriverIO. |
-| `npm run test:e2e:cross` | Build then run the two-vault cross-sync e2e test suite via WebdriverIO multiremote. |
+| `npm run test:e2e:single` | Build then run the single-vault e2e test suite headlessly via WebdriverIO. |
+| `npm run test:e2e:single:interactive` | Same, but uses the current `$DISPLAY` — useful for debugging test failures visually. |
+| `npm run test:e2e:cross` | Build then run the two-vault cross-sync e2e test suite headlessly via WebdriverIO multiremote. |
+| `npm run test:e2e:cross:interactive` | Same, but uses the current `$DISPLAY`. |
 | `npm run docs` | Generate TypeDoc API documentation into `docs/`. |
-| `npm run version` | Propagate the version in `package.json` into `manifest.json` and `versions.json` (see [version bump](#4-bumping-the-version-and-cutting-a-release)). |
-| `npm run new-credential` | Replace the Google OAuth credential (see [section 3](#3-creating-a-google-oauth-credential)). |
+| `npm run version` | Propagate the version in `package.json` into `manifest.json` and `versions.json` (see [version bump](#5-bumping-the-version-and-cutting-a-release)). |
+| `npm run new-credential` | Replace the Google OAuth credential (see [section 4](#4-creating-a-google-oauth-credential)). |
 
 All PRs must pass `npm run lint && npm run build && npm test` before merging.
 
 ---
 
-## 3. Creating a Google OAuth credential
+## 3. Continuous integration
+
+The workflow at `.github/workflows/e2e.yml` runs the single-vault e2e suite on every push to `main` and on manual dispatch. It uses a headless virtual display (Xvfb + herbstluftwm) and injects the Google Drive refresh token from a repository secret.
+
+### Setting up the repository secret
+
+The e2e tests need a valid Google Drive refresh token to authenticate. Store it once as a GitHub Actions secret:
+
+1. Obtain the token by running `npm run setup:e2e:wdio` locally (see [Setting up a dev machine](#1-setting-up-a-dev-machine)). The token is saved to `.e2e-refresh-token` in the project root.
+2. In the GitHub repository go to **Settings → Secrets and variables → Actions → New repository secret**.
+3. Name the secret `VAULT_SHARE_REFRESH_TOKEN` and paste the token value from `.e2e-refresh-token`.
+
+The workflow reads the secret via `${{ secrets.VAULT_SHARE_REFRESH_TOKEN }}` and passes it to the test runner as an environment variable. The `.e2e-refresh-token` file is gitignored and never committed.
+
+### Token expiry
+
+Google refresh tokens remain valid indefinitely as long as they are used regularly. However, if Google rotates the token (returning a new `refresh_token` in a token-refresh response), the stored secret becomes stale and the next CI run will fail with an authentication error. Fix it by re-running `npm run setup:e2e:wdio` locally and updating the repository secret with the new value.
+
+### Running e2e tests locally
+
+By default the e2e scripts run headlessly (Xvfb is started automatically by the wdio config). To run interactively against your current display — useful when debugging a failing test — use the `:interactive` variants:
+
+```bash
+npm run test:e2e:single:interactive
+npm run test:e2e:cross:interactive
+```
+
+`npm run setup:e2e:wdio` always runs interactively; it connects to the running Obsidian desktop via `obsidian-cli` and does not support headless use.
+
+---
+
+## 4. Creating a Google OAuth credential
 
 The plugin authenticates through a Cloudflare Worker relay (`google-auth-relay/worker`) that holds the OAuth client secret. When you need a new credential — because the existing one was rotated, revoked, or you are forking the project — follow these steps.
 
@@ -140,7 +174,7 @@ The client secret is **never committed** — it lives only in Cloudflare's secre
 
 ---
 
-## 4. Bumping the version and cutting a release
+## 5. Bumping the version and cutting a release
 
 The version number lives in three files that must stay in sync: `package.json`, `manifest.json`, and `versions.json`. The `npm run version` script keeps them in sync automatically.
 

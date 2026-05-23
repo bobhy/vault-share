@@ -30,6 +30,7 @@ export default class VaultSharePlugin extends Plugin {
 	logger!: Logger;
 	store?: SyncStore;
 	statsTracker?: StatsTracker;
+	deferralManager?: DeferralManager;
 	scheduler?: SyncScheduler;
 
 	private clientId = '';
@@ -109,10 +110,11 @@ export default class VaultSharePlugin extends Plugin {
 
 		// 11. Deferral layer + bulk sync + scheduler
 		const deferralStore = new DeferralStore(this.store.getIdb());
-		const deferralManager = new DeferralManager(deferralStore, () => {
-			this.updateDeferralStatusBar(deferralManager);
+		this.deferralManager = new DeferralManager(deferralStore, () => {
+			this.updateDeferralStatusBar(this.deferralManager!);
 			this.refreshBulkStatusViews();
 		});
+		const deferralManager = this.deferralManager;
 		void this.initDeferralNotice(deferralManager);
 		const bulkSync = new BulkSync(ctx, this.excludeMatcher, this.app, setStatusBar, deferralManager);
 		this.scheduler = new SyncScheduler({

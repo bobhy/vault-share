@@ -1,0 +1,37 @@
+name: E2E tests
+
+# Runs on push to main and on demand.
+# Requires the VAULT_SHARE_REFRESH_TOKEN repository secret — see CONTRIBUTING.md.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e-single:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # Cache the downloaded Obsidian binary across runs.
+      # Key is OS-only: obsidian-launcher manages its own version sub-directories.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.obsidian-wdio-cache
+          key: obsidian-${{ runner.os }}
+
+      - name: Install virtual display and window manager
+        run: sudo apt-get install -y --no-install-recommends xvfb herbstluftwm
+
+      - name: Run single-vault e2e tests
+        run: npm run test:e2e:single
+        env:
+          VAULT_SHARE_REFRESH_TOKEN: ${{ secrets.VAULT_SHARE_REFRESH_TOKEN }}

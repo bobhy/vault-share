@@ -4,10 +4,23 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readFile, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import ObsidianLauncher from "obsidian-launcher";
 
 // Cross-vault (multiremote) e2e tests. Run with: npm run test:e2e:cross
 // One-time token setup:  npm run setup:e2e:wdio
+
+/**
+ * When true (the default), the runner starts a virtual display and window manager
+ * so Obsidian can run without a physical monitor — suitable for CI.
+ * Set WDIO_HEADLESS=false to use the current $DISPLAY for interactive debugging.
+ */
+const HEADLESS = process.env["WDIO_HEADLESS"] !== "false";
+
+// Processes started for the virtual display; killed in onComplete.
+let xvfbProc: ChildProcess | null = null;
+let wmProc: ChildProcess | null = null;
 
 // Collect tmp dirs created in beforeSession so onComplete can remove them.
 const multiremoteTmpDirs: string[] = [];
@@ -31,6 +44,9 @@ export const config: WebdriverIO.MultiremoteConfig = {
 					vault: "tests/vaults/primary",
 					plugins: ["."],
 				},
+				...(HEADLESS && process.platform === "linux" ? {
+					"goog:chromeOptions": { args: ["--no-sandbox", "--disable-dev-shm-usage"] },
+				} : {}),
 			},
 		},
 		peerVault: {
@@ -41,6 +57,9 @@ export const config: WebdriverIO.MultiremoteConfig = {
 					vault: "tests/vaults/peer",
 					plugins: ["."],
 				},
+				...(HEADLESS && process.platform === "linux" ? {
+					"goog:chromeOptions": { args: ["--no-sandbox", "--disable-dev-shm-usage"] },
+				} : {}),
 			},
 		},
 	},
@@ -127,7 +146,22 @@ export const config: WebdriverIO.MultiremoteConfig = {
 		}));
 	},
 
+	onPrepare: async () => {
+		if (!HEADLESS || process.platform !== "linux") return;
+
+		process.env["DISPLAY"] = ":99";
+		xvfbProc = spawn("Xvfb", [":99", "-screen", "0", "1280x1024x24", "+extension", "GLX"], {
+			stdio: "ignore",
+		});
+		await new Promise<void>(r => setTimeout(r, 300));
+
+		wmProc = spawn("herbstluftwm", [], { stdio: "ignore" });
+		wmProc.on("error", () => { wmProc = null; });
+	},
+
 	onComplete: async () => {
+		wmProc?.kill();
+		xvfbProc?.kill();
 		await Promise.all(
 			multiremoteTmpDirs.map(dir => rm(dir, { recursive: true, force: true }))
 		);
@@ -138,7 +172,9 @@ export const config: WebdriverIO.MultiremoteConfig = {
 		// capabilities lack wdio:obsidianOptions, so executeObsidian is never added to
 		// sub-instances. Polyfill it on each instance using the same script the service uses.
 		const mr = b as WebdriverIO.MultiRemoteBrowser;
-		for (const name of Object.keys(caps as Record<string, unknown>)) {
+		const instanceNames = Object.keys(caps as Record<string, unknown>);
+
+		for (const name of instanceNames) {
 			const instance = mr.getInstance(name) as WebdriverIO.Browser;
 			(instance as unknown as Record<string, unknown>).executeObsidian =
 				async (func: (...args: unknown[]) => unknown, ...params: unknown[]) =>
@@ -153,6 +189,17 @@ export const config: WebdriverIO.MultiremoteConfig = {
 						...params,
 					);
 		}
+
+		// Wait for the wdio-obsidian-service bridge to be ready on every instance.
+		await Promise.all(instanceNames.map(name => {
+			const instance = mr.getInstance(name) as WebdriverIO.Browser;
+			return instance.waitUntil(
+				() => instance.execute(() =>
+					typeof (window as unknown as { wdioObsidianService: unknown }).wdioObsidianService === "function",
+				) as Promise<boolean>,
+				{ timeout: 30_000, interval: 200, timeoutMsg: `wdioObsidianService not available on ${name} after 30 s` },
+			);
+		}));
 
 		let refreshToken = process.env["VAULT_SHARE_REFRESH_TOKEN"];
 		if (!refreshToken) {
