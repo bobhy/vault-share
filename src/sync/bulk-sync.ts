@@ -56,7 +56,11 @@ export class BulkSync {
 	async planOnly(): Promise<ViewCandidate[]> {
 		const rootFolderId = this.ctx.driveFolderId();
 		if (!rootFolderId) return [];
-		const { viewCandidates } = await this.doPlanning(rootFolderId);
+		const { viewCandidates, pendingActions } = await this.doPlanning(rootFolderId);
+		const deferredCount = viewCandidates.length - pendingActions.length;
+		this.ctx.logger.info(
+			`Plan: ${viewCandidates.length} candidate${viewCandidates.length === 1 ? '' : 's'} — ${pendingActions.length} pending, ${deferredCount} deferred`,
+		);
 		return viewCandidates;
 	}
 
