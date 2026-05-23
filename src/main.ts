@@ -31,6 +31,7 @@ export default class VaultSharePlugin extends Plugin {
 	store?: SyncStore;
 	statsTracker?: StatsTracker;
 	deferralManager?: DeferralManager;
+	bulkSync?: BulkSync;
 	scheduler?: SyncScheduler;
 
 	private clientId = '';
@@ -42,6 +43,7 @@ export default class VaultSharePlugin extends Plugin {
 	private statusBarEl!: HTMLElement;
 	private deferralStatusBarEl!: HTMLElement;
 	private monitoringStatusBarEl!: HTMLElement;
+	private deferralNoticeShown = false;
 
 	async onload() {
 		// 1. Settings
@@ -111,12 +113,28 @@ export default class VaultSharePlugin extends Plugin {
 		// 11. Deferral layer + bulk sync + scheduler
 		const deferralStore = new DeferralStore(this.store.getIdb());
 		this.deferralManager = new DeferralManager(deferralStore, () => {
-			this.updateDeferralStatusBar(this.deferralManager!);
+			this.updateDeferralStatusBar();
 			this.refreshSharingStatusViews();
 		});
 		const deferralManager = this.deferralManager;
-		void this.initDeferralNotice(deferralManager);
-		const bulkSync = new BulkSync(ctx, this.excludeMatcher, this.app, setStatusBar, deferralManager);
+
+		this.bulkSync = new BulkSync(ctx, this.excludeMatcher, this.app, setStatusBar, deferralManager,
+			(candidates) => {
+				// Show the startup notice once when the first plan finds pending files.
+				if (!this.deferralNoticeShown && candidates.length > 0) {
+					this.deferralNoticeShown = true;
+					this.showDeferralNotice(candidates.length);
+				}
+				this.updateDeferralStatusBar();
+				this.refreshSharingStatusViews();
+			},
+		);
+		const bulkSync = this.bulkSync;
+
+		// Warm both DeferralManager caches so isPausedSync() and isDeferredPathSync()
+		// are accurate from the very first scheduler tick.
+		await deferralManager.init();
+
 		this.scheduler = new SyncScheduler({
 			ctx,
 			bulkSync,
@@ -124,6 +142,8 @@ export default class VaultSharePlugin extends Plugin {
 			setStatusBar,
 			registerEvent: ref => this.registerEvent(ref),
 			registerInterval: id => this.registerInterval(id),
+			isSharingPaused: () => deferralManager.isPausedSync(),
+			isDeferredPath: path => deferralManager.isDeferredPathSync(path),
 		});
 
 		// 12. Sidebar log view
@@ -169,7 +189,7 @@ export default class VaultSharePlugin extends Plugin {
 			id: 'pause-sync',
 			name: 'Pause sharing',
 			callback: () => {
-				this.scheduler?.setPaused(true);
+				void this.deferralManager?.setPaused(true);
 				setStatusBar('Sharing paused');
 			},
 		});
@@ -178,8 +198,9 @@ export default class VaultSharePlugin extends Plugin {
 			id: 'start-sync',
 			name: 'Start or resume sharing',
 			callback: () => {
-				this.scheduler?.setPaused(false);
-				this.scheduler?.triggerBulkSync();
+				void this.deferralManager?.setPaused(false).then(() => {
+					this.scheduler?.triggerBulkSync();
+				});
 			},
 		});
 
@@ -341,30 +362,26 @@ export default class VaultSharePlugin extends Plugin {
 		}
 	}
 
-	/** Show a startup Notice if deferred candidates are waiting for review. */
-	private async initDeferralNotice(manager: DeferralManager): Promise<void> {
-		const count = await manager.getTotalCount();
-		if (count === 0) return;
+	/** Update the persistent deferral status bar item. */
+	private updateDeferralStatusBar(): void {
+		const count = this.bulkSync?.getPendingCount() ?? 0;
+		const paused = this.deferralManager?.isPausedSync() ?? false;
+		if (paused || count > 0) {
+			this.deferralStatusBarEl.setText(
+				`Sharing paused – ${count} file${count === 1 ? '' : 's'} pending`,
+			);
+		} else {
+			this.deferralStatusBarEl.setText('');
+		}
+	}
+
+	/** Show a one-time Notice when the first plan pass finds pending files. */
+	private showDeferralNotice(count: number): void {
 		const frag = createFragment();
-		frag.appendText(`Sharing has ${count} deferred file${count === 1 ? '' : 's'} — `);
+		frag.appendText(`Sharing has ${count} pending file${count === 1 ? '' : 's'} — `);
 		const link = frag.createEl('a', { text: 'Tap to review' });
 		link.addEventListener('click', () => { void this.activateSharingStatusView(); });
 		new Notice(frag);
-	}
-
-	/** Update the persistent deferral status bar item. */
-	private updateDeferralStatusBar(manager: DeferralManager): void {
-		void manager.getTotalCount().then(count => {
-			void manager.isPaused().then(paused => {
-				if (paused || count > 0) {
-					this.deferralStatusBarEl.setText(
-						`Sharing paused – ${count} file${count === 1 ? '' : 's'} pending`,
-					);
-				} else {
-					this.deferralStatusBarEl.setText('');
-				}
-			});
-		});
 	}
 
 	private async resolveDriveFolder(): Promise<string> {

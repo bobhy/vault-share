@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 import type { DeferralManager } from '../sync/deferral-manager';
-import type { SyncAction, SyncActionType, ViewCandidate } from '../sync/types';
+import type { SyncActionType, ViewCandidate } from '../sync/types';
 import { ConfirmationModal } from './confirmation-modal';
 import { DeferredListModal } from './deferred-list-modal';
 
@@ -31,6 +31,10 @@ const STATUS_ROWS: StatusRow[] = [
  * {@link DeferredListModal} for that operation type, listing both pending and
  * deferred candidates.
  *
+ * The `planFn` returns a combined {@link ViewCandidate} list (pending + deferred)
+ * from {@link BulkSync.planOnly}. The view groups these by action type directly —
+ * no separate {@link DeferralManager} query is needed for candidate data.
+ *
  * Refreshes whenever the caller invokes {@link refresh} — typically wired to
  * {@link DeferralManager}'s `onChanged` callback in the plugin entry point.
  *
@@ -40,13 +44,13 @@ const STATUS_ROWS: StatusRow[] = [
  * (the content-pane child that ItemView rendering depends on).
  */
 export class SharingStatusView extends ItemView {
-	private pendingActions: SyncAction[] = [];
+	private viewCandidates: ViewCandidate[] = [];
 	private isRefreshing = false;
 
 	constructor(
 		leaf: WorkspaceLeaf,
 		private readonly manager: DeferralManager,
-		private readonly planFn: () => Promise<SyncAction[]>,
+		private readonly planFn: () => Promise<ViewCandidate[]>,
 	) {
 		super(leaf);
 	}
@@ -86,37 +90,17 @@ export class SharingStatusView extends ItemView {
 		container.empty();
 		container.addClass('vault-share-sharing-status-container');
 
-		const [paused, grouped] = await Promise.all([
-			this.manager.isPaused(),
-			this.manager.getGroupedByType(),
-		]);
+		const paused = await this.manager.isPaused();
 
-		// Build per-type ViewCandidate lists: pending first, then deferred.
+		// Group view candidates by action type.
 		const viewByType = new Map<SyncActionType, ViewCandidate[]>();
-		for (const action of this.pendingActions) {
-			const list = viewByType.get(action.type) ?? [];
-			list.push({
-				path: action.path,
-				actionType: action.type,
-				isDeferred: false,
-				driveFileId: action.remote?.driveFileId,
-			});
-			viewByType.set(action.type, list);
-		}
-		for (const [type, deferredList] of grouped) {
-			const list = viewByType.get(type) ?? [];
-			for (const dc of deferredList) {
-				list.push({
-					path: dc.path,
-					actionType: dc.actionType,
-					isDeferred: true,
-					driveFileId: dc.driveFileId,
-				});
-			}
-			viewByType.set(type, list);
+		for (const c of this.viewCandidates) {
+			const list = viewByType.get(c.actionType) ?? [];
+			list.push(c);
+			viewByType.set(c.actionType, list);
 		}
 
-		const totalCount = [...viewByType.values()].reduce((sum, arr) => sum + arr.length, 0);
+		const totalCount = this.viewCandidates.length;
 
 		// State header
 		const header = container.createDiv({ cls: 'vault-share-sharing-status-header' });
@@ -175,7 +159,7 @@ export class SharingStatusView extends ItemView {
 	private async runPlan(): Promise<void> {
 		this.isRefreshing = true;
 		try {
-			this.pendingActions = await this.planFn();
+			this.viewCandidates = await this.planFn();
 		} finally {
 			this.isRefreshing = false;
 		}

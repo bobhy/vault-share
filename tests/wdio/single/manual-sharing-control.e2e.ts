@@ -30,6 +30,7 @@
 import { runBulkSync } from '../../../wdio.conf.mts';
 import type { GDriveApi } from '../../../src/gdrive/api';
 import type { DeferralManager } from '../../../src/sync/deferral-manager';
+import type { BulkSync } from '../../../src/sync/bulk-sync';
 import type { SyncActionType } from '../../../src/sync/types';
 
 // Unique timestamp prefix isolates each test run from prior vault content.
@@ -54,6 +55,7 @@ type PluginHandle = {
 	api: GDriveApi;
 	driveFolderId: string;
 	deferralManager: DeferralManager;
+	bulkSync: BulkSync;
 	settings: {
 		fileModificationConfirmationMin: number;
 		fileModificationConfirmationThreshold: number;
@@ -77,10 +79,8 @@ async function setupScenario(): Promise<void> {
 		}).plugins.plugins['vault-share']!;
 		const folderId = plugin.driveFolderId;
 
-		// Release any stale deferred candidates.
-		const grouped = await plugin.deferralManager.getGroupedByType();
-		const stalePaths = [...grouped.values()].flatMap(cs => cs.map(c => c.path));
-		if (stalePaths.length > 0) await plugin.deferralManager.releaseByPath(stalePaths);
+		// Release any stale deferred candidates and unpause.
+		await plugin.deferralManager.releaseAll();
 		await plugin.deferralManager.setPaused(false);
 
 		// Delete local bsf- files.
@@ -174,9 +174,7 @@ describe('Sharing status panel — auto-pause on open', () => {
 			const plugin = (app as unknown as {
 				plugins: { plugins: Record<string, PluginHandle> };
 			}).plugins.plugins['vault-share']!;
-			const grouped = await plugin.deferralManager.getGroupedByType();
-			const paths = [...grouped.values()].flatMap(cs => cs.map(c => c.path));
-			if (paths.length > 0) await plugin.deferralManager.releaseByPath(paths);
+			await plugin.deferralManager.releaseAll();
 			await plugin.deferralManager.setPaused(false);
 		});
 	});
@@ -247,11 +245,7 @@ describe('Manual sharing control', () => {
 			plugin.settings.fileModificationConfirmationThreshold = 10;
 
 			// Release all deferred candidates and unpause.
-			const grouped = await plugin.deferralManager.getGroupedByType();
-			const allPaths = [...grouped.values()].flatMap(cs => cs.map(c => c.path));
-			if (allPaths.length > 0) {
-				await plugin.deferralManager.releaseByPath(allPaths);
-			}
+			await plugin.deferralManager.releaseAll();
 			await plugin.deferralManager.setPaused(false);
 
 			// Delete remaining local test files.
@@ -286,15 +280,15 @@ describe('Manual sharing control', () => {
 			}).commands.executeCommandById('vault-share:open-sharing-status');
 		});
 
-		// Allow the async onOpen() to complete: it pauses sharing, runs planOnly()
-		// (a real Drive API call), then renders the view.
-		await browser.pause(3000);
-
-		const tableVisible = await browser.executeObsidian(() => {
-			return !!activeDocument.querySelector('.vault-share-sharing-status-table');
-		}) as unknown as boolean;
-
-		expect(tableVisible).toBe(true);
+		// onOpen() pauses sharing, then calls planOnly() (a real Drive API call)
+		// before rendering. Poll until the table appears rather than using a fixed
+		// pause, so the test is robust against variable Drive API latency.
+		await browser.waitUntil(
+			async () => browser.executeObsidian(() =>
+				!!activeDocument.querySelector('.vault-share-sharing-status-table'),
+			) as unknown as Promise<boolean>,
+			{ timeout: 15000, interval: 500, timeoutMsg: 'Sharing status table did not appear within 15 s' },
+		);
 	});
 
 	it('reflects the expected file presence in local vault and Drive', async () => {
@@ -359,15 +353,19 @@ describe('Manual sharing control', () => {
 		expect(matrix.drive.deleteLocalAbsent).toBe(true);
 	});
 
-	it('reports the correct deferred candidate count for each operation type', async () => {
+	it('reports the correct pending candidate count for each operation type', async () => {
 		type Counts = Record<SyncActionType, number>;
 		const counts = await browser.executeObsidian(async ({ app }) => {
-			const grouped = await (app as unknown as {
+			const plugin = (app as unknown as {
 				plugins: { plugins: Record<string, PluginHandle> };
-			}).plugins.plugins['vault-share']!.deferralManager.getGroupedByType();
+			}).plugins.plugins['vault-share']!;
+
+			// planOnly() returns the combined list (pending + deferred) tagged with isDeferred.
+			// After threshold deferral all candidates are deferred; counts are the same.
+			const candidates = await plugin.bulkSync.planOnly();
 			const out: Partial<Counts> = {};
-			for (const [type, candidates] of grouped) {
-				out[type as SyncActionType] = candidates.length;
+			for (const c of candidates) {
+				out[c.actionType as SyncActionType] = (out[c.actionType as SyncActionType] ?? 0) + 1;
 			}
 			return out;
 		}) as unknown as Partial<Counts>;

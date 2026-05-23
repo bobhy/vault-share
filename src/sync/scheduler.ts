@@ -22,6 +22,22 @@ export interface SyncSchedulerDeps {
 	setStatusBar: (text: string) => void;
 	registerEvent: (ref: EventRef) => void;
 	registerInterval: (id: number) => void;
+	/**
+	 * Returns the current sharing-paused state synchronously.
+	 * Backed by {@link DeferralManager.isPausedSync}, which reads from a cache that is
+	 * kept in sync with every {@link DeferralManager.setPaused} call.
+	 * Must be accurate before the first scheduler tick (warm the cache via
+	 * `await deferralManager.init()` before calling {@link SyncScheduler.start}).
+	 */
+	isSharingPaused: () => boolean;
+	/**
+	 * Returns true if the given vault path is currently deferred.
+	 * Backed by {@link DeferralManager.isDeferredPathSync}, which reads from a cache
+	 * populated by {@link DeferralManager.init}.
+	 * Prevents single-file sync from executing a deferred file while sharing is
+	 * otherwise running (e.g. after the user has partially released candidates).
+	 */
+	isDeferredPath: (path: string) => boolean;
 }
 
 /**
@@ -40,10 +56,29 @@ export interface SyncSchedulerDeps {
  * Handles background/foreground catchup: past-due deadlines fire on the next tick
  * after the app is foregrounded.
  */
+/**
+ * Drives all sync scheduling from a single 1-second heartbeat.
+ *
+ * Each file's sync deadline is tracked as two independent timestamps:
+ * - nextHoldDownAt: set on edit, fires `openFileChangeHoldDown` seconds later
+ * - nextPollAt: active only for monitored files, fires every `openFilePoll` seconds
+ *
+ * The tick fires whichever is due first (min of the two), then resets the holdDown
+ * to Infinity (poll took precedence or holdDown ran) and advances the poll deadline
+ * only for monitored files. This naturally implements the spec rule that
+ * "openFilePoll has precedence over openFileChangeHoldDown and will cancel a
+ * pending holdDown event."
+ *
+ * Handles background/foreground catchup: past-due deadlines fire on the next tick
+ * after the app is foregrounded.
+ *
+ * Sharing-paused state is not tracked here — it is the sole responsibility of
+ * {@link DeferralManager}. The {@link SyncSchedulerDeps.isSharingPaused} callback
+ * reads the cached value from {@link DeferralManager.isPausedSync} on every tick.
+ */
 export class SyncScheduler {
 	private bulkNextRunAt = 0; // 0 = run immediately
 	private readonly fileStates = new Map<string, PerFileState>();
-	private paused = false;
 	private bulkRunning = false;
 
 	constructor(private readonly deps: SyncSchedulerDeps) {}
@@ -85,14 +120,6 @@ export class SyncScheduler {
 
 	destroy(): void {
 		this.fileStates.clear();
-	}
-
-	setPaused(paused: boolean): void {
-		this.paused = paused;
-	}
-
-	isPaused(): boolean {
-		return this.paused;
 	}
 
 	/** Schedule bulk sync to run immediately on the next tick. */
@@ -147,8 +174,8 @@ export class SyncScheduler {
 		if (state) state.nextHoldDownAt = Infinity;
 	}
 
-	private async tick(): Promise<void> {
-		if (this.paused) return;
+	private tick(): void {
+		if (this.deps.isSharingPaused()) return;
 
 		const now = Date.now();
 		const { ctx, bulkSync, workspace, setStatusBar } = this.deps;
@@ -167,12 +194,17 @@ export class SyncScheduler {
 		// The deadline is the earlier of holdDown and poll. After running:
 		//   - holdDown is always cleared (reset to Infinity)
 		//   - poll advances only for monitored files
+		// Deferred files: advance timers but skip the sync so a partially-released
+		// deferral list cannot cause an individually-deferred file to sync while
+		// the rest of the vault is still running.
 		const pollMs = ctx.settings().openFilePoll * 1000;
 		for (const [path, state] of this.fileStates) {
 			if (now >= Math.min(state.nextHoldDownAt, state.nextPollAt)) {
 				state.nextHoldDownAt = Infinity;
 				state.nextPollAt = state.monitored ? now + pollMs : Infinity;
-				void singleFileSync(path, ctx, workspace, setStatusBar, p => this.clearHoldDown(p));
+				if (!this.deps.isDeferredPath(path)) {
+					void singleFileSync(path, ctx, workspace, setStatusBar, p => this.clearHoldDown(p));
+				}
 			}
 		}
 	}

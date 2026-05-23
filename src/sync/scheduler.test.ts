@@ -74,7 +74,11 @@ function makeApp() {
 // Scheduler factory
 // ---------------------------------------------------------------------------
 
-function makeScheduler(settingsOverrides = {}) {
+function makeScheduler(
+	settingsOverrides = {},
+	isSharingPaused: () => boolean = () => false,
+	isDeferredPath: (path: string) => boolean = () => false,
+) {
 	const workspace = makeWorkspace();
 	const app = makeApp();
 	const settings = mockSettings({ openFilePoll: 10, openFileChangeHoldDown: 5, bulkSyncPoll: 3600, ...settingsOverrides });
@@ -101,6 +105,8 @@ function makeScheduler(settingsOverrides = {}) {
 		setStatusBar: vi.fn(),
 		registerEvent: vi.fn(),
 		registerInterval: vi.fn(),
+		isSharingPaused,
+		isDeferredPath,
 	};
 
 	const scheduler = new SyncScheduler(deps);
@@ -468,7 +474,7 @@ describe('SyncScheduler', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// destroy and isPaused
+	// destroy
 	// -------------------------------------------------------------------------
 
 	it('destroy clears all file state so no further syncs fire', async () => {
@@ -485,25 +491,16 @@ describe('SyncScheduler', () => {
 		expect(singleFileSyncSpy).not.toHaveBeenCalled();
 	});
 
-	it('isPaused reflects the current pause state', () => {
-		const { scheduler } = makeScheduler();
-		scheduler.start();
-
-		expect(scheduler.isPaused()).toBe(false);
-		scheduler.setPaused(true);
-		expect(scheduler.isPaused()).toBe(true);
-		scheduler.setPaused(false);
-		expect(scheduler.isPaused()).toBe(false);
-	});
-
 	// -------------------------------------------------------------------------
-	// Pause
+	// Pause — sharing-paused state comes from DeferralManager via isSharingPaused
 	// -------------------------------------------------------------------------
 
-	it('paused scheduler does not run any syncs', async () => {
-		const { scheduler, workspace, app } = makeScheduler({ openFilePoll: 10 });
+	it('suppresses all syncs while isSharingPaused returns true', async () => {
+		const { scheduler, workspace, app, bulkSyncRunSpy } = makeScheduler(
+			{ openFilePoll: 10 },
+			() => true,
+		);
 		scheduler.start();
-		scheduler.setPaused(true);
 
 		workspace.emit('file-open', { path: 'notes/hello.md' });
 		app.vault.emit('modify', { path: 'notes/hello.md' });
@@ -511,20 +508,48 @@ describe('SyncScheduler', () => {
 
 		await tick(60_000);
 		expect(singleFileSyncSpy).not.toHaveBeenCalled();
+		expect(bulkSyncRunSpy).not.toHaveBeenCalled();
 	});
 
-	it('resumes syncing after setPaused(false)', async () => {
-		const { scheduler, workspace } = makeScheduler();
+	it('resumes single-file and bulk sync once isSharingPaused returns false', async () => {
+		let paused = true;
+		const { scheduler, workspace, bulkSyncRunSpy } = makeScheduler({}, () => paused);
 		scheduler.start();
-		scheduler.setPaused(true);
 
 		workspace.emit('file-open', { path: 'notes/hello.md' });
 		await tick(2000);
 		expect(singleFileSyncSpy).not.toHaveBeenCalled();
+		expect(bulkSyncRunSpy).not.toHaveBeenCalled();
 
-		scheduler.setPaused(false);
+		paused = false; // simulate DeferralManager.setPaused(false)
 		await tick(1000);
-		expect(singleFileSyncSpy).toHaveBeenCalledWith('notes/hello.md', expect.anything(), expect.anything(), expect.anything(), expect.anything());
+		expect(singleFileSyncSpy).toHaveBeenCalledWith(
+			'notes/hello.md', expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+		);
+		expect(bulkSyncRunSpy).toHaveBeenCalledTimes(1);
+	});
+
+	// -------------------------------------------------------------------------
+	// Deferred path — isDeferredPath skips single-file sync for that path
+	// -------------------------------------------------------------------------
+
+	it('skips single-file sync for a deferred path even when sharing is not paused', async () => {
+		// 'deferred.md' is deferred; 'normal.md' is not.
+		const { scheduler, workspace } = makeScheduler(
+			{ openFileChangeHoldDown: 5 },
+			() => false,
+			path => path === 'deferred.md',
+		);
+		scheduler.start();
+
+		workspace.emit('file-open', { path: 'deferred.md' });
+		workspace.emit('file-open', { path: 'normal.md' });
+
+		await tick(1000); // initial tick — both files are due
+
+		const syncedPaths = (singleFileSyncSpy.mock.calls as string[][]).map(c => c[0]);
+		expect(syncedPaths).not.toContain('deferred.md');
+		expect(syncedPaths).toContain('normal.md');
 	});
 
 	// -------------------------------------------------------------------------
