@@ -17,6 +17,7 @@
 |------|-------|
 | Node.js (LTS) | The project targets the current LTS release. `nvm` or `fnm` are recommended. |
 | Obsidian desktop | Required for manual testing and e2e tests. |
+| Obsidian CLI | Also required.  Must be invokable as `obsidian-cli` rather than the default `obsidian`. |
 | `gh` CLI | Required for cutting GitHub releases. Install from <https://cli.github.com>. |
 
 ### Clone and install
@@ -41,23 +42,31 @@ This creates (or updates) `<vault>/.obsidian/plugins/vault-share/` with `main.js
 
 For active development you will typically run the watcher instead (see [npm scripts](#2-npm-scripts-reference)) and reload the plugin manually inside Obsidian via **Settings → Community plugins → Vault share → Reload**.
 
-### E2e test setup (one-time)
+### E2e test setup
 
-The e2e tests drive a sandboxed Obsidian instance and need a real Google Drive refresh token. Do this once per machine after you have authenticated the plugin in a running Obsidian vault:
-
-```bash
-npm run setup:e2e:wdio
-```
-
-This reads the stored refresh token from Obsidian's SecretStorage and saves it to `.e2e-refresh-token` (gitignored). The e2e test runner injects it into the sandboxed vault at startup. 
+The `npm run test:e2e:*` tests need access to live Google Drive.
+We currently have a kludge setup procedure which ends up providing a bare Google Drive refresh token that they can use.
 
 Prerequisites:
 
-- A Google account used only for testing and (probably) different from
-your main account.  Whatever account you respond to the oauth prompt with will have read/write access to all the vault files for that user.  
-- Obsidian is running with a vault that is already authenticated with the above Google account to Google Drive via Vault Share.
-- The `obsidian` CLI helper is on your PATH (installed by `wdio-obsidian-service`).
+- A Google account used only for testing and (best practice) different from your main account.  
+This account will have read/write access to all the vault files created by any instance of the plugin using the same account
+anywhere in that user's Google Drive.
+- Obsidian and Obsidian CLI installed on the test (dev) machine.
 
+Then:
+1. Invoke Obsidian GUI 
+2. Open a non-test vault (could be new and empty)
+3. Install freshly built plugin
+4. In plugin settings, click the login button, do the OAuth2 dance.
+5. Leave GUI running
+6. At a command prompt
+   1. CWD to root of the project
+   2. run `npm run setup:e2e:wdio`
+
+This reads the stored refresh token from Obsidian's SecretStorage and saves it to local file `.e2e-refresh-token` (gitignored). 
+Retain this file for the duration of your e2e tests.
+The e2e test runner injects it into the sandboxed vault at startup. 
 ---
 
 ## 2. npm scripts reference

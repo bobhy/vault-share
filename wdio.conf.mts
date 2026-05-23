@@ -47,6 +47,15 @@ export const config: WebdriverIO.Config = {
 	before: async (_caps, _specs, b) => {
 		const br = b as WebdriverIO.Browser;
 
+		// Wait for the wdio-obsidian-service bridge to be ready before calling
+		// executeObsidian — avoids the "not a function" retry warnings on startup.
+		await br.waitUntil(
+			() => br.execute(() =>
+				typeof (window as unknown as { wdioObsidianService: unknown }).wdioObsidianService === 'function',
+			) as Promise<boolean>,
+			{ timeout: 30_000, interval: 200, timeoutMsg: 'wdioObsidianService not available after 30 s' },
+		);
+
 		// wdio uses a fresh --user-data-dir so secretStorage is empty.
 		// Read the saved refresh token and inject it before the plugin initialises.
 		let refreshToken = process.env["VAULT_SHARE_REFRESH_TOKEN"];
@@ -118,7 +127,7 @@ interface SyncPassResult {
 	deleted: number;
 	conflicts: number;
 	merges: number;
-	abortedByUser: boolean;
+	deferredByThreshold: boolean;
 	error?: unknown;
 }
 
