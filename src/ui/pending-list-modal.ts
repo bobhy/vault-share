@@ -62,7 +62,7 @@ function candidateDescription(candidate: ViewCandidate): string {
  * TODO: accept `SyncContext` in the constructor so resolution buttons can call `syncOneFile`
  * and `driveFs` for on-demand remote file downloads.
  */
-export class DeferredListModal extends Modal {
+export class PendingListModal extends Modal {
 	private readonly accepted = new Map<string, boolean>();
 	private expandedPath: string | null = null;
 
@@ -82,21 +82,21 @@ export class DeferredListModal extends Modal {
 	onOpen(): void {
 		const { contentEl } = this;
 		contentEl.empty();
-		contentEl.addClass('vault-share-deferred-modal');
+		contentEl.addClass('vault-share-pending-modal');
 
 		contentEl.createEl('h2', { text: MODAL_TITLE[this.actionType] });
 		contentEl.createEl('p', {
-			cls: 'vault-share-deferred-description',
+			cls: 'vault-share-pending-description',
 			text: MODAL_DESCRIPTION[this.actionType],
 		});
 
 		// Select-all control — wired up after the list is rendered
-		const selectAllRow = contentEl.createDiv({ cls: 'vault-share-deferred-select-all' });
+		const selectAllRow = contentEl.createDiv({ cls: 'vault-share-pending-select-all' });
 		const selectAll = selectAllRow.createEl('input');
 		selectAll.type = 'checkbox';
 		selectAllRow.createSpan({ text: 'Select all' });
 
-		const listEl = contentEl.createEl('ul', { cls: 'vault-share-deferred-list' });
+		const listEl = contentEl.createEl('ul', { cls: 'vault-share-pending-list' });
 		for (const candidate of this.candidates) {
 			this.renderItem(listEl, candidate);
 		}
@@ -106,7 +106,7 @@ export class DeferredListModal extends Modal {
 			for (const path of this.accepted.keys()) {
 				this.accepted.set(path, checked);
 			}
-			listEl.querySelectorAll<HTMLInputElement>('.vault-share-deferred-checkbox').forEach(cb => {
+			listEl.querySelectorAll<HTMLInputElement>('.vault-share-pending-checkbox').forEach(cb => {
 				cb.checked = checked;
 			});
 		});
@@ -123,27 +123,27 @@ export class DeferredListModal extends Modal {
 	}
 
 	private renderItem(list: HTMLElement, candidate: ViewCandidate): void {
-		const li = list.createEl('li', { cls: 'vault-share-deferred-item' });
+		const li = list.createEl('li', { cls: 'vault-share-pending-item' });
 
-		const row = li.createDiv({ cls: 'vault-share-deferred-row' });
+		const row = li.createDiv({ cls: 'vault-share-pending-row' });
 
 		const cb = row.createEl('input');
 		cb.type = 'checkbox';
 		cb.checked = !candidate.isDeferred;
-		cb.addClass('vault-share-deferred-checkbox');
+		cb.addClass('vault-share-pending-checkbox');
 		cb.addEventListener('change', () => { this.accepted.set(candidate.path, cb.checked); });
 
 		row.createSpan({
-			cls: 'vault-share-deferred-path is-clickable',
+			cls: 'vault-share-pending-path is-clickable',
 			text: candidate.path,
 		}).addEventListener('click', () => { this.toggleAccordion(li, candidate); });
 
 		// Hidden accordion section, populated on first expand
-		li.createDiv({ cls: 'vault-share-deferred-detail is-hidden' });
+		li.createDiv({ cls: 'vault-share-pending-detail is-hidden' });
 	}
 
 	private toggleAccordion(li: HTMLElement, candidate: ViewCandidate): void {
-		const detail = li.querySelector<HTMLElement>('.vault-share-deferred-detail');
+		const detail = li.querySelector<HTMLElement>('.vault-share-pending-detail');
 		if (!detail) return;
 
 		const isOpen = !detail.hasClass('is-hidden');
@@ -151,7 +151,7 @@ export class DeferredListModal extends Modal {
 		// Collapse any other expanded item before changing this one
 		if (this.expandedPath !== null && this.expandedPath !== candidate.path) {
 			li.parentElement
-				?.querySelectorAll<HTMLElement>('.vault-share-deferred-detail')
+				?.querySelectorAll<HTMLElement>('.vault-share-pending-detail')
 				.forEach(d => d.addClass('is-hidden'));
 		}
 
@@ -168,7 +168,7 @@ export class DeferredListModal extends Modal {
 
 	private populateDetail(container: HTMLElement, candidate: ViewCandidate): void {
 		container.createEl('p', {
-			cls: 'vault-share-deferred-detail-desc',
+			cls: 'vault-share-pending-detail-desc',
 			text: candidateDescription(candidate),
 		});
 
@@ -178,10 +178,10 @@ export class DeferredListModal extends Modal {
 		// pull / deleteRemote → driveFs.download(candidate.driveFileId) (remote, read-only)
 		// text conflict       → app.vault.read(tfile) in an editable CodeMirror panel
 		// non-text conflict   → two stacked panels: local (read-only) + remote (read-only, on demand)
-		container.createDiv({ cls: 'vault-share-deferred-file-panel' })
+		container.createDiv({ cls: 'vault-share-pending-file-panel' })
 			.setText('File preview — accept via checkbox above, or use a resolution button below.');
 
-		this.addResolutionButtons(container.createDiv({ cls: 'vault-share-deferred-buttons' }), candidate);
+		this.addResolutionButtons(container.createDiv({ cls: 'vault-share-pending-buttons' }), candidate);
 	}
 
 	private addResolutionButtons(container: HTMLElement, candidate: ViewCandidate): void {
@@ -219,7 +219,7 @@ export class DeferredListModal extends Modal {
 		// Skip always appears last and is fully functional
 		const skip = container.createEl('button', { text: 'Skip' });
 		skip.addEventListener('click', () => {
-			const detail = skip.closest<HTMLElement>('.vault-share-deferred-detail');
+			const detail = skip.closest<HTMLElement>('.vault-share-pending-detail');
 			detail?.addClass('is-hidden');
 			this.expandedPath = null;
 		});

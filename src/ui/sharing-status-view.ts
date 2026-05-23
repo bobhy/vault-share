@@ -2,7 +2,7 @@ import { ItemView, WorkspaceLeaf } from 'obsidian';
 import type { DeferralManager } from '../sync/deferral-manager';
 import type { SyncActionType, ViewCandidate } from '../sync/types';
 import { ConfirmationModal } from './confirmation-modal';
-import { DeferredListModal } from './deferred-list-modal';
+import { PendingListModal } from './pending-list-modal';
 
 export const SHARING_STATUS_VIEW_TYPE = 'vault-share-sharing-status';
 
@@ -28,7 +28,7 @@ const STATUS_ROWS: StatusRow[] = [
  * a plan-only pass to collect current candidate counts. Shows the current
  * paused/running state, a pause/resume button, a refresh button, and a
  * per-operation-type count table. Tapping a table row opens the
- * {@link DeferredListModal} for that operation type, listing both pending and
+ * {@link PendingListModal} for that operation type, listing both pending and
  * deferred candidates.
  *
  * The `planFn` returns a combined {@link ViewCandidate} list (pending + deferred)
@@ -150,7 +150,7 @@ export class SharingStatusView extends ItemView {
 			tr.createEl('td', { text: String(candidates.length) });
 
 			tr.addEventListener('click', () => {
-				new DeferredListModal(this.app, candidates, row.type, this.manager).open();
+				new PendingListModal(this.app, candidates, row.type, this.manager).open();
 			});
 		}
 	}
