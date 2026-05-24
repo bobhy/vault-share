@@ -25,6 +25,44 @@ export class BulkSync {
 	private running = false;
 	private lastPlanResult: ViewCandidate[] | null = null;
 
+	/**
+	 * True while a {@link run} pass is actively executing.
+	 *
+	 * When `isRunning` is `true`, a pass is in flight and {@link onPassCompleted}
+	 * is guaranteed to fire on completion.  Callers that want to wait for an
+	 * in-progress pass should register {@link onPassCompleted} only after
+	 * confirming `isRunning` is `true`, or use the poll-friendly
+	 * {@link lastPassCompletedAt} timestamp instead.
+	 */
+	get isRunning(): boolean { return this.running; }
+
+	/**
+	 * Unix timestamp (ms) of the most recently completed {@link run} pass.
+	 * Zero before the first pass. Updated before {@link onPassCompleted} fires,
+	 * so it is always accurate when the callback is invoked.
+	 */
+	lastPassCompletedAt = 0;
+
+	/**
+	 * Result of the most recently completed {@link run} pass.
+	 * `null` before the first pass. Updated atomically with
+	 * {@link lastPassCompletedAt}.
+	 */
+	lastPassResult: SyncPassResult | null = null;
+
+	/**
+	 * Optional callback fired at the end of every {@link run} pass, after
+	 * {@link lastPassCompletedAt} and {@link lastPassResult} are updated.
+	 *
+	 * Fires regardless of how the pass ended — whether it executed actions,
+	 * was skipped (paused, not logged in, or deferred by threshold), or
+	 * encountered an error.  Not fired by {@link planOnly}.
+	 *
+	 * Designed for synchronising with sync completion without polling fixed
+	 * timeouts.  Production callers may also use this for post-sync notifications.
+	 */
+	onPassCompleted: (() => void) | null = null;
+
 	constructor(
 		private readonly ctx: SyncContext,
 		private readonly excludeMatcher: ExcludeMatcher,
@@ -71,9 +109,13 @@ export class BulkSync {
 		}
 		this.running = true;
 		try {
-			return await this.doRun();
+			const result = await this.doRun();
+			this.lastPassResult = result;
+			return result;
 		} finally {
 			this.running = false;
+			this.lastPassCompletedAt = Date.now();
+			this.onPassCompleted?.();
 		}
 	}
 

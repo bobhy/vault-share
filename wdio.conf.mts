@@ -151,8 +151,8 @@ export async function injectAndConfigure(
 }
 
 /**
- * Run a bulk sync pass synchronously inside the given vault.
- * Bypasses the scheduler timer so tests can trigger sync on demand.
+ * Shape of a completed bulk sync pass, mirroring the production SyncPassResult.
+ * Defined here so wdio.conf.mts has no import dependency on production source.
  */
 interface SyncPassResult {
 	downloaded: number;
@@ -164,22 +164,68 @@ interface SyncPassResult {
 	error?: unknown;
 }
 
+/**
+ * Trigger a bulk sync pass and wait for it to complete.
+ *
+ * Fires the sync without awaiting inside `executeObsidian` to avoid hitting
+ * WebDriver's async-script timeout on slow Drive API responses.  Completion
+ * is detected by polling {@link BulkSync.lastPassCompletedAt} from the Node
+ * side; the test waits up to two minutes before failing.
+ *
+ * If a pass is already running when called, this function waits for that
+ * in-flight pass to finish — the new {@link BulkSync.run} call is a no-op
+ * but the running pass will still update `lastPassCompletedAt` on completion.
+ *
+ * Note: executeObsidian serialises its callback via `func.toString()`, so no
+ * module-level helpers are available inside the callbacks — all plugin access
+ * must be inlined.
+ */
 export async function runBulkSync(br: WebdriverIO.Browser): Promise<SyncPassResult> {
-	const result = await br.executeObsidian(async ({ app }) => {
+	// Fire the sync without awaiting, record the wall-clock start time.
+	const startedAt = await br.executeObsidian(({ app }) => {
 		type Plugin = { scheduler: unknown };
+		type BulkSyncHandle = { run(): Promise<unknown> };
 		const plugin = (app as unknown as {
 			plugins: { plugins: Record<string, Plugin> };
-		}).plugins.plugins["vault-share"] as Plugin | undefined;
-		if (!plugin) throw new Error("vault-share plugin not loaded");
-
-		// Access the BulkSync instance held inside the scheduler's private deps.
+		}).plugins.plugins['vault-share'] as Plugin | undefined;
+		if (!plugin) throw new Error('vault-share plugin not loaded');
 		const bulkSync = (plugin.scheduler as unknown as {
-			deps: { bulkSync: { run: () => Promise<unknown> } };
+			deps: { bulkSync: BulkSyncHandle };
 		}).deps.bulkSync;
-		return bulkSync.run() as Promise<unknown>;
-	}) as unknown as SyncPassResult;
+		void bulkSync.run();   // completion signalled via lastPassCompletedAt
+		return Date.now();
+	}) as unknown as number;
 
-	if (result?.error) {
+	// Poll until the in-flight pass reports completion, capturing the result in
+	// the same check to avoid a separate round-trip after the condition fires.
+	let result: SyncPassResult | null = null;
+	await br.waitUntil(
+		async () => {
+			const { completedAt, passResult } = await br.executeObsidian(({ app }) => {
+				type Plugin = { scheduler: unknown };
+				type BulkSyncHandle = { lastPassCompletedAt: number; lastPassResult: unknown };
+				const plugin = (app as unknown as {
+					plugins: { plugins: Record<string, Plugin> };
+				}).plugins.plugins['vault-share'] as Plugin | undefined;
+				const bulkSync = (plugin?.scheduler as unknown as {
+					deps: { bulkSync: BulkSyncHandle };
+				} | undefined)?.deps.bulkSync;
+				return {
+					completedAt: bulkSync?.lastPassCompletedAt ?? 0,
+					passResult:  bulkSync?.lastPassResult ?? null,
+				};
+			}) as unknown as { completedAt: number; passResult: SyncPassResult | null };
+			if (completedAt > startedAt) {
+				result = passResult;
+				return true;
+			}
+			return false;
+		},
+		{ timeout: 120_000, interval: 100, timeoutMsg: 'Bulk sync did not complete within 2 minutes' },
+	);
+
+	if (!result) throw new Error('Bulk sync completed but lastPassResult is null');
+	if (result.error) {
 		const msg = result.error instanceof Error ? result.error.message : String(result.error);
 		throw new Error(`Bulk sync failed: ${msg}`);
 	}
