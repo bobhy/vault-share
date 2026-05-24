@@ -9,6 +9,25 @@ export interface MergeResult {
 const MERGE_ELIGIBLE_EXTS = new Set(['.md', '.txt']);
 
 /**
+ * The four marker lines that delimit a vault-share conflict block.
+ * All conflict-detection and navigation code must reference these constants
+ * rather than repeating the literal strings, so that changing the marker
+ * format requires edits only here.
+ *
+ *   MARKER_LOCAL  — opens the block; introduces the local (A) side
+ *   MARKER_BASE   — separates local from the common base (O)
+ *   MARKER_SEP    — separates base from the remote/group (B) side
+ *   MARKER_GROUP  — closes the block
+ *
+ * Markers use backtick fencing so they render as inline code in markdown,
+ * making them visually distinct from note content.
+ */
+export const MARKER_LOCAL = '`<<<<< local`';
+export const MARKER_BASE  = '`||||| base`';
+export const MARKER_SEP   = '`=====`';
+export const MARKER_GROUP = '`>>>>> group`';
+
+/**
  * Returns true when the file at path is eligible for text merge.
  * Only .md and .txt are eligible in V1. JSON, YAML, binary are not.
  */
@@ -20,15 +39,15 @@ export function isMergeEligible(path: string): boolean {
 
 /**
  * Perform a diff3 three-way merge with vault-share conflict marker format.
- * Markers use a '> ' prefix so they render as markdown blockquotes:
+ * Markers use backtick fencing so they render as inline code in markdown:
  *
- *   > <<<<< local
+ *   `<<<<< local`
  *   ...local lines...
- *   > ||||| base
+ *   `||||| base`
  *   ...base lines...
- *   > =====
+ *   `=====`
  *   ...remote lines...
- *   > >>>>> group
+ *   `>>>>> group`
  */
 export function threeWayMerge(
 	base: string,
@@ -50,17 +69,25 @@ export function threeWayMerge(
 			outputLines.push(...region.ok);
 		} else if (region.conflict) {
 			hasConflicts = true;
-			outputLines.push('> <<<<< local');
+			outputLines.push(MARKER_LOCAL);
 			outputLines.push(...(region.conflict.a ?? []));
-			outputLines.push('> ||||| base');
+			outputLines.push(MARKER_BASE);
 			outputLines.push(...(region.conflict.o ?? []));
-			outputLines.push('> =====');
+			outputLines.push(MARKER_SEP);
 			outputLines.push(...(region.conflict.b ?? []));
-			outputLines.push('> >>>>> group');
+			outputLines.push(MARKER_GROUP);
 		}
 	}
 
 	return { content: outputLines.join('\n'), hasConflicts };
+}
+
+/**
+ * Returns true if the text contains at least one unresolved conflict marker block
+ * in vault-share format ({@link MARKER_LOCAL} … {@link MARKER_GROUP}).
+ */
+export function hasConflictMarkers(text: string): boolean {
+	return text.includes(MARKER_LOCAL);
 }
 
 function splitLines(text: string): string[] {

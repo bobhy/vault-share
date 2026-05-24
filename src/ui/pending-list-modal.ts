@@ -4,12 +4,14 @@ import type { DeferredCandidate, SyncActionType, SyncContext, ViewCandidate } fr
 import {
 	executeAction,
 	executeBackOut,
-	executeMerge,
 	executeConflictBackOut,
 	executeKeepLocal,
 	executeKeepGroupVault,
 	executeDeleteBoth,
+	writeResolvedMerge,
 } from '../sync/resolution-executor';
+import { hasConflictMarkers } from '../sync/merge';
+import { loadFilePanels, type TextareaRef } from './pending-file-panel';
 
 const TEXT_EXTENSIONS = new Set([
 	'.md', '.txt', '.json', '.yaml', '.yml', '.toml', '.csv',
@@ -215,10 +217,17 @@ export class PendingListModal extends Modal {
 			text: candidateDescription(candidate),
 		});
 
-		this.addResolutionButtons(container.createDiv({ cls: 'vault-share-pending-buttons' }), candidate);
+		// File panel area: async content loading replaces the loading placeholder.
+		const panelArea = container.createDiv({ cls: 'vault-share-pending-panel-area' });
+		// Textarea ref: populated by loadFilePanels for text-conflict candidates so the
+		// Merge button can read the current (possibly user-edited) content.
+		const textareaRef: TextareaRef = { el: null };
+		void loadFilePanels(panelArea, candidate, this.ctx, textareaRef);
+
+		this.addResolutionButtons(container.createDiv({ cls: 'vault-share-pending-buttons' }), candidate, textareaRef);
 	}
 
-	private addResolutionButtons(container: HTMLElement, candidate: ViewCandidate): void {
+	private addResolutionButtons(container: HTMLElement, candidate: ViewCandidate, textareaRef: TextareaRef): void {
 		/** Helper: create a button that runs an async executor and handles state/errors. */
 		const actionBtn = (label: string, executor: () => Promise<void>): void => {
 			const btn = container.createEl('button', { text: label });
@@ -238,7 +247,31 @@ export class PendingListModal extends Modal {
 
 		if (candidate.actionType === 'conflict') {
 			if (isTextFile(candidate.path)) {
-				actionBtn('Merge', () => executeMerge(candidate, this.ctx));
+				// Merge reads from the editable textarea (textareaRef.el) and checks for
+				// unresolved conflict markers before writing to both vaults.
+				const mergeBtn = container.createEl('button', { text: 'Merge' });
+				mergeBtn.addEventListener('click', () => {
+					const text = textareaRef.el?.value;
+					if (text === undefined) {
+						new Notice('File content not loaded yet — please wait and try again.');
+						return;
+					}
+					if (hasConflictMarkers(text)) {
+						new Notice('Resolve all conflict markers first.');
+						textareaRef.el?.focus();
+						return;
+					}
+					mergeBtn.disabled = true;
+					mergeBtn.setText('Running…');
+					void writeResolvedMerge(candidate, text, this.ctx)
+						.then(() => { this.handleSuccess(candidate); })
+						.catch((err: unknown) => {
+							mergeBtn.disabled = false;
+							mergeBtn.setText('Merge');
+							const msg = err instanceof Error ? err.message : String(err);
+							new Notice(`Merge failed: ${msg}`);
+						});
+				});
 				actionBtn('Back out', () => executeConflictBackOut(candidate, this.ctx));
 			} else {
 				actionBtn('Keep local', () => executeKeepLocal(candidate, this.ctx));

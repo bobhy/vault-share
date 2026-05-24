@@ -1,5 +1,6 @@
 import type { SyncAction, SyncActionType, SyncContext, ViewCandidate } from './types';
 import { syncOneFile } from './file-syncer';
+import { threeWayMerge, type MergeResult } from './merge';
 
 /**
  * Reconstruct a full {@link SyncAction} from a {@link ViewCandidate} by looking up
@@ -161,6 +162,62 @@ export async function executeDeleteBoth(candidate: ViewCandidate, ctx: SyncConte
 	await ctx.localFs.delete(candidate.path);
 	if (driveFileId) await ctx.driveFs.delete(driveFileId);
 	await ctx.store.deleteRecord(candidate.path);
+}
+
+/**
+ * Compute the three-way merge result for a text-file conflict candidate.
+ * Used to pre-populate the editable panel in PendingListModal before the user edits.
+ * Does not write to either vault side.
+ */
+export async function computeMerge(candidate: ViewCandidate, ctx: SyncContext): Promise<MergeResult> {
+	const dec = new TextDecoder();
+	const record = await ctx.store.getRecord(candidate.path);
+	const driveFileId = candidate.driveFileId ?? record?.driveFileId;
+
+	const localBytes = await ctx.localFs.read(candidate.path);
+	const localText = dec.decode(localBytes);
+
+	let remoteText = '';
+	if (driveFileId) {
+		const remoteBytes = await ctx.driveFs.readBinary(driveFileId);
+		remoteText = dec.decode(remoteBytes);
+	}
+
+	let baseText = '';
+	const baseBytes = await ctx.store.getContent(candidate.path);
+	if (baseBytes) baseText = dec.decode(baseBytes);
+
+	return threeWayMerge(baseText, localText, remoteText);
+}
+
+/**
+ * Write a pre-resolved merge result to both the local vault and Drive.
+ * Used by the **Merge** button in PendingListModal after the user has edited the
+ * merged content and confirmed there are no remaining conflict markers.
+ */
+export async function writeResolvedMerge(
+	candidate: ViewCandidate,
+	mergedContent: string,
+	ctx: SyncContext,
+): Promise<void> {
+	const rootFolderId = ctx.driveFolderId();
+	const sampler = { value: false };
+	const mergedBytes = new TextEncoder().encode(mergedContent).buffer;
+
+	await ctx.localFs.write(candidate.path, mergedBytes);
+	const driveSide = await ctx.driveFs.write(rootFolderId, candidate.path, mergedBytes, ctx.statsTracker, sampler);
+	const localSide = ctx.localFs.stat(candidate.path);
+	await ctx.store.putRecord({
+		path: candidate.path,
+		driveFileId: driveSide.driveFileId,
+		localMtime: localSide?.mtime ?? 0,
+		localSize: localSide?.size ?? 0,
+		remoteMtime: driveSide.mtime,
+		remoteSize: driveSide.size,
+		syncedAt: Date.now(),
+	});
+	await ctx.store.putContent(candidate.path, mergedBytes);
+	ctx.statsTracker.recordMerge();
 }
 
 /**

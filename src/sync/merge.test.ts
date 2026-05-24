@@ -1,5 +1,30 @@
 import { describe, it, expect } from 'vitest';
-import { isMergeEligible, threeWayMerge } from './merge';
+import { hasConflictMarkers, isMergeEligible, threeWayMerge, MARKER_LOCAL, MARKER_BASE, MARKER_SEP, MARKER_GROUP } from './merge';
+
+describe('hasConflictMarkers', () => {
+	it('returns true when the text contains a conflict marker block', () => {
+		const text = `before\n${MARKER_LOCAL}\nA\n${MARKER_BASE}\nB\n${MARKER_SEP}\nC\n${MARKER_GROUP}\nafter`;
+		expect(hasConflictMarkers(text)).toBe(true);
+	});
+
+	it('returns false for plain text with no markers', () => {
+		expect(hasConflictMarkers('just some text')).toBe(false);
+	});
+
+	it('returns false for the empty string', () => {
+		expect(hasConflictMarkers('')).toBe(false);
+	});
+
+	it('returns true for a clean merge result that still has markers', () => {
+		const { content } = threeWayMerge('BASE', 'LOCAL', 'REMOTE');
+		expect(hasConflictMarkers(content)).toBe(true);
+	});
+
+	it('returns false for a clean merge result with no markers', () => {
+		const { content } = threeWayMerge('shared', 'local-only-change', 'shared');
+		expect(hasConflictMarkers(content)).toBe(false);
+	});
+});
 
 describe('isMergeEligible', () => {
 	it('accepts .md files', () => {
@@ -76,21 +101,21 @@ describe('threeWayMerge', () => {
 			'a\nREMOTE\nc',
 		);
 		expect(result.hasConflicts).toBe(true);
-		expect(result.content).toContain('> <<<<< local');
+		expect(result.content).toContain(MARKER_LOCAL);
 		expect(result.content).toContain('LOCAL');
-		expect(result.content).toContain('> ||||| base');
+		expect(result.content).toContain(MARKER_BASE);
 		expect(result.content).toContain('BASE');
-		expect(result.content).toContain('> =====');
+		expect(result.content).toContain(MARKER_SEP);
 		expect(result.content).toContain('REMOTE');
-		expect(result.content).toContain('> >>>>> group');
+		expect(result.content).toContain(MARKER_GROUP);
 	});
 
-	it('uses markdown blockquote prefix (> ) on conflict markers', () => {
+	it('all four conflict markers appear exactly once per conflict region', () => {
 		const result = threeWayMerge('x', 'local', 'remote');
 		const lines = result.content.split('\n');
 		const markers = lines.filter(l =>
-			l === '> <<<<< local' || l === '> ||||| base' ||
-			l === '> =====' || l === '> >>>>> group',
+			l === MARKER_LOCAL || l === MARKER_BASE ||
+			l === MARKER_SEP   || l === MARKER_GROUP,
 		);
 		expect(markers.length).toBe(4);
 	});

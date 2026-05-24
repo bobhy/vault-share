@@ -42,3 +42,78 @@
 	font-size: var(--font-ui-medium);
 	color: var(--text-normal);
 }
+
+/* ── Pending list modal — file content panels ────────────────────────────── */
+
+.vault-share-pending-panel-area {
+	margin: 6px 0;
+}
+
+.vault-share-pending-panel-loading {
+	color: var(--text-muted);
+	font-size: var(--font-smaller);
+}
+
+.vault-share-pending-panel-error {
+	color: var(--color-red);
+	font-size: var(--font-smaller);
+	margin: 4px 0;
+}
+
+.vault-share-pending-conflict-hint {
+	color: var(--color-yellow);
+	font-size: var(--font-smaller);
+	margin: 4px 0;
+}
+
+.vault-share-file-panel {
+	margin: 6px 0;
+}
+
+.vault-share-file-panel-label {
+	display: block;
+	font-size: var(--font-smaller);
+	color: var(--text-muted);
+	margin-bottom: 2px;
+}
+
+.vault-share-file-panel-content {
+	max-height: 200px;
+	overflow-y: auto;
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	padding: 6px 8px;
+	font-family: var(--font-monospace);
+	font-size: var(--font-smaller);
+	white-space: pre-wrap;
+	word-break: break-word;
+	margin: 0;
+}
+
+.vault-share-file-panel-textarea {
+	width: 100%;
+	min-height: 160px;
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	padding: 6px 8px;
+	font-family: var(--font-monospace);
+	font-size: var(--font-smaller);
+	color: var(--text-normal);
+	resize: vertical;
+	box-sizing: border-box;
+}
+
+/* ── Conflict resolution modal ───────────────────────────────────────────── */
+
+.vault-share-conflict-resolution-modal h3 {
+	margin-bottom: 12px;
+}
+
+.vault-share-conflict-btn {
+	display: block;
+	width: 100%;
+	margin-bottom: 6px;
+	text-align: left;
+}

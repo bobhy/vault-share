@@ -7,6 +7,7 @@ import type { SyncStore } from './store';
 import type { StatsTracker } from './stats-tracker';
 import type { Logger } from '../logger';
 import { mockSettings } from '../__mocks__/sync-test-helpers';
+import { MARKER_LOCAL } from './merge';
 import {
 	executeAction,
 	executeBackOut,
@@ -15,6 +16,8 @@ import {
 	executeKeepGroupVault,
 	executeDeleteBoth,
 	executeConflictBackOut,
+	computeMerge,
+	writeResolvedMerge,
 } from './resolution-executor';
 import type { ViewCandidate } from './types';
 
@@ -371,6 +374,77 @@ describe('executeDeleteBoth', () => {
 		expect(localFiles.has('dup.md')).toBe(false);
 		expect(driveFiles.has('dup.md')).toBe(false);
 		expect(records.has('dup.md')).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// computeMerge
+// ---------------------------------------------------------------------------
+
+describe('computeMerge', () => {
+	it('returns a clean merge when only one side changed', async () => {
+		const { ctx, localFiles, driveFiles, contents } = makeCtx();
+
+		localFiles.set('note.md', { content: enc('base\nlocal-edit\n'), mtime: 2000, size: 16 });
+		driveFiles.set('note.md', { driveFileId: 'drive-c', content: enc('base\nunchanged\n'), mtime: 1000 });
+		contents.set('note.md', enc('base\nunchanged\n'));
+
+		const result = await computeMerge(makeCandidate('note.md', 'conflict', 'drive-c'), ctx);
+
+		expect(result.hasConflicts).toBe(false);
+		expect(result.content).toContain('local-edit');
+	});
+
+	it('returns a conflicted merge when both sides changed the same line', async () => {
+		const { ctx, localFiles, driveFiles, contents } = makeCtx();
+
+		localFiles.set('note.md', { content: enc('LOCAL'), mtime: 2000, size: 5 });
+		driveFiles.set('note.md', { driveFileId: 'drive-c2', content: enc('REMOTE'), mtime: 1000 });
+		contents.set('note.md', enc('BASE'));
+
+		const result = await computeMerge(makeCandidate('note.md', 'conflict', 'drive-c2'), ctx);
+
+		expect(result.hasConflicts).toBe(true);
+		expect(result.content).toContain(MARKER_LOCAL);
+		expect(result.content).toContain('LOCAL');
+		expect(result.content).toContain('REMOTE');
+	});
+
+	it('uses empty string for base when no cached content exists', async () => {
+		const { ctx, localFiles, driveFiles } = makeCtx();
+
+		localFiles.set('new.md', { content: enc('local text'), mtime: 2000, size: 10 });
+		driveFiles.set('new.md', { driveFileId: 'drive-c3', content: enc('local text'), mtime: 1000 });
+		// No content seeded → base is ''
+
+		const result = await computeMerge(makeCandidate('new.md', 'conflict', 'drive-c3'), ctx);
+
+		// Both sides identical → clean merge.
+		expect(result.hasConflicts).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// writeResolvedMerge
+// ---------------------------------------------------------------------------
+
+describe('writeResolvedMerge', () => {
+	it('writes the resolved content to both vaults and updates the sync record', async () => {
+		const { ctx, localFiles, driveFiles, records, contents } = makeCtx();
+
+		localFiles.set('note.md', { content: enc('old local'), mtime: 1000, size: 9 });
+		driveFiles.set('note.md', { driveFileId: 'drive-wr', content: enc('old remote'), mtime: 1000 });
+
+		await writeResolvedMerge(makeCandidate('note.md', 'conflict', 'drive-wr'), 'resolved content', ctx);
+
+		const dec = new TextDecoder();
+		expect(dec.decode(localFiles.get('note.md')?.content)).toBe('resolved content');
+		expect(dec.decode(driveFiles.get('note.md')?.content)).toBe('resolved content');
+		const rec = records.get('note.md');
+		expect(rec).toBeDefined();
+		expect(rec?.driveFileId).toBeTruthy();
+		// Base content cache should be updated.
+		expect(dec.decode(contents.get('note.md'))).toBe('resolved content');
 	});
 });
 

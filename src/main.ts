@@ -18,6 +18,7 @@ import { VaultShareSettingTab } from './ui/settings-tab';
 import { SyncLogView, SYNC_LOG_VIEW_TYPE } from './ui/sync-log-view';
 import { SharingStatusView, SHARING_STATUS_VIEW_TYPE } from './ui/sharing-status-view';
 import { ConfirmationModal } from './ui/confirmation-modal';
+import { ConflictMarkerNavigator } from './ui/conflict-marker-navigator';
 
 /**
  * Vault Share plugin entry point.
@@ -213,6 +214,20 @@ export default class VaultSharePlugin extends Plugin {
 				if (!file || this.excludeMatcher.isExcluded(file.path)) return;
 				this.toggleMonitoringForFile(file.path);
 			},
+		});
+
+		const conflictNavigator = new ConflictMarkerNavigator(this.app);
+
+		this.addCommand({
+			id: 'find-next-conflict',
+			name: 'Find next conflict marker',
+			editorCallback: (editor) => { conflictNavigator.navigateForward(editor); },
+		});
+
+		this.addCommand({
+			id: 'find-prev-conflict',
+			name: 'Find previous conflict marker',
+			editorCallback: (editor) => { conflictNavigator.navigateBackward(editor); },
 		});
 
 		this.addCommand({
