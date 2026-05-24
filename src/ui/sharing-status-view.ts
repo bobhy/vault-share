@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 import type { DeferralManager } from '../sync/deferral-manager';
-import type { SyncActionType, ViewCandidate } from '../sync/types';
+import type { SyncActionType, SyncContext, ViewCandidate } from '../sync/types';
 import { ConfirmationModal } from './confirmation-modal';
 import { PendingListModal } from './pending-list-modal';
 
@@ -51,6 +51,7 @@ export class SharingStatusView extends ItemView {
 		leaf: WorkspaceLeaf,
 		private readonly manager: DeferralManager,
 		private readonly planFn: () => Promise<ViewCandidate[]>,
+		private readonly ctx: SyncContext,
 	) {
 		super(leaf);
 	}
@@ -150,7 +151,22 @@ export class SharingStatusView extends ItemView {
 			tr.createEl('td', { text: String(candidates.length) });
 
 			tr.addEventListener('click', () => {
-				new PendingListModal(this.app, candidates, row.type, this.manager).open();
+				const onResolved = (path: string) => {
+					this.viewCandidates = this.viewCandidates.filter(c => c.path !== path);
+					void this.refresh();
+				};
+				const onCandidatesChanged = (released: string[], deferred: string[]) => {
+					const releasedSet = new Set(released);
+					const deferredSet = new Set(deferred);
+					for (const c of this.viewCandidates) {
+						if (releasedSet.has(c.path)) c.isDeferred = false;
+						if (deferredSet.has(c.path)) c.isDeferred = true;
+					}
+					void this.refresh();
+				};
+				new PendingListModal(
+					this.app, candidates, row.type, this.manager, this.ctx, onResolved, onCandidatesChanged,
+				).open();
 			});
 		}
 	}

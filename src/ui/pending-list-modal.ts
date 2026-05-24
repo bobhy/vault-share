@@ -1,6 +1,15 @@
 import { App, Modal, Notice } from 'obsidian';
 import type { DeferralManager } from '../sync/deferral-manager';
-import type { SyncActionType, ViewCandidate } from '../sync/types';
+import type { DeferredCandidate, SyncActionType, SyncContext, ViewCandidate } from '../sync/types';
+import {
+	executeAction,
+	executeBackOut,
+	executeMerge,
+	executeConflictBackOut,
+	executeKeepLocal,
+	executeKeepGroupVault,
+	executeDeleteBoth,
+} from '../sync/resolution-executor';
 
 const TEXT_EXTENSIONS = new Set([
 	'.md', '.txt', '.json', '.yaml', '.yml', '.toml', '.csv',
@@ -37,8 +46,8 @@ function candidateDescription(candidate: ViewCandidate): string {
 		case 'deleteRemote': return 'Sharing will delete this file from the group vault.';
 		case 'deleteLocal':  return 'Sharing will delete this file from your local vault.';
 		case 'conflict':     return isTextFile(candidate.path)
-			? 'Sharing detected conflicting edits. A 3-way merge is available in the local vault file.'
-			: 'Sharing detected conflicting edits to a non-text file.';
+			? 'Sharing detected conflicting edits. Review both versions and choose a resolution.'
+			: 'Sharing detected conflicting edits to a non-text file. Choose which version to keep.';
 		default:             return '';
 	}
 }
@@ -47,33 +56,44 @@ function candidateDescription(candidate: ViewCandidate): string {
  * Modal that lists all candidates (pending and deferred) for a single operation type.
  *
  * Pending candidates have their checkbox initially checked; deferred candidates are
- * initially unchecked. The user reviews the list, checks the candidates they want to
- * allow, then taps Apply. For deferred candidates that are accepted, deferral is
- * released so they will be processed in the next bulk sync pass. Pending candidates
- * that are unchecked are deferred.
+ * initially unchecked. The user reviews the list and taps **Apply** to release chosen
+ * deferred candidates (no Drive call) or **Cancel** to dismiss. Each row can be tapped
+ * to expand an inline detail section with resolution buttons.
  *
- * Each row can be tapped — not the checkbox — to expand an inline Manual Review
- * section showing the planned operation and resolution buttons.
+ * Resolution buttons execute operations immediately via {@link resolution-executor}:
+ * - Non-conflict: **Proceed** runs the planned action; **Back out** runs the reverse.
+ * - Text conflict: **Merge** runs a diff3 three-way merge; **Back out** restores the
+ *   last-synced common base to both vaults.
+ * - Binary conflict: **Keep local**, **Keep group vault**, or **Delete both**.
  *
- * Resolution buttons other than Skip are stubs pending full implementation.
+ * After a successful resolution the candidate is removed from the modal list.
+ * `onResolved(path)` notifies the parent view to update its candidate list and
+ * re-render the count table without a full Drive re-plan.
+ *
+ * After **Apply**, `onCandidatesChanged(released, deferred)` notifies the parent view to
+ * flip `isDeferred` on affected candidates and re-render — no Drive call in either direction.
  *
  * TODO: add unit tests once the obsidian-mock package supports `Modal.open()` and allows
- * querying the rendered DOM (`.modal-button-container`, list items, checkboxes).
- * TODO: accept `SyncContext` in the constructor so resolution buttons can call `syncOneFile`
- * and `driveFs` for on-demand remote file downloads.
+ * querying the rendered DOM.
  */
 export class PendingListModal extends Modal {
+	private candidates: ViewCandidate[];
 	private readonly accepted = new Map<string, boolean>();
 	private expandedPath: string | null = null;
+	private listEl: HTMLUListElement | null = null;
 
 	constructor(
 		app: App,
-		private readonly candidates: ViewCandidate[],
+		candidates: ViewCandidate[],
 		private readonly actionType: SyncActionType,
 		private readonly manager: DeferralManager,
+		private readonly ctx: SyncContext,
+		private readonly onResolved: (path: string) => void,
+		private readonly onCandidatesChanged: (released: string[], deferred: string[]) => void,
 	) {
 		super(app);
-		for (const c of candidates) {
+		this.candidates = [...candidates];
+		for (const c of this.candidates) {
 			// Pending candidates are pre-accepted; deferred ones require explicit opt-in.
 			this.accepted.set(c.path, !c.isDeferred);
 		}
@@ -96,9 +116,9 @@ export class PendingListModal extends Modal {
 		selectAll.type = 'checkbox';
 		selectAllRow.createSpan({ text: 'Select all' });
 
-		const listEl = contentEl.createEl('ul', { cls: 'vault-share-pending-list' });
+		this.listEl = contentEl.createEl('ul', { cls: 'vault-share-pending-list' });
 		for (const candidate of this.candidates) {
-			this.renderItem(listEl, candidate);
+			this.renderItem(this.listEl, candidate);
 		}
 
 		selectAll.addEventListener('change', () => {
@@ -106,7 +126,7 @@ export class PendingListModal extends Modal {
 			for (const path of this.accepted.keys()) {
 				this.accepted.set(path, checked);
 			}
-			listEl.querySelectorAll<HTMLInputElement>('.vault-share-pending-checkbox').forEach(cb => {
+			this.listEl?.querySelectorAll<HTMLInputElement>('.vault-share-pending-checkbox').forEach(cb => {
 				cb.checked = checked;
 			});
 		});
@@ -120,6 +140,29 @@ export class PendingListModal extends Modal {
 
 	onClose(): void {
 		this.contentEl.empty();
+		this.listEl = null;
+	}
+
+	/** Rebuild the candidate list in-place after a resolution succeeds. */
+	private rerenderList(): void {
+		if (!this.listEl) return;
+		this.listEl.empty();
+		for (const candidate of this.candidates) {
+			this.renderItem(this.listEl, candidate);
+		}
+	}
+
+	/**
+	 * Called after a resolution button executes successfully.
+	 * Removes the candidate from the local list, notifies the parent view,
+	 * and closes the modal if no candidates remain.
+	 */
+	private handleSuccess(candidate: ViewCandidate): void {
+		this.candidates = this.candidates.filter(c => c.path !== candidate.path);
+		this.accepted.delete(candidate.path);
+		this.rerenderList();
+		this.onResolved(candidate.path);
+		if (this.candidates.length === 0) this.close();
 	}
 
 	private renderItem(list: HTMLElement, candidate: ViewCandidate): void {
@@ -129,7 +172,7 @@ export class PendingListModal extends Modal {
 
 		const cb = row.createEl('input');
 		cb.type = 'checkbox';
-		cb.checked = !candidate.isDeferred;
+		cb.checked = this.accepted.get(candidate.path) ?? !candidate.isDeferred;
 		cb.addClass('vault-share-pending-checkbox');
 		cb.addEventListener('change', () => { this.accepted.set(candidate.path, cb.checked); });
 
@@ -172,51 +215,42 @@ export class PendingListModal extends Modal {
 			text: candidateDescription(candidate),
 		});
 
-		// TODO: render real file content per operation type. Requires passing SyncContext to this
-		// constructor so driveFs is available for on-demand downloads.
-		// push / deleteLocal  → app.vault.read(tfile) (local, read-only)
-		// pull / deleteRemote → driveFs.download(candidate.driveFileId) (remote, read-only)
-		// text conflict       → app.vault.read(tfile) in an editable CodeMirror panel
-		// non-text conflict   → two stacked panels: local (read-only) + remote (read-only, on demand)
-		container.createDiv({ cls: 'vault-share-pending-file-panel' })
-			.setText('File preview — accept via checkbox above, or use a resolution button below.');
-
 		this.addResolutionButtons(container.createDiv({ cls: 'vault-share-pending-buttons' }), candidate);
 	}
 
 	private addResolutionButtons(container: HTMLElement, candidate: ViewCandidate): void {
-		const stub = (label: string) => {
-			container.createEl('button', { text: label })
-				.addEventListener('click', () => { new Notice(`${label}: not yet implemented.`); });
+		/** Helper: create a button that runs an async executor and handles state/errors. */
+		const actionBtn = (label: string, executor: () => Promise<void>): void => {
+			const btn = container.createEl('button', { text: label });
+			btn.addEventListener('click', () => {
+				btn.disabled = true;
+				btn.setText('Running…');
+				void executor()
+					.then(() => { this.handleSuccess(candidate); })
+					.catch((err: unknown) => {
+						btn.disabled = false;
+						btn.setText(label);
+						const msg = err instanceof Error ? err.message : String(err);
+						new Notice(`${label} failed: ${msg}`);
+					});
+			});
 		};
 
 		if (candidate.actionType === 'conflict') {
 			if (isTextFile(candidate.path)) {
-				// TODO: Merge — check the local file for remaining conflict markers; if none remain,
-				// write the edited file to both vaults via syncOneFile or driveFs.upload + store update.
-				stub('Merge');
-				// TODO: Back out — restore the common base (from sync-content cache or Drive) to both
-				// vaults, discarding both sides' edits; update sync records so both sides match base.
-				stub('Back out');
+				actionBtn('Merge', () => executeMerge(candidate, this.ctx));
+				actionBtn('Back out', () => executeConflictBackOut(candidate, this.ctx));
 			} else {
-				// TODO: Keep local — upload the local file to the group vault; update sync records.
-				stub('Keep local');
-				// TODO: Keep group vault — download the group vault file to local; update sync records.
-				stub('Keep group vault');
-				// TODO: Delete both — trash the local file and delete from Drive; update sync records.
-				stub('Delete both');
+				actionBtn('Keep local', () => executeKeepLocal(candidate, this.ctx));
+				actionBtn('Keep group vault', () => executeKeepGroupVault(candidate, this.ctx));
+				actionBtn('Delete both', () => executeDeleteBoth(candidate, this.ctx));
 			}
 		} else {
-			// TODO: Proceed — reconstruct a SyncAction from the candidate and call syncOneFile
-			// immediately (requires SyncContext passed to this modal constructor).
-			stub('Proceed');
-			// TODO: Back out — execute the reverse operation per spec:
-			// push→trash local; pull→delete from Drive; deleteLocal→restore from Drive to local;
-			// deleteRemote→upload local to Drive. Update sync records accordingly.
-			stub('Back out');
+			actionBtn('Proceed', () => executeAction(candidate, this.ctx));
+			actionBtn('Back out', () => executeBackOut(candidate, this.ctx));
 		}
 
-		// Skip always appears last and is fully functional
+		// Skip always appears last: collapses the accordion without executing anything.
 		const skip = container.createEl('button', { text: 'Skip' });
 		skip.addEventListener('click', () => {
 			const detail = skip.closest<HTMLElement>('.vault-share-pending-detail');
@@ -226,15 +260,48 @@ export class PendingListModal extends Modal {
 	}
 
 	private async applyAccepted(): Promise<void> {
-		const acceptedPaths = [...this.accepted.entries()]
-			.filter(([, ok]) => ok)
-			.map(([path]) => path);
-		// Only release deferral for candidates that are actually deferred.
-		const deferredPaths = acceptedPaths.filter(p =>
-			this.candidates.find(c => c.path === p)?.isDeferred,
+		const acceptedSet = new Set(
+			[...this.accepted.entries()].filter(([, ok]) => ok).map(([p]) => p),
 		);
-		if (deferredPaths.length > 0) {
-			await this.manager.releaseByPath(deferredPaths);
+		const rejectedSet = new Set(
+			[...this.accepted.entries()].filter(([, ok]) => !ok).map(([p]) => p),
+		);
+
+		// Deferred candidates that the user checked → release them.
+		const toRelease = this.candidates
+			.filter(c => c.isDeferred && acceptedSet.has(c.path))
+			.map(c => c.path);
+
+		// Pending candidates that the user unchecked → defer them.
+		const pendingToDefer = this.candidates.filter(
+			c => !c.isDeferred && rejectedSet.has(c.path),
+		);
+
+		if (toRelease.length > 0) {
+			await this.manager.releaseByPath(toRelease);
+		}
+
+		if (pendingToDefer.length > 0) {
+			const now = Date.now();
+			const newDeferredCandidates: DeferredCandidate[] = await Promise.all(
+				pendingToDefer.map(async c => {
+					const record = await this.ctx.store.getRecord(c.path);
+					const local = this.ctx.localFs.stat(c.path);
+					return {
+						path: c.path,
+						actionType: c.actionType,
+						localMtime: local?.mtime ?? 0,
+						remoteMtime: record?.remoteMtime ?? 0,
+						driveFileId: c.driveFileId,
+						deferredAt: now,
+					};
+				}),
+			);
+			await this.manager.addDeferred(newDeferredCandidates);
+		}
+
+		if (toRelease.length > 0 || pendingToDefer.length > 0) {
+			this.onCandidatesChanged(toRelease, pendingToDefer.map(c => c.path));
 		}
 		this.close();
 	}

@@ -297,6 +297,58 @@ describe('DeferralManager', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// addDeferred
+	// -------------------------------------------------------------------------
+
+	describe('addDeferred', () => {
+		it('adds candidates to the deferred set and fires onChanged', async () => {
+			await manager.addDeferred([
+				{ path: 'a.md', actionType: 'push', localMtime: 1000, remoteMtime: 0, deferredAt: 0 },
+				{ path: 'b.md', actionType: 'pull', localMtime: 0, remoteMtime: 2000, deferredAt: 0 },
+			]);
+
+			expect((await deferralStore.getAllCandidates()).length).toBe(2);
+			expect(onChangedMock).toHaveBeenCalledOnce();
+		});
+
+		it('updates isDeferredPathSync cache immediately', async () => {
+			await manager.init();
+			await manager.addDeferred([
+				{ path: 'new.md', actionType: 'push', localMtime: 1000, remoteMtime: 0, deferredAt: 0 },
+			]);
+
+			expect(manager.isDeferredPathSync('new.md')).toBe(true);
+		});
+
+		it('does not pause sharing', async () => {
+			await manager.addDeferred([
+				{ path: 'x.md', actionType: 'push', localMtime: 1000, remoteMtime: 0, deferredAt: 0 },
+			]);
+
+			expect(await manager.isPaused()).toBe(false);
+		});
+
+		it('adds to existing deferred candidates without replacing them', async () => {
+			await manager.deferAllAndPause([makeAction('existing.md')]);
+			onChangedMock.mockClear();
+
+			await manager.addDeferred([
+				{ path: 'new.md', actionType: 'push', localMtime: 1000, remoteMtime: 0, deferredAt: 0 },
+			]);
+
+			const all = await deferralStore.getAllCandidates();
+			expect(all.length).toBe(2);
+			expect(all.some(c => c.path === 'existing.md')).toBe(true);
+			expect(all.some(c => c.path === 'new.md')).toBe(true);
+		});
+
+		it('is a no-op for an empty array', async () => {
+			await manager.addDeferred([]);
+			expect(onChangedMock).not.toHaveBeenCalled();
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// releaseByPath
 	// -------------------------------------------------------------------------
 

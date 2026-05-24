@@ -133,10 +133,11 @@ export class DeferralManager {
 			const currentLocalMtime = entry?.local?.mtime ?? 0;
 			const currentRemoteMtime = entry?.remote?.mtime ?? 0;
 
-			if (
-				currentLocalMtime === candidate.localMtime &&
-				currentRemoteMtime === candidate.remoteMtime
-			) {
+			const kept =
+				currentLocalMtime  === candidate.localMtime &&
+				currentRemoteMtime === candidate.remoteMtime;
+
+			if (kept) {
 				validPaths.add(candidate.path);
 			} else {
 				pathsToDrop.push(candidate.path);
@@ -150,6 +151,22 @@ export class DeferralManager {
 
 		this.cachedDeferredPaths = validPaths;
 		return validPaths;
+	}
+
+	/**
+	 * Add specific candidates to the deferred set without pausing sharing.
+	 *
+	 * Used when the user explicitly unchecks pending candidates in the Apply flow of
+	 * {@link PendingListModal}. Unlike {@link deferAllAndPause}, this does not replace
+	 * existing candidates and does not set the paused flag.
+	 */
+	async addDeferred(candidates: DeferredCandidate[]): Promise<void> {
+		if (candidates.length === 0) return;
+		await this.store.putCandidates(candidates);
+		if (this.cachedDeferredPaths) {
+			for (const c of candidates) this.cachedDeferredPaths.add(c.path);
+		}
+		this.onChanged();
 	}
 
 	/**
