@@ -19,6 +19,7 @@ import { SyncLogView, SYNC_LOG_VIEW_TYPE } from './ui/sync-log-view';
 import { SharingStatusView, SHARING_STATUS_VIEW_TYPE } from './ui/sharing-status-view';
 import { ConfirmationModal } from './ui/confirmation-modal';
 import { ConflictMarkerNavigator } from './ui/conflict-marker-navigator';
+import { formatSyncStatus } from './ui/sync-status-bar';
 
 /**
  * Vault Share plugin entry point.
@@ -388,19 +389,9 @@ export default class VaultSharePlugin extends Plugin {
 
 	/** Update the persistent deferral status bar item. */
 	private updateDeferralStatusBar(): void {
-		// getPendingCount() returns null until the first planning pass completes.
-		// Keep showing the startup placeholder until we have real data.
 		const count = this.bulkSync?.getPendingCount() ?? null;
 		const paused = this.deferralManager?.isPausedSync() ?? false;
-		if (count === null) {
-			this.deferralStatusBarEl.setText('Checking…');
-		} else if (paused || count > 0) {
-			this.deferralStatusBarEl.setText(
-				`Sharing paused – ${count} file${count === 1 ? '' : 's'} pending`,
-			);
-		} else {
-			this.deferralStatusBarEl.setText('');
-		}
+		this.deferralStatusBarEl.setText(formatSyncStatus(paused, count));
 	}
 
 	/** Show a one-time Notice when the first plan pass finds pending files. */
