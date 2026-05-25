@@ -105,15 +105,88 @@
 	box-sizing: border-box;
 }
 
-/* ── Conflict resolution modal ───────────────────────────────────────────── */
+/* ── Conflict resolution banner (inline, above editor) ───────────────────── */
 
-.vault-share-conflict-resolution-modal h3 {
-	margin-bottom: 12px;
+.vault-share-conflict-banner {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 2px 6px;
+	background: var(--background-secondary);
+	font-size: var(--font-ui-small);
 }
 
-.vault-share-conflict-btn {
-	display: block;
-	width: 100%;
-	margin-bottom: 6px;
-	text-align: left;
+.vault-share-conflict-banner-label {
+	font-weight: var(--font-semibold);
+	color: var(--text-accent);
+	margin-right: 4px;
+}
+
+.vault-share-conflict-banner-btn {
+	padding: 2px 10px;
+	font-size: var(--font-ui-small);
+}
+
+/* Flex spacer that also renders the visual pipe separator. */
+.vault-share-conflict-banner-sep {
+	margin-left: auto;
+	padding-right: 8px;
+	border-right: 1px solid var(--background-modifier-border);
+	align-self: stretch; /* make the border span the full banner height */
+}
+
+.vault-share-conflict-banner-nav {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 2px 4px;
+	background: none;
+	border: none;
+	cursor: pointer;
+	opacity: 0.6;
+	color: var(--text-normal);
+}
+
+.vault-share-conflict-banner-nav:hover {
+	opacity: 1;
+}
+
+.vault-share-conflict-banner-close {
+	padding: 0 6px;
+	font-size: var(--font-ui-larger);
+	line-height: 1;
+	opacity: 0.5;
+	background: none;
+	border: none;
+	cursor: pointer;
+}
+
+.vault-share-conflict-banner-close:hover {
+	opacity: 1;
+}
+
+/* ── Conflict block highlight — rounded-rectangle outline ────────────────── */
+/*
+ * Applied via CM6 line decorations by ConflictMarkerNavigator.setHighlight().
+ * Left/right borders on every line form the sides; top/bottom borders with
+ * rounded corners on the first and last lines close the rectangle.
+ */
+
+.vault-share-conflict-line {
+	border-left:  2px solid var(--color-accent);
+	border-right: 2px solid var(--color-accent);
+	padding-left: calc(var(--size-4-2) - 2px) !important; /* compensate for added border */
+}
+
+.vault-share-conflict-line--first {
+	border-top: 2px solid var(--color-accent);
+	border-top-left-radius:  4px;
+	border-top-right-radius: 4px;
+}
+
+.vault-share-conflict-line--last {
+	border-bottom: 2px solid var(--color-accent);
+	border-bottom-left-radius:  4px;
+	border-bottom-right-radius: 4px;
 }

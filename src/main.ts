@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile, WorkspaceLeaf } from 'obsidian';
+import { MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf } from 'obsidian';
 import { DEFAULT_SETTINGS, VaultShareSettings } from './settings';
 import { GDriveAuth } from './gdrive/auth';
 import { GDriveApi } from './gdrive/api';
@@ -18,7 +18,7 @@ import { VaultShareSettingTab } from './ui/settings-tab';
 import { SyncLogView, SYNC_LOG_VIEW_TYPE } from './ui/sync-log-view';
 import { SharingStatusView, SHARING_STATUS_VIEW_TYPE } from './ui/sharing-status-view';
 import { ConfirmationModal } from './ui/confirmation-modal';
-import { ConflictMarkerNavigator } from './ui/conflict-marker-navigator';
+import { ConflictMarkerNavigator, conflictHighlightExtension } from './ui/conflict-marker-navigator';
 import { formatSyncStatus } from './ui/sync-status-bar';
 
 /**
@@ -217,18 +217,23 @@ export default class VaultSharePlugin extends Plugin {
 			},
 		});
 
-		const conflictNavigator = new ConflictMarkerNavigator(this.app);
+		this.registerEditorExtension(conflictHighlightExtension);
+		const conflictNavigator = new ConflictMarkerNavigator();
 
 		this.addCommand({
 			id: 'find-next-conflict',
 			name: 'Find next conflict marker',
-			editorCallback: (editor) => { conflictNavigator.navigateForward(editor); },
+			editorCallback: (editor, ctx) => {
+				conflictNavigator.navigateForward(editor, ctx instanceof MarkdownView ? ctx : undefined);
+			},
 		});
 
 		this.addCommand({
 			id: 'find-prev-conflict',
 			name: 'Find previous conflict marker',
-			editorCallback: (editor) => { conflictNavigator.navigateBackward(editor); },
+			editorCallback: (editor, ctx) => {
+				conflictNavigator.navigateBackward(editor, ctx instanceof MarkdownView ? ctx : undefined);
+			},
 		});
 
 		this.addCommand({
