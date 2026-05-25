@@ -20,6 +20,10 @@ import { syncOneFile } from './file-syncer';
  * internally by {@link run} — the `onPlanChanged` callback is invoked with
  * the full {@link ViewCandidate} list (pending + deferred). The caller uses
  * this to update the status bar count and show the startup deferral notice.
+ *
+ * When the threshold guard fires and all actions are deferred, the
+ * `onThresholdPause` callback is invoked with the count of deferred actions
+ * so the caller can show a user-visible Notice.
  */
 export class BulkSync {
 	private running = false;
@@ -70,6 +74,7 @@ export class BulkSync {
 		private readonly setStatusBar: (text: string) => void,
 		private readonly deferralManager: DeferralManager,
 		private readonly onPlanChanged: (candidates: ViewCandidate[]) => void,
+		private readonly onThresholdPause: (count: number) => void,
 	) {}
 
 	/**
@@ -224,6 +229,7 @@ export class BulkSync {
 				const msg = `Sharing paused: ${pendingActions.length} changes deferred for review`;
 				this.setStatusBar(msg);
 				this.ctx.logger.info(msg);
+				this.onThresholdPause(pendingActions.length);
 				return result;
 			}
 

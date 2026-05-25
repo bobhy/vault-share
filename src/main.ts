@@ -131,6 +131,7 @@ export default class VaultSharePlugin extends Plugin {
 				this.updateDeferralStatusBar();
 				this.refreshSharingStatusViews();
 			},
+			(count) => { this.showThresholdPauseNotice(count); },
 		);
 		const bulkSync = this.bulkSync;
 
@@ -437,6 +438,15 @@ export default class VaultSharePlugin extends Plugin {
 	private showDeferralNotice(count: number): void {
 		const frag = createFragment();
 		frag.appendText(`Sharing has ${count} pending file${count === 1 ? '' : 's'} — `);
+		const link = frag.createEl('a', { text: 'Tap to review' });
+		link.addEventListener('click', () => { void this.activateSharingStatusView(); });
+		new Notice(frag);
+	}
+
+	/** Show a Notice when the threshold guard defers all changes and pauses sharing. */
+	private showThresholdPauseNotice(count: number): void {
+		const frag = createFragment();
+		frag.appendText(`Sharing paused — ${count} conflict${count === 1 ? '' : 's'} deferred for review — `);
 		const link = frag.createEl('a', { text: 'Tap to review' });
 		link.addEventListener('click', () => { void this.activateSharingStatusView(); });
 		new Notice(frag);

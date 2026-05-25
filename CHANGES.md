@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [unreleased]
+
+## Fixed
+- Display a notice that sharing was paused (and a link to the Sharing status panel) when bulk sharing finds "too many" pending changes.
+
 ## [0.9.0]
 Close to v1.0 release!
 
