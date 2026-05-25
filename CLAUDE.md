@@ -30,7 +30,8 @@ Enhancement and feature design specs live in [specs/](specs/).
 - Prefer latest LTS version of all dependencies and tools
 - Provide unit tests via vitest.
 - Provide end-to-end tests via wdio for selected scenarios.
-- Update all affected tests when related implementation changes.  
+- Update all affected tests when related implementation changes.
+- After any non-trivial code change, review `tests/wdio/single/` and `tests/wdio/cross/` for e2e tests whose descriptions, assertions, or comments describe the old behaviour — update them to match the new contract before pushing.
 
 ### obsidianmd ESLint plugin
 - `eslint-plugin-obsidianmd` is installed and included in `eslint.config.mts` (`obsidianmd.configs.recommended`)

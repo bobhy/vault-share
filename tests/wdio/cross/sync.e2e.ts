@@ -112,16 +112,16 @@ describe("Cross-vault sync", () => {
 		await runBulkSync(primary); // Drive mtime changed → primary pulls merged content
 
 		// Expected diff3 output: peer is local, primary became remote after its push.
-		// Markers use '> ' prefix (markdown blockquote) with fixed labels.
+		// Markers are inline-code spans (backtick-fenced) matching MARKER_* in merge.ts.
 		const expectedMerged = [
 			"line 1",
-			"> <<<<< local",
+			"`<<<<< local`",
 			"peer edit",
-			"> ||||| base",
+			"`||||| base`",
 			"shared line",
-			"> =====",
+			"`=====`",
 			"primary edit",
-			"> >>>>> group",
+			"`>>>>> group`",
 			"line 3",
 		].join("\n");
 

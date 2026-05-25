@@ -70,8 +70,8 @@ describe("Folder hierarchy sync", () => {
 
 			const folderId = (plugin as unknown as { driveFolderId: string }).driveFolderId;
 			const driveFs = (plugin as unknown as { driveFs: DriveFs }).driveFs;
-			const allFiles = await driveFs.listAll(folderId);
-			return allFiles.map(f => f.path);
+			const { files } = await driveFs.listAll(folderId);
+			return files.map(f => f.path);
 		}) as unknown as string[];
 
 		// Every local path must appear in Drive under the same relative path.

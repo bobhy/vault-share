@@ -175,9 +175,9 @@ async function setupScenario(): Promise<void> {
 	);
 }
 
-// ── Auto-pause on open ───────────────────────────────────────────────────────
+// ── Panel open does not auto-pause ───────────────────────────────────────────
 
-describe('Sharing status panel — auto-pause on open', () => {
+describe('Sharing status panel — open behaviour', () => {
 
 	before(async () => {
 		// Ensure sharing starts unpaused with no deferred candidates.
@@ -191,7 +191,7 @@ describe('Sharing status panel — auto-pause on open', () => {
 	});
 
 	after(async () => {
-		// Close any open sharing status panel and restore unpaused state.
+		// Close any open sharing status panel; sharing should already be unpaused.
 		await browser.executeObsidian(async ({ app }) => {
 			const plugin = (app as unknown as {
 				plugins: { plugins: Record<string, PluginHandle> };
@@ -202,7 +202,7 @@ describe('Sharing status panel — auto-pause on open', () => {
 		});
 	});
 
-	it('pauses sharing when the panel is opened while sharing is running', async () => {
+	it('does not pause sharing when the panel is opened while sharing is running', async () => {
 		// Confirm sharing is running before opening the panel.
 		const pausedBefore = await browser.executeObsidian(async ({ app }) => {
 			return (app as unknown as {
@@ -211,15 +211,15 @@ describe('Sharing status panel — auto-pause on open', () => {
 		}) as unknown as boolean;
 		expect(pausedBefore).toBe(false);
 
-		// Open the panel — onOpen() calls setPaused(true) as its first await.
+		// Open the panel — onOpen() no longer auto-pauses (bfa3f74); it only
+		// shows current state and a "Pause sharing" button.
 		await browser.executeObsidian(({ app }) => {
 			(app as unknown as {
 				commands: { executeCommandById: (id: string) => void };
 			}).commands.executeCommandById('vault-share:open-sharing-status');
 		});
 
-		// setPaused(true) is a single IndexedDB write; 500 ms is ample time for it
-		// to complete before the subsequent planOnly() Drive call finishes.
+		// Give onOpen() time to complete its refresh() render cycle.
 		await browser.pause(500);
 
 		const pausedAfter = await browser.executeObsidian(async ({ app }) => {
@@ -227,7 +227,7 @@ describe('Sharing status panel — auto-pause on open', () => {
 				plugins: { plugins: Record<string, PluginHandle> };
 			}).plugins.plugins['vault-share']!.deferralManager.isPaused();
 		}) as unknown as boolean;
-		expect(pausedAfter).toBe(true);
+		expect(pausedAfter).toBe(false);
 	});
 });
 
@@ -291,9 +291,9 @@ describe('Manual sharing control', () => {
 			}).commands.executeCommandById('vault-share:open-sharing-status');
 		});
 
-		// onOpen() pauses sharing, then calls planOnly() (a real Drive API call)
-		// before rendering. Poll until the table appears rather than using a fixed
-		// pause, so the test is robust against variable Drive API latency.
+		// Sharing is already paused here (from setupScenario), so onOpen() calls
+		// planOnly() and renders the candidate table. Poll until it appears rather
+		// than a fixed pause so the test is robust against Drive API latency.
 		await browser.waitUntil(
 			async () => browser.executeObsidian(() =>
 				!!activeDocument.querySelector('.vault-share-sharing-status-table'),
