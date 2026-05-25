@@ -199,13 +199,15 @@ The version number lives in three files that must stay in sync: `package.json`, 
    ```
    The tag must match the `package.json` version exactly — no `v` prefix.
 
-5. **Create the GitHub release:**
+5. **Create the GitHub release with assets attached:**
    ```bash
-   gh release create X.Y.Z \
+   gh release create X.Y.Z main.js manifest.json styles.css \
      --title "X.Y.Z" \
      --notes-file <(sed -n '/^## \[X.Y.Z\]/,/^## /p' CHANGES.md | head -n -1)
    ```
    Or use the GitHub web UI: go to **Releases → Draft a new release**, select the tag you just pushed, paste the changelog section, and publish.
+
+   This triggers the attest-release.yml (in .github) to sign the released assets.
 
    The Obsidian community plugin registry monitors GitHub releases and picks up the new version automatically once the release is published.
 
