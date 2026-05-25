@@ -3,8 +3,6 @@ name: E2E tests
 # Runs on push to main and on demand.
 # Requires the VAULT_SHARE_REFRESH_TOKEN repository secret — see CONTRIBUTING.md.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
