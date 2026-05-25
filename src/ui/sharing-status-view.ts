@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 import type { DeferralManager } from '../sync/deferral-manager';
-import type { SyncActionType, SyncContext, ViewCandidate } from '../sync/types';
+import type { SyncAction, SyncActionType, SyncContext, ViewCandidate } from '../sync/types';
 import { ConfirmationModal } from './confirmation-modal';
 import { PendingListModal } from './pending-list-modal';
 
@@ -63,6 +63,7 @@ export class SharingStatusView extends ItemView {
 		private readonly manager: DeferralManager,
 		private readonly planFn: () => Promise<ViewCandidate[]>,
 		private readonly ctx: SyncContext,
+		private readonly approveForExecution: ((actions: SyncAction[]) => void) | null = null,
 	) {
 		super(leaf);
 	}
@@ -160,9 +161,9 @@ export class SharingStatusView extends ItemView {
 		// Group candidates by action type for the table.
 		const viewByType = new Map<SyncActionType, ViewCandidate[]>();
 		for (const c of this.viewCandidates) {
-			const list = viewByType.get(c.actionType) ?? [];
+			const list = viewByType.get(c.type) ?? [];
 			list.push(c);
-			viewByType.set(c.actionType, list);
+			viewByType.set(c.type, list);
 		}
 
 		const table = container.createEl('table', { cls: 'vault-share-sharing-status-table' });
@@ -196,7 +197,8 @@ export class SharingStatusView extends ItemView {
 					void this.refresh();
 				};
 				new PendingListModal(
-					this.app, candidates, row.type, this.manager, this.ctx, onResolved, onCandidatesChanged,
+					this.app, candidates, row.type, this.manager, this.ctx,
+					onResolved, onCandidatesChanged, this.approveForExecution,
 				).open();
 			});
 		}

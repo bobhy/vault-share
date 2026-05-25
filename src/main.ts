@@ -161,7 +161,8 @@ export default class VaultSharePlugin extends Plugin {
 
 		// 12a. Sharing status view
 		this.registerView(SHARING_STATUS_VIEW_TYPE, leaf =>
-			new SharingStatusView(leaf, deferralManager, () => bulkSync.planOnly(), ctx),
+			new SharingStatusView(leaf, deferralManager, () => bulkSync.planOnly(), ctx,
+				(actions) => { bulkSync.approveForExecution(actions); }),
 		);
 
 		// 13. OAuth callback

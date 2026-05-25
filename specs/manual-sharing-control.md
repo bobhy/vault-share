@@ -229,6 +229,12 @@ This command provides "find next conflict" and "find previous conflict" actions.
 
 After completing the edit, the cursor stays in place so the user can review (and manually adjust if needed).
 
+## Related specs
+
+- [timestamp-conflict-improvements.md](timestamp-conflict-improvements.md) — Fixes for the
+  threshold re-fire problem and identical-content conflict detection, including the redesign of
+  `ViewCandidate` (now extends `SyncAction`) and the `executeApproved` alternate execution path.
+
 ## Open questions
 
 - Default keybindings for "find next conflict" and "find previous conflict" edit actions?

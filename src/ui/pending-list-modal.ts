@@ -1,6 +1,6 @@
 import { App, Modal, Notice } from 'obsidian';
 import type { DeferralManager } from '../sync/deferral-manager';
-import type { DeferredCandidate, SyncActionType, SyncContext, ViewCandidate } from '../sync/types';
+import type { DeferredCandidate, SyncAction, SyncActionType, SyncContext, ViewCandidate } from '../sync/types';
 import {
 	executeAction,
 	executeBackOut,
@@ -42,7 +42,7 @@ const MODAL_DESCRIPTION: Record<SyncActionType, string> = {
 };
 
 function candidateDescription(candidate: ViewCandidate): string {
-	switch (candidate.actionType) {
+	switch (candidate.type) {
 		case 'push':         return 'Sharing will push this file to the group vault.';
 		case 'pull':         return 'Sharing will pull this file from the group vault.';
 		case 'deleteRemote': return 'Sharing will delete this file from the group vault.';
@@ -92,6 +92,7 @@ export class PendingListModal extends Modal {
 		private readonly ctx: SyncContext,
 		private readonly onResolved: (path: string) => void,
 		private readonly onCandidatesChanged: (released: string[], deferred: string[]) => void,
+		private readonly approveForExecution: ((actions: SyncAction[]) => void) | null = null,
 	) {
 		super(app);
 		this.candidates = [...candidates];
@@ -245,7 +246,7 @@ export class PendingListModal extends Modal {
 			});
 		};
 
-		if (candidate.actionType === 'conflict') {
+		if (candidate.type === 'conflict') {
 			if (isTextFile(candidate.path)) {
 				// Merge reads from the editable textarea (textareaRef.el) and checks for
 				// unresolved conflict markers before writing to both vaults.
@@ -301,9 +302,8 @@ export class PendingListModal extends Modal {
 		);
 
 		// Deferred candidates that the user checked → release them.
-		const toRelease = this.candidates
-			.filter(c => c.isDeferred && acceptedSet.has(c.path))
-			.map(c => c.path);
+		const releasedCandidates = this.candidates.filter(c => c.isDeferred && acceptedSet.has(c.path));
+		const toRelease = releasedCandidates.map(c => c.path);
 
 		// Pending candidates that the user unchecked → defer them.
 		const pendingToDefer = this.candidates.filter(
@@ -318,14 +318,16 @@ export class PendingListModal extends Modal {
 			const now = Date.now();
 			const newDeferredCandidates: DeferredCandidate[] = await Promise.all(
 				pendingToDefer.map(async c => {
+					// Fetch fresh mtimes so the auto-revocation comparison in reconcile()
+					// reflects the actual file state at deferral time, not planning time.
 					const record = await this.ctx.store.getRecord(c.path);
 					const local = this.ctx.localFs.stat(c.path);
 					return {
 						path: c.path,
-						actionType: c.actionType,
+						actionType: c.type,
 						localMtime: local?.mtime ?? 0,
 						remoteMtime: record?.remoteMtime ?? 0,
-						driveFileId: c.driveFileId,
+						driveFileId: c.remote?.driveFileId,
 						deferredAt: now,
 					};
 				}),
@@ -336,6 +338,13 @@ export class PendingListModal extends Modal {
 		if (toRelease.length > 0 || pendingToDefer.length > 0) {
 			this.onCandidatesChanged(toRelease, pendingToDefer.map(c => c.path));
 		}
+
+		// Deposit approved actions so the next bulk-sync pass executes them directly,
+		// bypassing re-planning and the threshold guard.
+		if (toRelease.length > 0) {
+			this.approveForExecution?.(releasedCandidates);
+		}
+
 		this.close();
 	}
 }

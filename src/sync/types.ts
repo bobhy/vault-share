@@ -79,15 +79,20 @@ export interface DeferredCandidate {
 
 /**
  * A candidate for a sharing operation as displayed in the Sharing Status panel.
- * Represents either a pending (not deferred) action or a deferred candidate.
+ *
+ * Extends {@link SyncAction} so that the full planning-time action — including
+ * `local`, `remote`, and `record` — is available throughout the UI and the
+ * alternate {@link BulkSync.executeApproved} execution path without any lossy
+ * re-projection.  The `isDeferred` flag marks whether the user or the threshold
+ * guard has explicitly deferred this candidate.
+ *
+ * Key field mappings (old → new):
+ * - `actionType` → `type` (inherited from {@link SyncAction})
+ * - `driveFileId` → `remote?.driveFileId` (inherited from {@link SyncAction})
  */
-export interface ViewCandidate {
-	path: string;
-	actionType: SyncActionType;
+export interface ViewCandidate extends SyncAction {
 	/** True if the user or threshold guard has explicitly deferred this candidate. */
 	isDeferred: boolean;
-	/** Drive file ID, if known; used for on-demand remote file downloads in Manual Review. */
-	driveFileId?: string;
 }
 
 /** Result of a single bulk sync pass. */

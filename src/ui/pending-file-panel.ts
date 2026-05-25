@@ -62,8 +62,7 @@ async function renderFilePanels(
 
 	/** Download the remote file and decode to text, or return null if the Drive file ID is unavailable. */
 	const readRemote = async (): Promise<string | null> => {
-		const record = await ctx.store.getRecord(candidate.path);
-		const driveFileId = candidate.driveFileId ?? record?.driveFileId;
+		const driveFileId = candidate.remote?.driveFileId ?? candidate.record?.driveFileId;
 		if (!driveFileId) return null;
 		const bytes = await ctx.driveFs.readBinary(driveFileId);
 		return dec.decode(bytes);
@@ -71,7 +70,7 @@ async function renderFilePanels(
 
 	container.empty();
 
-	switch (candidate.actionType) {
+	switch (candidate.type) {
 		case 'push':
 		case 'deleteRemote': {
 			// Local vault content (read-only).

@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
-## Fixed
+### Changes
+Make Sharing status panel into a filter between planning a bulk sharing run and executing the plan 
+as modified by user decisions on sharing candidates made case-by-case.  This fixes a bug that basically ignored user decisions and resulted in the next bulk sharing run again finding too many changes and pausing again.
+
+### Fixed
 - Display a notice that sharing was paused (and a link to the Sharing status panel) when bulk sharing finds "too many" pending changes.
 
 ## [0.9.0]

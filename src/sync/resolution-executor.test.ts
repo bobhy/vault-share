@@ -19,7 +19,7 @@ import {
 	computeMerge,
 	writeResolvedMerge,
 } from './resolution-executor';
-import type { ViewCandidate } from './types';
+import type { SyncActionType, ViewCandidate } from './types';
 
 // ---------------------------------------------------------------------------
 // Minimal in-memory mocks (same pattern as file-syncer.test.ts)
@@ -132,10 +132,15 @@ function enc(text: string): ArrayBuffer {
 
 function makeCandidate(
 	path: string,
-	actionType: ViewCandidate['actionType'],
+	type: SyncActionType,
 	driveFileId?: string,
 ): ViewCandidate {
-	return { path, actionType, isDeferred: false, driveFileId };
+	return {
+		type,
+		path,
+		isDeferred: false,
+		remote: driveFileId ? { path, driveFileId, mtime: 0, size: 0 } : undefined,
+	};
 }
 
 // ---------------------------------------------------------------------------
