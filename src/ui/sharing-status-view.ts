@@ -24,16 +24,27 @@ const STATUS_ROWS: StatusRow[] = [
  * Sidebar panel for manually inspecting and controlling the sharing process.
  *
  * Opened via command palette ("Open sharing status panel") or by clicking
- * the persistent deferral status bar item. On open, pauses sharing and runs
- * a plan-only pass to collect current candidate counts. Shows the current
- * paused/running state, a pause/resume button, a refresh button, and a
- * per-operation-type count table. Tapping a table row opens the
- * {@link PendingListModal} for that operation type, listing both pending and
- * deferred candidates.
+ * the persistent deferral status bar item.
  *
- * The `planFn` returns a combined {@link ViewCandidate} list (pending + deferred)
- * from {@link BulkSync.planOnly}. The view groups these by action type directly —
- * no separate {@link DeferralManager} query is needed for candidate data.
+ * **While sharing is running** the view shows only the current state and a
+ * "Pause sharing" button, plus an informational banner prompting the user to
+ * pause before examining candidates.  Candidate counts are intentionally
+ * hidden — they are a moving target while sync is active and would mislead
+ * the user about what is actually pending.
+ *
+ * **While paused** the view shows the candidate count, a "Resume sharing"
+ * button, a "Refresh" button, and a per-operation-type count table.  Tapping
+ * a table row opens the {@link PendingListModal} for that type.
+ *
+ * The view does **not** auto-pause sharing on open.  Obsidian calls
+ * {@link onOpen} both for user-initiated opens and for workspace-layout
+ * restoration on startup; auto-pausing would permanently re-pause sharing
+ * every time Obsidian is relaunched with the panel in the saved layout.
+ * Users pause explicitly via the "Pause sharing" button.
+ *
+ * The `planFn` wraps {@link BulkSync.planOnly} and is called only when the
+ * view is paused (on open if already paused, and when the user clicks "Pause
+ * sharing" or "Refresh").
  *
  * Refreshes whenever the caller invokes {@link refresh} — typically wired to
  * {@link DeferralManager}'s `onChanged` callback in the plugin entry point.
@@ -61,8 +72,11 @@ export class SharingStatusView extends ItemView {
 	getIcon(): string { return 'alert-triangle'; }
 
 	async onOpen(): Promise<void> {
-		await this.manager.setPaused(true);
-		await this.runPlan();
+		// Only enumerate candidates if sharing is already paused; while running
+		// the candidate list is a moving target and won't be displayed anyway.
+		if (await this.manager.isPaused()) {
+			await this.runPlan();
+		}
 		await this.refresh();
 	}
 
@@ -93,18 +107,10 @@ export class SharingStatusView extends ItemView {
 
 		const paused = await this.manager.isPaused();
 
-		// Group view candidates by action type.
-		const viewByType = new Map<SyncActionType, ViewCandidate[]>();
-		for (const c of this.viewCandidates) {
-			const list = viewByType.get(c.actionType) ?? [];
-			list.push(c);
-			viewByType.set(c.actionType, list);
-		}
+		// ── State header (always shown) ────────────────────────────────────
+		const header = container.createDiv({ cls: 'vault-share-sharing-status-header' });
 
 		const totalCount = this.viewCandidates.length;
-
-		// State header
-		const header = container.createDiv({ cls: 'vault-share-sharing-status-header' });
 		header.createEl('p', {
 			cls: 'vault-share-sharing-status-state',
 			text: paused
@@ -116,8 +122,26 @@ export class SharingStatusView extends ItemView {
 			text: paused ? 'Resume sharing' : 'Pause sharing',
 			cls: paused ? 'mod-cta vault-share-sharing-status-btn' : 'vault-share-sharing-status-btn',
 		});
-		pauseBtn.addEventListener('click', () => { void this.manager.setPaused(!paused).then(() => this.refresh()); });
+		pauseBtn.addEventListener('click', () => {
+			const willPause = !paused;
+			void this.manager.setPaused(willPause).then(async () => {
+				// Collect candidates as soon as we pause so the table populates immediately.
+				if (willPause) await this.runPlan();
+				await this.refresh();
+			});
+		});
 
+		// ── Running state: prompt to pause; don't show candidates ──────────
+		if (!paused) {
+			container.createDiv({ cls: 'vault-share-sharing-status-notice' }, notice => {
+				notice.createEl('p', {
+					text: 'Pause sharing to examine sharing status.',
+				});
+			});
+			return;
+		}
+
+		// ── Paused state: refresh button + candidate table ──────────────────
 		const refreshBtn = header.createEl('button', {
 			text: this.isRefreshing ? 'Refreshing…' : 'Refresh',
 			cls: 'vault-share-sharing-status-btn',
@@ -133,7 +157,14 @@ export class SharingStatusView extends ItemView {
 			return;
 		}
 
-		// Per-type count table
+		// Group candidates by action type for the table.
+		const viewByType = new Map<SyncActionType, ViewCandidate[]>();
+		for (const c of this.viewCandidates) {
+			const list = viewByType.get(c.actionType) ?? [];
+			list.push(c);
+			viewByType.set(c.actionType, list);
+		}
+
 		const table = container.createEl('table', { cls: 'vault-share-sharing-status-table' });
 		const headerRow = table.createEl('thead').createEl('tr');
 		headerRow.createEl('th', { text: 'Vault affected' });
