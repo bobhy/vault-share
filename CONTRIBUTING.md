@@ -218,3 +218,20 @@ The version number lives in three files that must stay in sync: `package.json`, 
 | `package.json` | Source of truth for the version. Edit this first. |
 | `manifest.json` | Read by Obsidian to identify and load the plugin. Must match `package.json`. |
 | `versions.json` | Maps each released version to the minimum Obsidian app version it requires. Used by the plugin registry for compatibility checks. |
+
+## Dependencies on hacked packages
+This plugin exercises a lot of wierd corners of the ecosystem.
+
+### Obsidian-mocks
+We want to use this collection as much as possible, avoid rolling our own.  So we have PRs pending for our extensions
+and we build against the PR branch.  (!!)
+
+[#3](https://github.com/dianedef/obsidian-mock/pull/3)
+
+### Webdriverio
+Bug exposed in node 26, we're currently pinning ourselves to node 22
+I'd prefer to depend on a patched version of this package.
+
+[#15265](https://github.com/webdriverio/webdriverio/issues/15265)
+
+
