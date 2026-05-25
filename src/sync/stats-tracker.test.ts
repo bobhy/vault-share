@@ -85,6 +85,12 @@ describe('StatsTracker', () => {
 			tracker.recordSingleFileSync();
 			expect(tracker.getCurrent().singleFileSyncCount).toBe(1);
 		});
+
+		it('recordPassWithDuplicates increments bulkPassesWithDuplicates', () => {
+			tracker.recordPassWithDuplicates();
+			tracker.recordPassWithDuplicates();
+			expect(tracker.getCurrent().bulkPassesWithDuplicates).toBe(2);
+		});
 	});
 
 	describe('recordAPIResponseTime', () => {
@@ -131,6 +137,26 @@ describe('StatsTracker', () => {
 			tracker.recordPush();
 			await tracker.reset();
 			expect(putStatsMock).toHaveBeenCalledWith(EMPTY_STATS);
+		});
+	});
+
+	describe('resetDuplicateCounter', () => {
+		it('zeros only bulkPassesWithDuplicates, leaving other counters intact', async () => {
+			tracker.recordPush();
+			tracker.recordPassWithDuplicates();
+			tracker.recordPassWithDuplicates();
+			await tracker.resetDuplicateCounter();
+			const stats = tracker.getCurrent();
+			expect(stats.bulkPassesWithDuplicates).toBe(0);
+			expect(stats.filesPushed).toBe(1); // other counters untouched
+		});
+
+		it('persists the updated stats to store', async () => {
+			tracker.recordPassWithDuplicates();
+			await tracker.resetDuplicateCounter();
+			expect(putStatsMock).toHaveBeenCalledWith(
+				expect.objectContaining({ bulkPassesWithDuplicates: 0 }),
+			);
 		});
 	});
 });

@@ -133,12 +133,13 @@ describe('DriveFsAdapter.write', () => {
 });
 
 describe('DriveFsAdapter.listAll', () => {
-	it('returns empty array for an empty root folder', async () => {
+	it('returns empty files array and zero duplicates for an empty root folder', async () => {
 		const listChildren = vi.fn().mockResolvedValue([]);
 		const adapter = new DriveFsAdapter({ listChildren } as unknown as GDriveApi);
 
 		const result = await adapter.listAll(ROOT_ID);
-		expect(result).toEqual([]);
+		expect(result.files).toEqual([]);
+		expect(result.duplicatePathsFound).toBe(0);
 	});
 
 	it('returns flat files at root with correct paths and IDs', async () => {
@@ -147,9 +148,9 @@ describe('DriveFsAdapter.listAll', () => {
 		const listChildren = vi.fn().mockResolvedValue([file1, file2]);
 		const adapter = new DriveFsAdapter({ listChildren } as unknown as GDriveApi);
 
-		const result = await adapter.listAll(ROOT_ID);
-		expect(result.map(r => r.path)).toEqual(['a.md', 'b.md']);
-		expect(result.map(r => r.driveFileId)).toEqual(['id1', 'id2']);
+		const { files } = await adapter.listAll(ROOT_ID);
+		expect(files.map(r => r.path)).toEqual(['a.md', 'b.md']);
+		expect(files.map(r => r.driveFileId)).toEqual(['id1', 'id2']);
 	});
 
 	it('recursively walks subfolders and builds correct vault-relative paths', async () => {
@@ -160,10 +161,10 @@ describe('DriveFsAdapter.listAll', () => {
 			.mockResolvedValueOnce([child]); // sub listing
 		const adapter = new DriveFsAdapter({ listChildren } as unknown as GDriveApi);
 
-		const result = await adapter.listAll(ROOT_ID);
-		expect(result).toHaveLength(1);
-		expect(result[0]?.path).toBe('sub/note.md');
-		expect(result[0]?.driveFileId).toBe('child-id');
+		const { files } = await adapter.listAll(ROOT_ID);
+		expect(files).toHaveLength(1);
+		expect(files[0]?.path).toBe('sub/note.md');
+		expect(files[0]?.driveFileId).toBe('child-id');
 	});
 
 	it('skips folders and only returns files', async () => {
@@ -173,8 +174,105 @@ describe('DriveFsAdapter.listAll', () => {
 			.mockResolvedValueOnce([]);
 		const adapter = new DriveFsAdapter({ listChildren } as unknown as GDriveApi);
 
-		const result = await adapter.listAll(ROOT_ID);
-		expect(result).toHaveLength(0);
+		const { files } = await adapter.listAll(ROOT_ID);
+		expect(files).toHaveLength(0);
+	});
+
+	it('deduplicates same-path files, keeping the one with the higher mtime', async () => {
+		const older: DriveFile = { id: 'old-id', name: 'note.md', mimeType: 'text/plain', modifiedTime: new Date(1000).toISOString() };
+		const newer: DriveFile = { id: 'new-id', name: 'note.md', mimeType: 'text/plain', modifiedTime: new Date(2000).toISOString() };
+		const listChildren = vi.fn().mockResolvedValue([newer, older]); // newest-first (Drive orderBy)
+		const adapter = new DriveFsAdapter({ listChildren } as unknown as GDriveApi);
+
+		const { files, duplicatePathsFound } = await adapter.listAll(ROOT_ID);
+		expect(files).toHaveLength(1);
+		expect(files[0]?.driveFileId).toBe('new-id');
+		expect(duplicatePathsFound).toBe(1);
+	});
+
+	it('counts each affected path once even with three duplicates', async () => {
+		const f1: DriveFile = { id: 'id1', name: 'note.md', mimeType: 'text/plain', modifiedTime: new Date(3000).toISOString() };
+		const f2: DriveFile = { id: 'id2', name: 'note.md', mimeType: 'text/plain', modifiedTime: new Date(2000).toISOString() };
+		const f3: DriveFile = { id: 'id3', name: 'note.md', mimeType: 'text/plain', modifiedTime: new Date(1000).toISOString() };
+		const listChildren = vi.fn().mockResolvedValue([f1, f2, f3]);
+		const adapter = new DriveFsAdapter({ listChildren } as unknown as GDriveApi);
+
+		const { files, duplicatePathsFound } = await adapter.listAll(ROOT_ID);
+		expect(files).toHaveLength(1);
+		expect(files[0]?.driveFileId).toBe('id1');
+		expect(duplicatePathsFound).toBe(1); // one path affected, not two
+	});
+
+	it('reports zero duplicatePathsFound when all paths are unique', async () => {
+		const file1 = makeFile('id1', 'a.md');
+		const file2 = makeFile('id2', 'b.md');
+		const listChildren = vi.fn().mockResolvedValue([file1, file2]);
+		const adapter = new DriveFsAdapter({ listChildren } as unknown as GDriveApi);
+
+		const { duplicatePathsFound } = await adapter.listAll(ROOT_ID);
+		expect(duplicatePathsFound).toBe(0);
+	});
+});
+
+describe('DriveFsAdapter.repairDuplicates', () => {
+	function makeFileWithMtime(id: string, name: string, mtime: number): DriveFile {
+		return { id, name, mimeType: 'text/plain', modifiedTime: new Date(mtime).toISOString() };
+	}
+
+	function makeLogger() {
+		return { info: vi.fn(), debug: vi.fn(), warning: vi.fn(), error: vi.fn() };
+	}
+
+	it('returns zero counts when no duplicates exist', async () => {
+		const listChildren = vi.fn().mockResolvedValue([makeFile('id1', 'a.md'), makeFile('id2', 'b.md')]);
+		const deleteFile = vi.fn();
+		const adapter = new DriveFsAdapter({ listChildren, deleteFile } as unknown as GDriveApi);
+
+		const result = await adapter.repairDuplicates(ROOT_ID, makeLogger() as unknown as import('../logger').Logger);
+		expect(result).toEqual({ pathsWithDuplicates: 0, filesDeleted: 0 });
+		expect(deleteFile).not.toHaveBeenCalled();
+	});
+
+	it('deletes the older duplicate and keeps the newer one', async () => {
+		const newer = makeFileWithMtime('new-id', 'note.md', 2000);
+		const older = makeFileWithMtime('old-id', 'note.md', 1000);
+		const listChildren = vi.fn().mockResolvedValue([newer, older]);
+		const deleteFile = vi.fn().mockResolvedValue(undefined);
+		const adapter = new DriveFsAdapter({ listChildren, deleteFile } as unknown as GDriveApi);
+
+		const result = await adapter.repairDuplicates(ROOT_ID, makeLogger() as unknown as import('../logger').Logger);
+		expect(result).toEqual({ pathsWithDuplicates: 1, filesDeleted: 1 });
+		expect(deleteFile).toHaveBeenCalledOnce();
+		expect(deleteFile).toHaveBeenCalledWith('old-id');
+	});
+
+	it('deletes all but the newest when three duplicates exist', async () => {
+		const f1 = makeFileWithMtime('id1', 'note.md', 3000);
+		const f2 = makeFileWithMtime('id2', 'note.md', 2000);
+		const f3 = makeFileWithMtime('id3', 'note.md', 1000);
+		const listChildren = vi.fn().mockResolvedValue([f1, f2, f3]);
+		const deleteFile = vi.fn().mockResolvedValue(undefined);
+		const adapter = new DriveFsAdapter({ listChildren, deleteFile } as unknown as GDriveApi);
+
+		const result = await adapter.repairDuplicates(ROOT_ID, makeLogger() as unknown as import('../logger').Logger);
+		expect(result).toEqual({ pathsWithDuplicates: 1, filesDeleted: 2 });
+		expect(deleteFile).toHaveBeenCalledTimes(2);
+		expect(deleteFile).not.toHaveBeenCalledWith('id1');
+	});
+
+	it('handles duplicates across multiple distinct paths independently', async () => {
+		const a1 = makeFileWithMtime('a1', 'a.md', 2000);
+		const a2 = makeFileWithMtime('a2', 'a.md', 1000);
+		const b1 = makeFileWithMtime('b1', 'b.md', 2000);
+		const b2 = makeFileWithMtime('b2', 'b.md', 1000);
+		const listChildren = vi.fn().mockResolvedValue([a1, a2, b1, b2]);
+		const deleteFile = vi.fn().mockResolvedValue(undefined);
+		const adapter = new DriveFsAdapter({ listChildren, deleteFile } as unknown as GDriveApi);
+
+		const result = await adapter.repairDuplicates(ROOT_ID, makeLogger() as unknown as import('../logger').Logger);
+		expect(result).toEqual({ pathsWithDuplicates: 2, filesDeleted: 2 });
+		expect(deleteFile).toHaveBeenCalledWith('a2');
+		expect(deleteFile).toHaveBeenCalledWith('b2');
 	});
 });
 

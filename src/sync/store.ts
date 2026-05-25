@@ -15,6 +15,7 @@ export const EMPTY_STATS: SyncStats = {
 	APIResponseTime: 0,
 	serverClockSkew: 0,
 	bulkSyncPasses: 0,
+	bulkPassesWithDuplicates: 0,
 	singleFileSyncCount: 0,
 	filesPushed: 0,
 	filesPulled: 0,

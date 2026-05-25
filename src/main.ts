@@ -237,6 +237,40 @@ export default class VaultSharePlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'repair-drive-duplicates',
+			name: 'Repair Drive duplicates', // eslint-disable-line obsidianmd/ui/sentence-case -- "Drive" is a proper noun (Google Drive)
+			callback: () => {
+				const folderId = this.driveFolderId;
+				if (!folderId) {
+					new Notice('Not logged in to Drive — cannot repair duplicates.'); // eslint-disable-line obsidianmd/ui/sentence-case -- "Drive" is a proper noun
+					return;
+				}
+				void this.driveFs.repairDuplicates(folderId, this.logger)
+					.then(({ pathsWithDuplicates, filesDeleted }) => {
+						if (filesDeleted === 0) {
+							this.logger.info('Drive repair: no duplicate files found');
+							new Notice('Drive repair: no duplicate files found.');
+						} else {
+							this.logger.info(
+								`Drive repair: deleted ${filesDeleted} duplicate file${filesDeleted === 1 ? '' : 's'} ` +
+								`across ${pathsWithDuplicates} path${pathsWithDuplicates === 1 ? '' : 's'}`,
+							);
+							new Notice(
+								`Drive repair: deleted ${filesDeleted} duplicate file${filesDeleted === 1 ? '' : 's'} ` +
+								`across ${pathsWithDuplicates} path${pathsWithDuplicates === 1 ? '' : 's'}.`,
+							);
+							void this.statsTracker?.resetDuplicateCounter();
+						}
+					})
+					.catch((err: unknown) => {
+						const msg = err instanceof Error ? err.message : String(err);
+						this.logger.error('Drive repair failed', msg);
+						new Notice(`Drive repair failed: ${msg}`);
+					});
+			},
+		});
+
+		this.addCommand({
 			id: 'copy-sync-log',
 			name: 'Copy share log to clipboard',
 			callback: () => {

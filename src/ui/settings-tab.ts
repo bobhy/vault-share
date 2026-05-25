@@ -219,6 +219,7 @@ export class VaultShareSettingTab extends PluginSettingTab {
 				['Server clock skew', 'serverClockSkew', `${stats.serverClockSkew} ms`],
 				['Api response time', 'APIResponseTime', `${stats.APIResponseTime} ms`],
 				['Bulk sharing passes', 'bulkSyncPasses', stats.bulkSyncPasses],
+				['Passes with Drive duplicates', 'bulkPassesWithDuplicates', stats.bulkPassesWithDuplicates],
 				['Single file shares', 'singleFileSyncCount', stats.singleFileSyncCount],
 				['Files pushed', 'filesPushed', stats.filesPushed],
 				['Files pulled', 'filesPulled', stats.filesPulled],

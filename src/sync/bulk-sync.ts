@@ -137,12 +137,15 @@ export class BulkSync {
 		pendingActions: SyncAction[];
 		localFileCount: number;
 		hasHistory: boolean;
+		duplicatePathsFound: number;
 	}> {
-		const [localFiles, remoteFiles, allRecords] = await Promise.all([
+		const [localFiles, listAllResult, allRecords] = await Promise.all([
 			this.ctx.localFs.list(this.excludeMatcher),
 			this.ctx.driveFs.listAll(rootFolderId),
 			this.ctx.store.getAllRecords(),
 		]);
+		const remoteFiles = listAllResult.files;
+		const { duplicatePathsFound } = listAllResult;
 
 		const vaultHasHistory = allRecords.length > 0;
 		const entries = buildMixedEntries(localFiles, remoteFiles, allRecords);
@@ -166,7 +169,7 @@ export class BulkSync {
 		this.lastPlanResult = viewCandidates;
 		this.onPlanChanged(viewCandidates);
 
-		return { viewCandidates, pendingActions, localFileCount: localFiles.length, hasHistory: vaultHasHistory };
+		return { viewCandidates, pendingActions, localFileCount: localFiles.length, hasHistory: vaultHasHistory, duplicatePathsFound };
 	}
 
 	private async doRun(): Promise<SyncPassResult> {
@@ -196,7 +199,16 @@ export class BulkSync {
 		this.ctx.statsTracker.recordBulkSyncPass();
 
 		try {
-			const { pendingActions, localFileCount, hasHistory } = await this.doPlanning(rootFolderId);
+			const { pendingActions, localFileCount, hasHistory, duplicatePathsFound } = await this.doPlanning(rootFolderId);
+
+			if (duplicatePathsFound > 0) {
+				this.ctx.logger.warning(
+					`Drive duplicates detected: ${duplicatePathsFound} path${duplicatePathsFound === 1 ? '' : 's'} ` +
+					`had multiple Drive files; older copies were ignored. ` +
+					`Run "Repair Drive duplicates" to remove stale copies.`,
+				);
+				this.ctx.statsTracker.recordPassWithDuplicates();
+			}
 
 			// Threshold guard: too many changes → defer all and pause instead of executing.
 			const settings = this.ctx.settings();

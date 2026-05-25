@@ -26,7 +26,19 @@ export class StatsTracker {
 	recordContentConflict(): void { this.current.contentConflicts++; }
 	recordDeleteConflict(): void { this.current.deleteConflicts++; }
 	recordBulkSyncPass(): void { this.current.bulkSyncPasses++; }
+	/** Increment the count of bulk passes that found at least one Drive duplicate. */
+	recordPassWithDuplicates(): void { this.current.bulkPassesWithDuplicates++; }
 	recordSingleFileSync(): void { this.current.singleFileSyncCount++; }
+
+	/**
+	 * Reset only the duplicate-pass counter to zero and persist.
+	 * Called after a successful "Repair Drive duplicates" run so the counter
+	 * reflects passes-since-last-cleanup rather than all-time passes.
+	 */
+	async resetDuplicateCounter(): Promise<void> {
+		this.current.bulkPassesWithDuplicates = 0;
+		await this.store.putStats(this.current);
+	}
 
 	recordAPIResponseTime(ms: number): void {
 		this.current.APIResponseTime = ms;

@@ -43,7 +43,8 @@ export class GDriveApi {
 	async listChildren(parentId: string): Promise<DriveFile[]> {
 		const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`);
 		const fields = encodeURIComponent('nextPageToken,files(id,name,mimeType,modifiedTime)');
-		const base = `${DRIVE_API}/files?q=${q}&fields=${fields}&pageSize=1000`;
+		const order = encodeURIComponent('modifiedTime desc');
+		const base = `${DRIVE_API}/files?q=${q}&fields=${fields}&pageSize=1000&orderBy=${order}`;
 
 		const all: DriveFile[] = [];
 		let pageToken: string | undefined;
@@ -186,8 +187,9 @@ export class GDriveApi {
 			`'${parentId}' in parents and name='${name.replace(/'/g, "\\'")}'${mimeClause} and trashed=false`,
 		);
 		const fields = encodeURIComponent('files(id,name,mimeType,modifiedTime)');
+		const order = encodeURIComponent('modifiedTime desc');
 		const response = await requestUrl({
-			url: `${DRIVE_API}/files?q=${q}&fields=${fields}&pageSize=2`,
+			url: `${DRIVE_API}/files?q=${q}&fields=${fields}&pageSize=2&orderBy=${order}`,
 			headers: { Authorization: `Bearer ${token}` },
 			throw: false,
 		});

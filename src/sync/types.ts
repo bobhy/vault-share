@@ -107,6 +107,8 @@ export interface SyncStats {
 	APIResponseTime: number;
 	serverClockSkew: number;
 	bulkSyncPasses: number;
+	/** Number of bulk sync passes that detected at least one duplicate Drive file. Resets to 0 after a successful "Repair Drive duplicates" run. */
+	bulkPassesWithDuplicates: number;
 	singleFileSyncCount: number;
 	filesPushed: number;
 	filesPulled: number;
