@@ -6,37 +6,11 @@ import type { StatsTracker } from './stats-tracker';
 import type { LocalFs } from './local-fs';
 import type { DriveFsAdapter } from './drive-fs';
 
-/** File status relative to the last known sync record. */
-export type FileStatus =
-	| 'modified'
-	| 'unmodified'
-	| 'deleted'   // was in history, is now absent
-	| 'absent';   // never appeared in history
-
 /** One side's (local or remote) view of a file. */
 export interface FileSide {
 	path: string;
 	mtime: number;  // epoch ms; 0 = unknown
 	size: number;
-}
-
-/** Per-file sync record stored in IDB. */
-export interface SyncRecord {
-	path: string;
-	driveFileId: string;
-	localMtime: number;
-	remoteMtime: number;
-	localSize: number;
-	remoteSize: number;
-	syncedAt: number;
-}
-
-/** Joins local file info, remote file info, and stored history for one path. */
-export interface MixedEntry {
-	path: string;
-	local?: FileSide;
-	remote?: FileSide & { driveFileId: string };
-	record?: SyncRecord;
 }
 
 export type SyncActionType =
@@ -47,52 +21,110 @@ export type SyncActionType =
 	| 'conflict'
 	| 'noOp';
 
-export interface SyncAction {
-	type: SyncActionType;
+/**
+ * The sharing state of a single {@link Candidate}.
+ *
+ * - `Synced`   — file is in sync; record holds last-sync history for future planning.
+ * - `Default`  — pending operation; will be processed on the next bulk sync pass,
+ *                subject to the threshold guard.
+ * - `Deferred` — explicitly held back by the user or the threshold guard; bulk sync
+ *                skips this file until the state changes.
+ * - `Approved` — user clicked Apply; bulk sync executes this on the next run,
+ *                bypassing the threshold guard.
+ */
+export type CandidateState = 'Synced' | 'Default' | 'Deferred' | 'Approved';
+
+/**
+ * Unified record for a single vault path that sharing tracks.
+ *
+ * Persistent fields are stored in the `candidates` IDB object store and survive
+ * plugin restarts.  Ephemeral fields are populated by {@link CandidateStore.reconcile}
+ * and are `undefined` between planning passes.
+ *
+ * All four sharing layers — planning, UI, deferral, execution — work directly
+ * with `Candidate`.  There are no intermediate projection types.
+ */
+export interface Candidate {
+	// ── Identity (IDB key) ────────────────────────────────────────────────────
 	path: string;
+
+	// ── State (persistent) ────────────────────────────────────────────────────
+	state: CandidateState;
+
+	/**
+	 * What sharing plans to do with this file.
+	 * `'noOp'` when `state === 'Synced'`.
+	 * Set / updated by {@link CandidateStore.reconcile} on every planning pass.
+	 */
+	actionType: SyncActionType;
+
+	// ── Last-sync history (persistent) ───────────────────────────────────────
+	// Populated after each successful sync.  Used by the planning pass to
+	// determine whether local / remote have changed since last sync.
+	// All fields are 0 / '' for a file that has never been synced.
+	driveFileId: string;
+	syncedLocalMtime: number;
+	syncedRemoteMtime: number;
+	syncedLocalSize: number;
+	syncedRemoteSize: number;
+	/** Epoch ms of the last successful sync; 0 = never synced. */
+	syncedAt: number;
+
+	// ── Deferral sentinels (persistent; meaningful only when state = 'Deferred') ──
+	// Set when the candidate enters Deferred state.
+	// Auto-revocation: if either mtime differs from the current value on the next
+	// planning pass, the candidate transitions back to Default.
+	/** Epoch ms when deferred; 0 otherwise. */
+	deferredAt: number;
+	/** Local mtime at deferral time; 0 = file was absent. */
+	deferredLocalMtime: number;
+	/** Remote mtime at deferral time; 0 = file was absent. */
+	deferredRemoteMtime: number;
+
+	// ── Ephemeral (populated by reconcile(); undefined between passes) ─────────
 	local?: FileSide;
 	remote?: FileSide & { driveFileId: string };
-	record?: SyncRecord;
 }
 
-/**
- * A planned sync action that has been deferred for manual user review.
- *
- * Stores only the minimal fields needed for auto-revocation (mtime comparison) and
- * manual review (driveFileId to fetch the group vault file). Persisted in IndexedDB
- * on the local device and never shared to other vaults.
- */
-export interface DeferredCandidate {
-	/** Vault path; used as the IndexedDB key. */
-	path: string;
-	/** The operation that bulk sync planned when this candidate was deferred. */
-	actionType: SyncActionType;
-	/** Local file mtime at deferral time; 0 if the local file was absent. */
+/** Post-sync file metadata shared by {@link SyncFileResult.syncedState} and {@link SyncFileResult.newSyncedFiles}. */
+export interface SyncedFileState {
+	driveFileId: string;
 	localMtime: number;
-	/** Remote file mtime at deferral time; 0 if the remote file was absent. */
 	remoteMtime: number;
-	/** Drive file ID at deferral time; undefined if the remote file was absent. */
-	driveFileId?: string;
-	/** Epoch ms when the candidate was deferred. */
-	deferredAt: number;
+	localSize: number;
+	remoteSize: number;
+	syncedAt: number;
 }
 
 /**
- * A candidate for a sharing operation as displayed in the Sharing Status panel.
+ * Result of a single file sync operation.
  *
- * Extends {@link SyncAction} so that the full planning-time action — including
- * `local`, `remote`, and `record` — is available throughout the UI and the
- * alternate {@link BulkSync.executeApproved} execution path without any lossy
- * re-projection.  The `isDeferred` flag marks whether the user or the threshold
- * guard has explicitly deferred this candidate.
+ * When `changed` is true and the action was a push / pull / conflict resolution,
+ * `syncedState` carries the post-sync metadata that {@link BulkSync} uses to call
+ * `candidateStore.markSynced()`.  For delete actions and unchanged files,
+ * `syncedState` is `undefined`.
  *
- * Key field mappings (old → new):
- * - `actionType` → `type` (inherited from {@link SyncAction})
- * - `driveFileId` → `remote?.driveFileId` (inherited from {@link SyncAction})
+ * `newSyncedFiles` carries metadata for any additional vault paths created during
+ * the operation (e.g. conflict copies from a "Keep Both" resolution) so the caller
+ * can insert them as `Synced` candidates without the sync function needing a store
+ * reference.
  */
-export interface ViewCandidate extends SyncAction {
-	/** True if the user or threshold guard has explicitly deferred this candidate. */
-	isDeferred: boolean;
+export interface SyncFileResult {
+	changed: boolean;
+	merged: boolean;
+	hadConflictMarkers: boolean;
+	/**
+	 * Set when `changed = true` for non-delete actions.
+	 * Used by the caller to update {@link CandidateStore} without
+	 * {@link syncOneFile} needing a store reference.
+	 */
+	syncedState?: SyncedFileState;
+	/**
+	 * Newly created vault paths (conflict copies, placeholders) that should be
+	 * inserted into {@link CandidateStore} as `Synced` candidates so the next
+	 * planning pass does not re-plan them as conflicts.
+	 */
+	newSyncedFiles?: Array<{ path: string } & SyncedFileState>;
 }
 
 /** Result of a single bulk sync pass. */

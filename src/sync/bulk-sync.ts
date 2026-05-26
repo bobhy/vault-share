@@ -1,9 +1,6 @@
-import type { App } from 'obsidian';
-import type { SyncAction, SyncContext, SyncPassResult, ViewCandidate } from './types';
+import type { Candidate, SyncContext, SyncPassResult } from './types';
 import type { ExcludeMatcher } from './exclude';
-import type { DeferralManager } from './deferral-manager';
-import { buildMixedEntries } from './change-detector';
-import { planActions } from './decision-engine';
+import type { CandidateStore } from './candidate-store';
 import { syncOneFile } from './file-syncer';
 
 /**
@@ -11,55 +8,44 @@ import { syncOneFile } from './file-syncer';
  * Processes one file at a time, yielding between files so queued
  * single-file sync operations can run in the same event loop.
  *
+ * {@link CandidateStore} is the sole source of truth for candidate state.
+ * `BulkSync` reads from it, executes actions, and writes back results.
+ *
+ * ### Approved candidates
+ * When the user clicks Apply in {@link PendingListModal}, selected candidates are
+ * persisted to IDB as `Approved` via {@link CandidateStore.approve}.  On the
+ * next {@link run} call, {@link doRun} checks for `Approved` candidates first
+ * and routes to {@link executeApproved} instead of the normal planning path.
+ * This bypasses re-planning and the threshold guard so the same files cannot
+ * trigger a second deferral.  Because `Approved` state is persisted to IDB, it
+ * survives plugin restarts and scheduler-tick races without any in-memory pointers.
+ *
+ * ### Threshold guard
  * When the planned action count exceeds the configured threshold,
- * all actions are deferred and sync is paused rather than prompting
- * the user with a modal. The {@link DeferralManager} handles persistence
- * and auto-revocation of deferred candidates.
- *
- * After every planning pass — whether triggered by {@link planOnly} or
- * internally by {@link run} — the `onPlanChanged` callback is invoked with
- * the full {@link ViewCandidate} list (pending + deferred). The caller uses
- * this to update the status bar count and show the startup deferral notice.
- *
- * When the threshold guard fires and all actions are deferred, the
- * `onThresholdPause` callback is invoked with the count of deferred actions
- * so the caller can show a user-visible Notice.
+ * all `Default` candidates are transitioned to `Deferred` and sync is paused
+ * via {@link CandidateStore.deferAllAndPause}.  The `onThresholdPause` callback
+ * notifies the caller so a user-visible Notice can be shown.
  */
 export class BulkSync {
 	private running = false;
-	private lastPlanResult: ViewCandidate[] | null = null;
-
-	/**
-	 * Actions deposited by {@link approveForExecution} after the user clicks Apply
-	 * in {@link PendingListModal}.  When non-null, the next {@link doRun} call
-	 * routes to {@link executeApproved} instead of re-planning, bypassing the
-	 * threshold guard so the same files cannot trigger a second deferral.
-	 * Consumed and reset to `null` at the start of each {@link doRun} call.
-	 */
-	private pendingApprovedActions: SyncAction[] | null = null;
 
 	/**
 	 * True while a {@link run} pass is actively executing.
 	 *
 	 * When `isRunning` is `true`, a pass is in flight and {@link onPassCompleted}
-	 * is guaranteed to fire on completion.  Callers that want to wait for an
-	 * in-progress pass should register {@link onPassCompleted} only after
-	 * confirming `isRunning` is `true`, or use the poll-friendly
-	 * {@link lastPassCompletedAt} timestamp instead.
+	 * is guaranteed to fire on completion.
 	 */
 	get isRunning(): boolean { return this.running; }
 
 	/**
 	 * Unix timestamp (ms) of the most recently completed {@link run} pass.
-	 * Zero before the first pass. Updated before {@link onPassCompleted} fires,
-	 * so it is always accurate when the callback is invoked.
+	 * Zero before the first pass. Updated before {@link onPassCompleted} fires.
 	 */
 	lastPassCompletedAt = 0;
 
 	/**
 	 * Result of the most recently completed {@link run} pass.
-	 * `null` before the first pass. Updated atomically with
-	 * {@link lastPassCompletedAt}.
+	 * `null` before the first pass. Updated atomically with {@link lastPassCompletedAt}.
 	 */
 	lastPassResult: SyncPassResult | null = null;
 
@@ -70,67 +56,40 @@ export class BulkSync {
 	 * Fires regardless of how the pass ended — whether it executed actions,
 	 * was skipped (paused, not logged in, or deferred by threshold), or
 	 * encountered an error.  Not fired by {@link planOnly}.
-	 *
-	 * Designed for synchronising with sync completion without polling fixed
-	 * timeouts.  Production callers may also use this for post-sync notifications.
 	 */
 	onPassCompleted: (() => void) | null = null;
 
 	constructor(
 		private readonly ctx: SyncContext,
 		private readonly excludeMatcher: ExcludeMatcher,
-		private readonly app: App,
 		private readonly setStatusBar: (text: string) => void,
-		private readonly deferralManager: DeferralManager,
-		private readonly onPlanChanged: (candidates: ViewCandidate[]) => void,
+		private readonly candidates: CandidateStore,
 		private readonly onThresholdPause: (count: number) => void,
 	) {}
 
 	/**
-	 * Called by {@link PendingListModal} after the user clicks Apply on a set of
-	 * previously-deferred candidates.  Deposits the approved {@link SyncAction}
-	 * list so the next {@link run} call routes to {@link executeApproved} instead
-	 * of re-planning.
-	 *
-	 * The caller is responsible for removing candidates from the deferral store
-	 * (via {@link DeferralManager.releaseByPath}) before calling this method.
-	 * `approveForExecution` does not interact with the deferral store directly.
-	 *
-	 * Sharing must be unpaused by the caller before the next `run()` call;
-	 * `approveForExecution` does not resume sharing on its own.
-	 */
-	approveForExecution(actions: SyncAction[]): void {
-		this.pendingApprovedActions = actions;
-	}
-
-	/**
-	 * Total count of pending candidates (both pending and deferred) from the
-	 * most recent planning pass.  Returns `null` if no plan has been run yet.
-	 */
-	getPendingCount(): number | null {
-		return this.lastPlanResult?.length ?? null;
-	}
-
-	/**
 	 * Enumerate both vaults and plan actions without executing anything.
 	 *
-	 * Intended for the Sharing Status panel's Refresh button. Calls
-	 * {@link DeferralManager.reconcile} to auto-revoke stale deferred candidates,
-	 * then returns a combined list of all non-noOp actions tagged with
-	 * {@link ViewCandidate.isDeferred}.
+	 * Intended for the Sharing Status panel's Refresh button.  Calls
+	 * {@link CandidateStore.reconcile} to compute the latest action plan and
+	 * update the in-memory cache; returns the full candidate list.
 	 *
 	 * Unlike {@link run}, this method does not check the paused flag, does not
 	 * apply the threshold guard, and does not update the sync status bar.
 	 */
-	async planOnly(): Promise<ViewCandidate[]> {
+	async planOnly(): Promise<Candidate[]> {
 		const rootFolderId = this.ctx.driveFolderId();
 		if (!rootFolderId) return [];
-		const { viewCandidates, pendingActions } = await this.doPlanning(rootFolderId);
-		const deferredCount = viewCandidates.length - pendingActions.length;
+		const [localFiles, { files: remoteFiles }] = await Promise.all([
+			this.ctx.localFs.list(this.excludeMatcher),
+			this.ctx.driveFs.listAll(rootFolderId),
+		]);
+		await this.candidates.reconcile(localFiles, remoteFiles);
+		const all = this.candidates.getAll();
 		this.ctx.logger.info(
-			`Plan: ${viewCandidates.length} candidate${viewCandidates.length === 1 ? '' : 's'} — ${pendingActions.length} pending, ${deferredCount} deferred`,
+			`Plan: ${all.length} candidate${all.length === 1 ? '' : 's'} tracked`,
 		);
-		return viewCandidates;
+		return all;
 	}
 
 	async run(): Promise<SyncPassResult> {
@@ -150,54 +109,6 @@ export class BulkSync {
 		}
 	}
 
-	/**
-	 * Shared planning core used by both {@link planOnly} and {@link doRun}.
-	 *
-	 * Enumerates both vaults, calls {@link DeferralManager.reconcile} to
-	 * auto-revoke stale deferred candidates, and builds a {@link ViewCandidate}
-	 * list that tags each non-noOp action as pending or deferred.
-	 *
-	 * Updates {@link lastPlanResult} and fires {@link onPlanChanged} so callers
-	 * (the status bar, the startup notice) receive the latest candidate count.
-	 *
-	 * @returns Combined view candidates, executable pending actions, and the
-	 *   total local file count needed for the threshold guard.
-	 */
-	private async doPlanning(rootFolderId: string): Promise<{
-		viewCandidates: ViewCandidate[];
-		pendingActions: SyncAction[];
-		localFileCount: number;
-		hasHistory: boolean;
-		duplicatePathsFound: number;
-	}> {
-		const [localFiles, listAllResult, allRecords] = await Promise.all([
-			this.ctx.localFs.list(this.excludeMatcher),
-			this.ctx.driveFs.listAll(rootFolderId),
-			this.ctx.store.getAllRecords(),
-		]);
-		const remoteFiles = listAllResult.files;
-		const { duplicatePathsFound } = listAllResult;
-
-		const vaultHasHistory = allRecords.length > 0;
-		const entries = buildMixedEntries(localFiles, remoteFiles, allRecords);
-		const deferredPaths = await this.deferralManager.reconcile(entries);
-
-		const allActions = planActions(entries, vaultHasHistory);
-
-		const viewCandidates: ViewCandidate[] = allActions
-			.filter(a => a.type !== 'noOp')
-			.map(a => ({ ...a, isDeferred: deferredPaths.has(a.path) }));
-
-		const pendingActions = allActions.filter(
-			a => a.type !== 'noOp' && !deferredPaths.has(a.path),
-		);
-
-		this.lastPlanResult = viewCandidates;
-		this.onPlanChanged(viewCandidates);
-
-		return { viewCandidates, pendingActions, localFileCount: localFiles.length, hasHistory: vaultHasHistory, duplicatePathsFound };
-	}
-
 	private async doRun(): Promise<SyncPassResult> {
 		const result: SyncPassResult = {
 			downloaded: 0,
@@ -215,26 +126,32 @@ export class BulkSync {
 		}
 
 		// Bail immediately if paused — no enumeration needed.
-		if (await this.deferralManager.isPaused()) {
+		if (await this.candidates.isPaused()) {
 			this.ctx.logger.debug('Bulk sync skipped: sync is paused');
 			return result;
 		}
 
-		// If the user approved a set of candidates via Apply in PendingListModal,
-		// execute them directly — no re-plan and no threshold guard so the same
-		// files cannot trigger a second deferral.
-		const approvedActions = this.pendingApprovedActions;
-		if (approvedActions !== null) {
-			this.pendingApprovedActions = null;
-			return this.executeApproved(approvedActions);
+		// Approved candidates bypass planning and the threshold guard entirely.
+		// Their intent has been persisted to IDB and survives plugin restarts and
+		// scheduler-tick races without any in-memory pointers.
+		const approved = this.candidates.getApproved();
+		if (approved.length > 0) {
+			return this.executeApproved(approved);
 		}
 
+		// Normal planning pass.
 		this.setStatusBar('Sharing');
 		this.ctx.logger.info('Bulk sync started');
 		this.ctx.statsTracker.recordBulkSyncPass();
 
 		try {
-			const { pendingActions, localFileCount, hasHistory, duplicatePathsFound } = await this.doPlanning(rootFolderId);
+			const [localFiles, listAllResult] = await Promise.all([
+				this.ctx.localFs.list(this.excludeMatcher),
+				this.ctx.driveFs.listAll(rootFolderId),
+			]);
+			const { files: remoteFiles, duplicatePathsFound } = listAllResult;
+
+			await this.candidates.reconcile(localFiles, remoteFiles);
 
 			if (duplicatePathsFound > 0) {
 				this.ctx.logger.warning(
@@ -247,37 +164,50 @@ export class BulkSync {
 
 			// Threshold guard: too many changes → defer all and pause instead of executing.
 			const settings = this.ctx.settings();
-			const modifyCount = pendingActions.filter(a => a.type !== 'deleteLocal').length;
+			const pending = this.candidates.getPending();
+			const localFileCount = localFiles.length;
+			const modifyCount = pending.filter(a => a.actionType !== 'deleteLocal').length;
 
 			if (
 				localFileCount >= settings.fileModificationConfirmationMin &&
 				localFileCount > 0 &&
 				(modifyCount / localFileCount) * 100 > settings.fileModificationConfirmationThreshold
 			) {
-				await this.deferralManager.deferAllAndPause(pendingActions);
+				await this.candidates.deferAllAndPause(pending);
 				result.deferredByThreshold = true;
-				const msg = `Sharing paused: ${pendingActions.length} changes deferred for review`;
+				const msg = `Sharing paused: ${pending.length} changes deferred for review`;
 				this.setStatusBar(msg);
 				this.ctx.logger.info(msg);
-				this.onThresholdPause(pendingActions.length);
+				this.onThresholdPause(pending.length);
 				return result;
 			}
 
-			// Process one file at a time, yielding between each.
-			for (const action of pendingActions) {
-				this.ctx.logger.debug(`sync ${action.path}: ${action.type}`);
-				const fileResult = await syncOneFile(action, this.ctx, hasHistory);
+			// Execute pending candidates one at a time, yielding between each.
+			const hasHistory = this.candidates.hasSyncHistory();
+			for (const candidate of pending) {
+				this.ctx.logger.debug(`sync ${candidate.path}: ${candidate.actionType}`);
+				const fileResult = await syncOneFile(candidate, this.ctx, hasHistory);
 
 				if (fileResult.changed) {
-					switch (action.type) {
-						case 'pull': result.downloaded++; break;
-						case 'push': result.uploaded++; break;
-						case 'deleteLocal':
-						case 'deleteRemote': result.deleted++; break;
-						case 'conflict':
-							result.conflicts++;
-							if (fileResult.merged) result.merges++;
-							break;
+					if (candidate.actionType === 'deleteLocal' || candidate.actionType === 'deleteRemote') {
+						await this.candidates.remove(candidate.path);
+						result.deleted++;
+					} else if (fileResult.syncedState) {
+						await this.candidates.markSynced(candidate.path, fileResult.syncedState);
+						switch (candidate.actionType) {
+							case 'pull': result.downloaded++; break;
+							case 'push': result.uploaded++; break;
+							case 'conflict':
+								result.conflicts++;
+								if (fileResult.merged) result.merges++;
+								break;
+						}
+					}
+					if (fileResult.newSyncedFiles) {
+						for (const f of fileResult.newSyncedFiles) {
+							const { path, ...state } = f;
+							await this.candidates.insertSynced(path, state);
+						}
 					}
 				}
 
@@ -302,17 +232,13 @@ export class BulkSync {
 	}
 
 	/**
-	 * Execute a pre-approved set of {@link SyncAction}s deposited by
-	 * {@link approveForExecution}.
+	 * Execute a pre-approved set of {@link Candidate}s whose `state === 'Approved'`.
 	 *
-	 * Skips the planning pass and the threshold guard entirely, so approved
-	 * files cannot trigger a second deferral.  Validates each action against
-	 * the current local mtime before executing: if the local file changed since
-	 * the plan was built the action is skipped (logged at INFO) to avoid acting
-	 * on stale data.  Remote staleness is handled naturally inside
-	 * {@link syncOneFile}.
+	 * Skips the planning pass and the threshold guard entirely.  Calls
+	 * {@link CandidateStore.markSynced} or {@link CandidateStore.remove} after each
+	 * successful file so the store is up to date even if the pass is interrupted.
 	 */
-	private async executeApproved(actions: SyncAction[]): Promise<SyncPassResult> {
+	private async executeApproved(approved: Candidate[]): Promise<SyncPassResult> {
 		const result: SyncPassResult = {
 			downloaded: 0,
 			uploaded: 0,
@@ -324,36 +250,36 @@ export class BulkSync {
 
 		this.setStatusBar('Sharing');
 		this.ctx.logger.info(
-			`Bulk sync: executing ${actions.length} approved action${actions.length === 1 ? '' : 's'}`,
+			`Bulk sync: executing ${approved.length} approved action${approved.length === 1 ? '' : 's'}`,
 		);
 		this.ctx.statsTracker.recordBulkSyncPass();
 
 		try {
-			for (const action of actions) {
-				// Local mtime validation — cheap, no network.
-				const currentMtime = this.ctx.localFs.stat(action.path)?.mtime ?? 0;
-				const approvedMtime = action.local?.mtime ?? 0;
-				if (currentMtime !== approvedMtime) {
-					this.ctx.logger.info(
-						`executeApproved: skipping ${action.path} — local file changed since approval`,
-					);
-					continue;
-				}
-
-				this.ctx.logger.debug(`sync ${action.path}: ${action.type}`);
-				// Approved actions always come from a vault that already has sync history.
-				const fileResult = await syncOneFile(action, this.ctx, /* hasHistory */ true);
+			// Approved actions always come from a vault that already has sync history.
+			for (const candidate of approved) {
+				this.ctx.logger.debug(`sync ${candidate.path}: ${candidate.actionType} (approved)`);
+				const fileResult = await syncOneFile(candidate, this.ctx, /* hasHistory */ true);
 
 				if (fileResult.changed) {
-					switch (action.type) {
-						case 'pull': result.downloaded++; break;
-						case 'push': result.uploaded++; break;
-						case 'deleteLocal':
-						case 'deleteRemote': result.deleted++; break;
-						case 'conflict':
-							result.conflicts++;
-							if (fileResult.merged) result.merges++;
-							break;
+					if (candidate.actionType === 'deleteLocal' || candidate.actionType === 'deleteRemote') {
+						await this.candidates.remove(candidate.path);
+						result.deleted++;
+					} else if (fileResult.syncedState) {
+						await this.candidates.markSynced(candidate.path, fileResult.syncedState);
+						switch (candidate.actionType) {
+							case 'pull': result.downloaded++; break;
+							case 'push': result.uploaded++; break;
+							case 'conflict':
+								result.conflicts++;
+								if (fileResult.merged) result.merges++;
+								break;
+						}
+					}
+					if (fileResult.newSyncedFiles) {
+						for (const f of fileResult.newSyncedFiles) {
+							const { path, ...state } = f;
+							await this.candidates.insertSynced(path, state);
+						}
 					}
 				}
 
@@ -375,5 +301,13 @@ export class BulkSync {
 		}
 
 		return result;
+	}
+
+	/**
+	 * Total count of non-`Synced` candidates from the most recent planning pass.
+	 * Returns `null` before the first plan has run.
+	 */
+	getPendingCount(): number | null {
+		return this.candidates.getPendingCount();
 	}
 }

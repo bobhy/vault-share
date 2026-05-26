@@ -1,6 +1,7 @@
 import { ItemView, WorkspaceLeaf } from 'obsidian';
-import type { DeferralManager } from '../sync/deferral-manager';
-import type { SyncAction, SyncActionType, SyncContext, ViewCandidate } from '../sync/types';
+import type { Candidate, SyncActionType, SyncContext } from '../sync/types';
+import type { CandidateStore } from '../sync/candidate-store';
+import type { BulkSync } from '../sync/bulk-sync';
 import { ConfirmationModal } from './confirmation-modal';
 import { PendingListModal } from './pending-list-modal';
 
@@ -23,47 +24,33 @@ const STATUS_ROWS: StatusRow[] = [
 /**
  * Sidebar panel for manually inspecting and controlling the sharing process.
  *
- * Opened via command palette ("Open sharing status panel") or by clicking
- * the persistent deferral status bar item.
+ * Reads all candidate state from {@link CandidateStore} — no in-memory
+ * `viewCandidates` snapshot.  Refreshes reactively whenever
+ * `candidateStore.onChanged` fires (wired in `main.ts`).
  *
  * **While sharing is running** the view shows only the current state and a
- * "Pause sharing" button, plus an informational banner prompting the user to
- * pause before examining candidates.  Candidate counts are intentionally
- * hidden — they are a moving target while sync is active and would mislead
- * the user about what is actually pending.
+ * "Pause sharing" button, plus an informational banner.  Candidate counts are
+ * intentionally hidden — they are a moving target while sync is active.
  *
  * **While paused** the view shows the candidate count, a "Resume sharing"
  * button, a "Refresh" button, and a per-operation-type count table.  Tapping
  * a table row opens the {@link PendingListModal} for that type.
  *
- * The view does **not** auto-pause sharing on open.  Obsidian calls
- * {@link onOpen} both for user-initiated opens and for workspace-layout
- * restoration on startup; auto-pausing would permanently re-pause sharing
- * every time Obsidian is relaunched with the panel in the saved layout.
- * Users pause explicitly via the "Pause sharing" button.
+ * The "Refresh" button triggers {@link BulkSync.planOnly} which calls
+ * `CandidateStore.reconcile()` internally, then re-renders the view.
  *
- * The `planFn` wraps {@link BulkSync.planOnly} and is called only when the
- * view is paused (on open if already paused, and when the user clicks "Pause
- * sharing" or "Refresh").
- *
- * Refreshes whenever the caller invokes {@link refresh} — typically wired to
- * {@link DeferralManager}'s `onChanged` callback in the plugin entry point.
- *
- * On close while paused, prompts the user to resume sharing before leaving.
- *
- * TODO: add unit tests once the obsidian-mock package supports `ItemView.containerEl.children[1]`
- * (the content-pane child that ItemView rendering depends on).
+ * TODO: add unit tests once the obsidian-mock package supports
+ * `ItemView.containerEl.children[1]` (the content-pane child that ItemView
+ * rendering depends on).
  */
 export class SharingStatusView extends ItemView {
-	private viewCandidates: ViewCandidate[] = [];
 	private isRefreshing = false;
 
 	constructor(
 		leaf: WorkspaceLeaf,
-		private readonly manager: DeferralManager,
-		private readonly planFn: () => Promise<ViewCandidate[]>,
+		private readonly candidateStore: CandidateStore,
+		private readonly bulkSync: BulkSync,
 		private readonly ctx: SyncContext,
-		private readonly approveForExecution: ((actions: SyncAction[]) => void) | null = null,
 	) {
 		super(leaf);
 	}
@@ -75,14 +62,14 @@ export class SharingStatusView extends ItemView {
 	async onOpen(): Promise<void> {
 		// Only enumerate candidates if sharing is already paused; while running
 		// the candidate list is a moving target and won't be displayed anyway.
-		if (await this.manager.isPaused()) {
-			await this.runPlan();
+		if (await this.candidateStore.isPaused()) {
+			await this.bulkSync.planOnly();
 		}
 		await this.refresh();
 	}
 
 	async onClose(): Promise<void> {
-		const paused = await this.manager.isPaused();
+		const paused = await this.candidateStore.isPaused();
 		if (paused) {
 			const resume = await ConfirmationModal.prompt(
 				this.app,
@@ -92,7 +79,7 @@ export class SharingStatusView extends ItemView {
 				'Keep paused',
 			);
 			if (resume) {
-				await this.manager.setPaused(false);
+				await this.candidateStore.setPaused(false);
 			}
 		}
 		this.containerEl.empty();
@@ -106,12 +93,13 @@ export class SharingStatusView extends ItemView {
 		container.empty();
 		container.addClass('vault-share-sharing-status-container');
 
-		const paused = await this.manager.isPaused();
+		const paused = await this.candidateStore.isPaused();
+		const allCandidates = this.candidateStore.getAll().filter(c => c.state !== 'Synced');
 
 		// ── State header (always shown) ────────────────────────────────────
 		const header = container.createDiv({ cls: 'vault-share-sharing-status-header' });
 
-		const totalCount = this.viewCandidates.length;
+		const totalCount = allCandidates.length;
 		header.createEl('p', {
 			cls: 'vault-share-sharing-status-state',
 			text: paused
@@ -125,9 +113,9 @@ export class SharingStatusView extends ItemView {
 		});
 		pauseBtn.addEventListener('click', () => {
 			const willPause = !paused;
-			void this.manager.setPaused(willPause).then(async () => {
+			void this.candidateStore.setPaused(willPause).then(async () => {
 				// Collect candidates as soon as we pause so the table populates immediately.
-				if (willPause) await this.runPlan();
+				if (willPause) await this.bulkSync.planOnly();
 				await this.refresh();
 			});
 		});
@@ -148,7 +136,13 @@ export class SharingStatusView extends ItemView {
 			cls: 'vault-share-sharing-status-btn',
 		});
 		refreshBtn.disabled = this.isRefreshing;
-		refreshBtn.addEventListener('click', () => { void this.runPlan().then(() => this.refresh()); });
+		refreshBtn.addEventListener('click', () => {
+			this.isRefreshing = true;
+			void this.bulkSync.planOnly().then(() => {
+				this.isRefreshing = false;
+				void this.refresh();
+			});
+		});
 
 		if (totalCount === 0) {
 			container.createEl('p', {
@@ -159,11 +153,11 @@ export class SharingStatusView extends ItemView {
 		}
 
 		// Group candidates by action type for the table.
-		const viewByType = new Map<SyncActionType, ViewCandidate[]>();
-		for (const c of this.viewCandidates) {
-			const list = viewByType.get(c.type) ?? [];
+		const byType = new Map<SyncActionType, Candidate[]>();
+		for (const c of allCandidates) {
+			const list = byType.get(c.actionType) ?? [];
 			list.push(c);
-			viewByType.set(c.type, list);
+			byType.set(c.actionType, list);
 		}
 
 		const table = container.createEl('table', { cls: 'vault-share-sharing-status-table' });
@@ -174,7 +168,7 @@ export class SharingStatusView extends ItemView {
 
 		const tbody = table.createEl('tbody');
 		for (const row of STATUS_ROWS) {
-			const candidates = viewByType.get(row.type) ?? [];
+			const candidates = byType.get(row.type) ?? [];
 			if (candidates.length === 0) continue;
 
 			const tr = tbody.createEl('tr', { cls: 'vault-share-sharing-status-row is-clickable' });
@@ -183,34 +177,11 @@ export class SharingStatusView extends ItemView {
 			tr.createEl('td', { text: String(candidates.length) });
 
 			tr.addEventListener('click', () => {
-				const onResolved = (path: string) => {
-					this.viewCandidates = this.viewCandidates.filter(c => c.path !== path);
-					void this.refresh();
-				};
-				const onCandidatesChanged = (released: string[], deferred: string[]) => {
-					const releasedSet = new Set(released);
-					const deferredSet = new Set(deferred);
-					for (const c of this.viewCandidates) {
-						if (releasedSet.has(c.path)) c.isDeferred = false;
-						if (deferredSet.has(c.path)) c.isDeferred = true;
-					}
-					void this.refresh();
-				};
 				new PendingListModal(
-					this.app, candidates, row.type, this.manager, this.ctx,
-					onResolved, onCandidatesChanged, this.approveForExecution,
+					this.app, row.type, this.candidateStore, this.ctx,
+					() => { void this.refresh(); },
 				).open();
 			});
-		}
-	}
-
-	/** Run the plan-only pass and store the results. Renders Refresh button as busy while running. */
-	private async runPlan(): Promise<void> {
-		this.isRefreshing = true;
-		try {
-			this.viewCandidates = await this.planFn();
-		} finally {
-			this.isRefreshing = false;
 		}
 	}
 }

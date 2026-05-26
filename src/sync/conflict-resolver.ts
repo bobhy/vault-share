@@ -1,4 +1,4 @@
-import type { SyncAction, SyncContext, SyncRecord } from './types';
+import type { Candidate, SyncContext, SyncedFileState } from './types';
 import type { FileConflictStrategy, TextFileConflictStrategy } from '../settings';
 import { isMergeEligible, threeWayMerge } from './merge';
 import { shortClientId } from './client-id';
@@ -10,6 +10,11 @@ export interface ConflictResult {
 	remoteConflictPath?: string;
 	merged: boolean;
 	hadConflictMarkers: boolean;
+	/**
+	 * Newly created vault paths (conflict copies, placeholders) that should be
+	 * inserted into {@link CandidateStore} as `Synced` candidates.
+	 */
+	newSyncedFiles?: Array<{ path: string } & SyncedFileState>;
 }
 
 /**
@@ -49,27 +54,27 @@ function formatTimestampForFilename(d: Date): string {
  * Also handles modify-delete conflicts by creating a placeholder file.
  */
 export async function resolveConflict(
-	action: SyncAction,
+	candidate: Candidate,
 	fileStrategy: FileConflictStrategy,
 	textStrategy: TextFileConflictStrategy,
 	ctx: SyncContext,
 ): Promise<ConflictResult> {
-	const { path, local, remote, record } = action;
+	const { local, remote } = candidate;
 	const isDeleteConflict = !local || !remote;
 
 	if (isDeleteConflict) {
-		return resolveDeleteConflict(path, action, ctx);
+		return resolveDeleteConflict(candidate, ctx);
 	}
 
-	const strategy = isMergeEligible(path) ? textStrategy : fileStrategy;
+	const strategy = isMergeEligible(candidate.path) ? textStrategy : fileStrategy;
 
 	if (strategy === 'Use Newer') {
-		return resolveUseNewer(path, local.mtime, remote.mtime, ctx);
+		return resolveUseNewer(candidate.path, local.mtime, remote.mtime, ctx);
 	}
 	if (strategy === 'Merge') {
-		return resolveMerge(path, record, ctx);
+		return resolveMerge(candidate, ctx);
 	}
-	return resolveKeepBoth(path, ctx);
+	return resolveKeepBoth(candidate, ctx);
 }
 
 /** Use Newer: overwrite the older side with the newer side. */
@@ -90,16 +95,12 @@ async function resolveUseNewer(
 		ctx.statsTracker.recordPush();
 	} else {
 		// Remote is newer — pull to local.
-		const remoteId = (action: SyncAction) => action.remote!.driveFileId;
-		const driveFileId = ctx.driveFs === driveFs
-			? (await driveFs.stat(rootFolderId, path))?.driveFileId ?? ''
-			: '';
-		if (driveFileId) {
-			const content = await driveFs.readBinary(driveFileId);
+		const remoteSide = await driveFs.stat(rootFolderId, path);
+		if (remoteSide) {
+			const content = await driveFs.readBinary(remoteSide.driveFileId);
 			await localFs.write(path, content);
 			ctx.statsTracker.recordPull();
 		}
-		void remoteId; // not needed here
 	}
 
 	return { merged: false, hadConflictMarkers: false };
@@ -107,9 +108,10 @@ async function resolveUseNewer(
 
 /** Keep Both: rename both sides to conflict filenames and propagate. */
 async function resolveKeepBoth(
-	path: string,
+	candidate: Candidate,
 	ctx: SyncContext,
 ): Promise<ConflictResult> {
+	const { path } = candidate;
 	const now = new Date();
 	const localConflictPath = buildConflictFilename(path, shortClientId(ctx.clientId), now);
 	const remoteConflictPath = buildConflictFilename(path, 'group', now);
@@ -138,12 +140,13 @@ async function resolveKeepBoth(
 		await ctx.localFs.write(remoteConflictPath, remoteContent);
 	}
 
-	// Push both conflict files to Drive and store sync records so the next pass
-	// sees them as already-synced (absent records would re-trigger a conflict loop).
+	// Push both conflict files to Drive and collect their sync metadata.
 	const syncedAt = Date.now();
+	const newSyncedFiles: Array<{ path: string } & SyncedFileState> = [];
+
 	const localDriveSide = await ctx.driveFs.write(rootFolderId, localConflictPath, localContent, ctx.statsTracker, sampler);
 	const localLocalSide = ctx.localFs.stat(localConflictPath);
-	await ctx.store.putRecord({
+	newSyncedFiles.push({
 		path: localConflictPath,
 		driveFileId: localDriveSide.driveFileId,
 		localMtime: localLocalSide?.mtime ?? 0,
@@ -156,7 +159,7 @@ async function resolveKeepBoth(
 	if (remoteContent) {
 		const remoteDriveSide = await ctx.driveFs.write(rootFolderId, remoteConflictPath, remoteContent, ctx.statsTracker, sampler);
 		const remoteLocalSide = ctx.localFs.stat(remoteConflictPath);
-		await ctx.store.putRecord({
+		newSyncedFiles.push({
 			path: remoteConflictPath,
 			driveFileId: remoteDriveSide.driveFileId,
 			localMtime: remoteLocalSide?.mtime ?? 0,
@@ -174,15 +177,15 @@ async function resolveKeepBoth(
 
 	ctx.statsTracker.recordContentConflict();
 
-	return { localConflictPath, remoteConflictPath, merged: false, hadConflictMarkers: false };
+	return { localConflictPath, remoteConflictPath, merged: false, hadConflictMarkers: false, newSyncedFiles };
 }
 
 /** Merge: diff3 three-way merge for text files. */
 async function resolveMerge(
-	path: string,
-	record: SyncRecord | undefined,
+	candidate: Candidate,
 	ctx: SyncContext,
 ): Promise<ConflictResult> {
+	const { path } = candidate;
 	const rootFolderId = ctx.driveFolderId();
 	const sampler = { value: false };
 	const dec = new TextDecoder();
@@ -202,7 +205,7 @@ async function resolveMerge(
 	const remoteBytes = await ctx.driveFs.readBinary(remoteFileSide.driveFileId);
 
 	let baseText = '';
-	if (record) {
+	if (candidate.syncedAt > 0) {
 		const baseBytes = await ctx.store.getContent(path);
 		if (baseBytes) baseText = dec.decode(baseBytes);
 	}
@@ -225,25 +228,26 @@ async function resolveMerge(
 
 /** Modify-delete conflict: create a placeholder on the deleted side. */
 async function resolveDeleteConflict(
-	path: string,
-	action: SyncAction,
+	candidate: Candidate,
 	ctx: SyncContext,
 ): Promise<ConflictResult> {
+	const { path, local } = candidate;
 	const now = new Date();
 	const rootFolderId = ctx.driveFolderId();
 	const sampler = { value: false };
 	const placeholderBytes = new TextEncoder().encode(PLACEHOLDER_TEXT).buffer;
 
 	const syncedAt = Date.now();
+	const newSyncedFiles: Array<{ path: string } & SyncedFileState> = [];
 
-	if (!action.local) {
+	if (!local) {
 		// Local was deleted; remote was modified. Create placeholder locally.
 		const placeholderPath = buildConflictFilename(path, shortClientId(ctx.clientId), now);
 		await ctx.localFs.write(placeholderPath, placeholderBytes);
 		// Push placeholder to Drive so all vaults see it.
 		const driveSide = await ctx.driveFs.write(rootFolderId, placeholderPath, placeholderBytes, ctx.statsTracker, sampler);
 		const localSide = ctx.localFs.stat(placeholderPath);
-		await ctx.store.putRecord({
+		newSyncedFiles.push({
 			path: placeholderPath,
 			driveFileId: driveSide.driveFileId,
 			localMtime: localSide?.mtime ?? 0,
@@ -258,7 +262,7 @@ async function resolveDeleteConflict(
 		await ctx.localFs.write(placeholderPath, placeholderBytes);
 		const driveSide = await ctx.driveFs.write(rootFolderId, placeholderPath, placeholderBytes, ctx.statsTracker, sampler);
 		const localSide = ctx.localFs.stat(placeholderPath);
-		await ctx.store.putRecord({
+		newSyncedFiles.push({
 			path: placeholderPath,
 			driveFileId: driveSide.driveFileId,
 			localMtime: localSide?.mtime ?? 0,
@@ -271,5 +275,5 @@ async function resolveDeleteConflict(
 
 	ctx.statsTracker.recordDeleteConflict();
 
-	return { merged: false, hadConflictMarkers: false };
+	return { merged: false, hadConflictMarkers: false, newSyncedFiles };
 }

@@ -10,8 +10,7 @@ import { ExcludeMatcher } from './sync/exclude';
 import { LocalFs } from './sync/local-fs';
 import { DriveFsAdapter } from './sync/drive-fs';
 import { BulkSync } from './sync/bulk-sync';
-import { DeferralStore } from './sync/deferral-store';
-import { DeferralManager } from './sync/deferral-manager';
+import { CandidateStore } from './sync/candidate-store';
 import { SyncScheduler } from './sync/scheduler';
 import { SyncContext } from './sync/types';
 import { VaultShareSettingTab } from './ui/settings-tab';
@@ -32,7 +31,7 @@ export default class VaultSharePlugin extends Plugin {
 	logger!: Logger;
 	store?: SyncStore;
 	statsTracker?: StatsTracker;
-	deferralManager?: DeferralManager;
+	candidateStore?: CandidateStore;
 	bulkSync?: BulkSync;
 	scheduler?: SyncScheduler;
 
@@ -113,44 +112,44 @@ export default class VaultSharePlugin extends Plugin {
 			logger: this.logger,
 		};
 
-		// 11. Deferral layer + bulk sync + scheduler
-		const deferralStore = new DeferralStore(this.store.getIdb());
-		this.deferralManager = new DeferralManager(deferralStore, () => {
+		// 11. CandidateStore — single source of truth for all per-file sharing state
+		this.candidateStore = new CandidateStore(this.store.getIdb());
+		const candidateStore = this.candidateStore;
+
+		// Wire the onChanged callback: update status bar and refresh all Sharing Status views.
+		candidateStore.onChanged = () => {
+			const count = candidateStore.getPendingCount();
+			if (!this.deferralNoticeShown && count !== null && count > 0) {
+				this.deferralNoticeShown = true;
+				this.showDeferralNotice(count);
+			}
 			this.updateDeferralStatusBar();
 			this.refreshSharingStatusViews();
-		});
-		const deferralManager = this.deferralManager;
+		};
 
-		this.bulkSync = new BulkSync(ctx, this.excludeMatcher, this.app, setStatusBar, deferralManager,
-			(candidates) => {
-				// Show the startup notice once when the first plan finds pending files.
-				if (!this.deferralNoticeShown && candidates.length > 0) {
-					this.deferralNoticeShown = true;
-					this.showDeferralNotice(candidates.length);
-				}
-				this.updateDeferralStatusBar();
-				this.refreshSharingStatusViews();
-			},
+		// Warm the in-memory cache so isPausedSync() and isDeferred() are accurate
+		// from the very first scheduler tick.
+		await candidateStore.init();
+
+		// 12. Bulk sync + scheduler
+		this.bulkSync = new BulkSync(ctx, this.excludeMatcher, setStatusBar, candidateStore,
 			(count) => { this.showThresholdPauseNotice(count); },
 		);
 		const bulkSync = this.bulkSync;
 
-		// Warm both DeferralManager caches so isPausedSync() and isDeferredPathSync()
-		// are accurate from the very first scheduler tick.
-		await deferralManager.init();
-
 		this.scheduler = new SyncScheduler({
 			ctx,
 			bulkSync,
+			candidateStore,
 			workspace: this.app.workspace,
 			setStatusBar,
 			registerEvent: ref => this.registerEvent(ref),
 			registerInterval: id => this.registerInterval(id),
-			isSharingPaused: () => deferralManager.isPausedSync(),
-			isDeferredPath: path => deferralManager.isDeferredPathSync(path),
+			isSharingPaused: () => candidateStore.isPausedSync(),
+			isDeferredPath: path => candidateStore.isDeferred(path),
 		});
 
-		// 12. Sidebar log view
+		// 13. Sidebar log view
 		this.registerView(SYNC_LOG_VIEW_TYPE, leaf => new SyncLogView(leaf, this.logger, () => {
 			this.settings.logToSidebar = false;
 			void this.saveData(this.settings);
@@ -159,13 +158,12 @@ export default class VaultSharePlugin extends Plugin {
 			this.app.workspace.onLayoutReady(() => { void this.activateSidebarLogView(); });
 		}
 
-		// 12a. Sharing status view
+		// 13a. Sharing status view
 		this.registerView(SHARING_STATUS_VIEW_TYPE, leaf =>
-			new SharingStatusView(leaf, deferralManager, () => bulkSync.planOnly(), ctx,
-				(actions) => { bulkSync.approveForExecution(actions); }),
+			new SharingStatusView(leaf, candidateStore, bulkSync, ctx),
 		);
 
-		// 13. OAuth callback
+		// 14. OAuth callback
 		this.registerObsidianProtocolHandler('vault-share-auth', async params => {
 			try {
 				await this.auth.handleAuthCallback(params);
@@ -179,11 +177,11 @@ export default class VaultSharePlugin extends Plugin {
 			}
 		});
 
-		// 14. Settings tab
+		// 15. Settings tab
 		this.settingTab = new VaultShareSettingTab(this.app, this);
 		this.addSettingTab(this.settingTab);
 
-		// 15. Commands
+		// 16. Commands
 		this.addCommand({
 			id: 'open-sharing-status',
 			name: 'Open sharing status panel',
@@ -194,7 +192,7 @@ export default class VaultSharePlugin extends Plugin {
 			id: 'pause-sync',
 			name: 'Pause sharing',
 			callback: () => {
-				void this.deferralManager?.setPaused(true);
+				void this.candidateStore?.setPaused(true);
 				setStatusBar('Sharing paused');
 			},
 		});
@@ -203,7 +201,11 @@ export default class VaultSharePlugin extends Plugin {
 			id: 'start-sync',
 			name: 'Start or resume sharing',
 			callback: () => {
-				void this.deferralManager?.setPaused(false).then(() => {
+				// setPaused(false) persists the change and fires onChanged.
+				// Because doRun() checks getApproved() before any planning pass,
+				// there is no race between approved candidates and triggerBulkSync():
+				// approved state is in IDB and survives any number of scheduler ticks.
+				void this.candidateStore?.setPaused(false).then(() => {
 					this.scheduler?.triggerBulkSync();
 				});
 			},
@@ -292,7 +294,7 @@ export default class VaultSharePlugin extends Plugin {
 			callback: () => { this.logger.clear(); },
 		});
 
-		// 16. Context menus
+		// 17. Context menus
 		this.registerEvent(this.app.workspace.on('file-menu', (menu, abstractFile) => {
 			if (!(abstractFile instanceof TFile)) return;
 			if (this.excludeMatcher.isExcluded(abstractFile.path)) return;
@@ -321,20 +323,20 @@ export default class VaultSharePlugin extends Plugin {
 			});
 		}));
 
-		// 17. Active-leaf-change: update monitoring status bar
+		// 18. Active-leaf-change: update monitoring status bar
 		this.registerEvent(this.app.workspace.on('active-leaf-change', _leaf => {
 			this.updateMonitoringStatusBar();
 		}));
 
-		// 18. Start scheduler (triggers initial bulk sync)
+		// 19. Start scheduler (triggers initial bulk sync)
 		this.scheduler.start();
 		this.scheduler.triggerBulkSync();
 
 		// If sharing is already paused at startup, the scheduler's bulk sync bails
-		// immediately (before calling doPlanning), so onPlanChanged would never fire
+		// immediately (before calling reconcile), so onChanged would never fire
 		// and the status bar would stay "Checking…" forever.  Run planOnly() now to
 		// populate the status bar and, if applicable, the startup notice.
-		if (deferralManager.isPausedSync()) {
+		if (candidateStore.isPausedSync()) {
 			void bulkSync.planOnly();
 		}
 	}
@@ -364,7 +366,7 @@ export default class VaultSharePlugin extends Plugin {
 		const oldPath = this.settings.driveFolderPath;
 		if (newPath === oldPath) return;
 
-		const hasHistory = (await this.store?.getAllRecords() ?? []).length > 0;
+		const hasHistory = this.candidateStore?.hasSyncHistory() ?? false;
 		if (hasHistory) {
 			const proceed = await ConfirmationModal.prompt(
 				this.app,
@@ -374,7 +376,8 @@ export default class VaultSharePlugin extends Plugin {
 				`The plugin will then merge with <strong>${newPath}</strong>. Proceed?`,
 			);
 			if (!proceed) return;
-			await this.store?.clearAll();
+			await this.candidateStore?.clear();
+			await this.store?.clearContent();
 			await this.statsTracker?.reset();
 		}
 
@@ -390,7 +393,9 @@ export default class VaultSharePlugin extends Plugin {
 
 	/** Reset all plugin state: sync records, stats, and OAuth tokens. Leaves settings intact. */
 	async pluginReset(): Promise<void> {
-		await this.store?.clearAll();
+		await this.candidateStore?.clear();
+		await this.store?.clearContent();
+		await this.store?.clearStats();
 		await this.statsTracker?.reset();
 		this.auth.clearSecretStorage();
 		this.driveFolderId = '';
@@ -430,8 +435,8 @@ export default class VaultSharePlugin extends Plugin {
 
 	/** Update the persistent deferral status bar item. */
 	private updateDeferralStatusBar(): void {
-		const count = this.bulkSync?.getPendingCount() ?? null;
-		const paused = this.deferralManager?.isPausedSync() ?? false;
+		const count = this.candidateStore?.getPendingCount() ?? null;
+		const paused = this.candidateStore?.isPausedSync() ?? false;
 		this.deferralStatusBarEl.setText(formatSyncStatus(paused, count));
 	}
 

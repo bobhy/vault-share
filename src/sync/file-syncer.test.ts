@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { App } from 'obsidian';
-import type { SyncAction, SyncContext, SyncRecord, FileSide } from './types';
+import type { Candidate, SyncContext, FileSide } from './types';
 import type { LocalFs } from './local-fs';
 import type { DriveFsAdapter, DriveFileSide } from './drive-fs';
 import type { SyncStore } from './store';
@@ -80,17 +80,15 @@ function makeDriveFs(): { driveFs: DriveFsAdapter; files: Map<string, DriveFileE
 	return { driveFs, files };
 }
 
-function makeSyncStore(): { store: SyncStore; records: Map<string, SyncRecord> } {
-	const records = new Map<string, SyncRecord>();
+/** Simplified store mock — no record methods; only content cache. */
+function makeSyncStore(): { store: SyncStore; contents: Map<string, ArrayBuffer> } {
 	const contents = new Map<string, ArrayBuffer>();
 	const store = {
-		async getRecord(path: string) { return records.get(path); },
-		async putRecord(r: SyncRecord) { records.set(r.path, r); },
-		async deleteRecord(path: string) { records.delete(path); },
 		async getContent(path: string) { return contents.get(path); },
 		async putContent(path: string, content: ArrayBuffer) { contents.set(path, content); },
+		async deleteContent(path: string) { contents.delete(path); },
 	} as unknown as SyncStore;
-	return { store, records };
+	return { store, contents };
 }
 
 const stubStats = {
@@ -114,8 +112,25 @@ function enc(text: string): ArrayBuffer {
 	return new TextEncoder().encode(text).buffer;
 }
 
+/** Build a Candidate for tests. */
+function makeCandidate(overrides: Partial<Candidate> & { path: string; actionType: Candidate['actionType'] }): Candidate {
+	return {
+		state: 'Default',
+		driveFileId: '',
+		syncedLocalMtime: 0,
+		syncedRemoteMtime: 0,
+		syncedLocalSize: 0,
+		syncedRemoteSize: 0,
+		syncedAt: 0,
+		deferredAt: 0,
+		deferredLocalMtime: 0,
+		deferredRemoteMtime: 0,
+		...overrides,
+	};
+}
+
 // ---------------------------------------------------------------------------
-// Tests
+// Tests: conflict handling (Keep Both strategy)
 // ---------------------------------------------------------------------------
 
 describe('syncOneFile conflict handling', () => {
@@ -124,13 +139,12 @@ describe('syncOneFile conflict handling', () => {
 	let driveFs: DriveFsAdapter;
 	let driveFiles: Map<string, DriveFileEntry>;
 	let store: SyncStore;
-	let records: Map<string, SyncRecord>;
 	let ctx: SyncContext;
 
 	beforeEach(() => {
 		({ localFs, files: localFiles } = makeLocalFs());
 		({ driveFs, files: driveFiles } = makeDriveFs());
-		({ store, records } = makeSyncStore());
+		({ store } = makeSyncStore());
 
 		ctx = {
 			app: new App(),
@@ -149,65 +163,50 @@ describe('syncOneFile conflict handling', () => {
 		driveFiles.set('Welcome.md', { driveFileId: 'drive-orig-1', content: enc('drive content'), mtime: 1000 });
 	});
 
-	const conflictAction: SyncAction = {
-		type: 'conflict',
+	const makeConflictCandidate = (): Candidate => makeCandidate({
 		path: 'Welcome.md',
+		actionType: 'conflict',
+		driveFileId: 'drive-orig-1',
 		local:  { path: 'Welcome.md', mtime: 2000, size: 13 },
 		remote: { path: 'Welcome.md', mtime: 1000, size: 12, driveFileId: 'drive-orig-1' },
-	};
+	});
 
 	describe('Keep Both strategy', () => {
-		it('removes the original sync record after resolving', async () => {
-			// Pre-populate a record for Welcome.md so deleteRecord has something to remove.
-			records.set('Welcome.md', {
-				path: 'Welcome.md', driveFileId: 'drive-orig-1',
-				localMtime: 500, remoteMtime: 500, localSize: 5, remoteSize: 5, syncedAt: 0,
-			});
+		it('does not return syncedState for original path; returns newSyncedFiles with conflict copies', async () => {
+			const result = await syncOneFile(makeConflictCandidate(), ctx, false);
 
-			await syncOneFile(conflictAction, ctx, true);
-
-			expect(records.has('Welcome.md')).toBe(false);
+			expect(result.changed).toBe(true);
+			expect(result.syncedState).toBeUndefined();
+			expect(result.newSyncedFiles).toHaveLength(2);
 		});
 
-		it('stores a sync record for the local-side conflict file', async () => {
-			await syncOneFile(conflictAction, ctx, false);
+		it('newSyncedFiles: local conflict path has driveFileId and syncedAt', async () => {
+			const result = await syncOneFile(makeConflictCandidate(), ctx, false);
 
-			const conflictPaths = [...records.keys()].filter(k => k.includes('-conflict-'));
-			const localConflict = conflictPaths.find(k => k.includes('abcd1234'));
+			const conflictFiles = result.newSyncedFiles ?? [];
+			const localConflict = conflictFiles.find(f => f.path.includes('abcd1234'));
 			expect(localConflict).toBeDefined();
-
-			const rec = records.get(localConflict!)!;
-			expect(rec.driveFileId).toBeTruthy();
-			expect(rec.syncedAt).toBeGreaterThan(0);
+			expect(localConflict?.driveFileId).toBeTruthy();
+			expect(localConflict?.syncedAt).toBeGreaterThan(0);
 		});
 
-		it('stores a sync record for the group-side conflict file', async () => {
-			await syncOneFile(conflictAction, ctx, false);
+		it('newSyncedFiles: remote conflict path has driveFileId and syncedAt', async () => {
+			const result = await syncOneFile(makeConflictCandidate(), ctx, false);
 
-			const conflictPaths = [...records.keys()].filter(k => k.includes('-conflict-'));
-			const groupConflict = conflictPaths.find(k => k.includes('-conflict-group-'));
+			const conflictFiles = result.newSyncedFiles ?? [];
+			const groupConflict = conflictFiles.find(f => f.path.includes('-conflict-group-'));
 			expect(groupConflict).toBeDefined();
-
-			const rec = records.get(groupConflict!)!;
-			expect(rec.driveFileId).toBeTruthy();
-			expect(rec.syncedAt).toBeGreaterThan(0);
+			expect(groupConflict?.driveFileId).toBeTruthy();
+			expect(groupConflict?.syncedAt).toBeGreaterThan(0);
 		});
 
-		it('does not re-conflict on the next call for a conflict file', async () => {
-			await syncOneFile(conflictAction, ctx, false);
+		it('conflict files in newSyncedFiles have non-zero syncedAt (safe to markSynced)', async () => {
+			const result = await syncOneFile(makeConflictCandidate(), ctx, false);
 
-			// Pick either conflict file that now exists on both sides.
-			const conflictPath = [...records.keys()].find(k => k.includes('-conflict-'));
-			expect(conflictPath).toBeDefined();
-
-			// Simulate what the decision engine would produce for a file whose
-			// local and remote versions match the stored record — a noOp.
-			// If the record is missing, the decision engine would produce 'conflict'
-			// (absent history + both sides present). Verify the record is there and
-			// has a driveFileId, which is the prerequisite for a noOp decision.
-			const rec = records.get(conflictPath!)!;
-			expect(rec).toBeDefined();
-			expect(rec.driveFileId).toBeTruthy();
+			for (const f of result.newSyncedFiles ?? []) {
+				expect(f.syncedAt).toBeGreaterThan(0);
+				expect(f.driveFileId).toBeTruthy();
+			}
 		});
 	});
 
@@ -216,36 +215,40 @@ describe('syncOneFile conflict handling', () => {
 			ctx = { ...ctx, settings: () => mockSettings({ fileConflict: 'Use Newer', textFileConflict: 'Use Newer' }) };
 		});
 
-		it('retains a sync record for the original path after resolving in-place', async () => {
-			// Local is newer (mtime 2000 > 1000); Use Newer should push local to Drive
-			// and update (not delete) the record for Welcome.md.
-			await syncOneFile(conflictAction, ctx, false);
+		it('returns syncedState (resolved in-place) with no newSyncedFiles', async () => {
+			// Local is newer (mtime 2000 > 1000); Use Newer pushes local to Drive.
+			const result = await syncOneFile(makeConflictCandidate(), ctx, false);
 
-			expect(records.has('Welcome.md')).toBe(true);
+			expect(result.changed).toBe(true);
+			expect(result.syncedState).toBeDefined();
+			expect(result.newSyncedFiles).toBeUndefined();
 		});
 
-		it('does not create any conflict files', async () => {
-			await syncOneFile(conflictAction, ctx, false);
+		it('does not create any conflict files on Drive', async () => {
+			await syncOneFile(makeConflictCandidate(), ctx, false);
 
-			const conflictPaths = [...records.keys()].filter(k => k.includes('-conflict-'));
+			const conflictPaths = [...driveFiles.keys()].filter(k => k.includes('-conflict-'));
 			expect(conflictPaths).toHaveLength(0);
 		});
 	});
 });
 
-describe('syncOneFile record mtime correctness', () => {
+// ---------------------------------------------------------------------------
+// Tests: syncedState mtime/size correctness
+// ---------------------------------------------------------------------------
+
+describe('syncOneFile syncedState mtime correctness', () => {
 	let localFs: LocalFs;
 	let localFiles: Map<string, LocalFileEntry>;
 	let driveFs: DriveFsAdapter;
 	let driveFiles: Map<string, DriveFileEntry>;
 	let store: SyncStore;
-	let records: Map<string, SyncRecord>;
 	let ctx: SyncContext;
 
 	beforeEach(() => {
 		({ localFs, files: localFiles } = makeLocalFs());
 		({ driveFs, files: driveFiles } = makeDriveFs());
-		({ store, records } = makeSyncStore());
+		({ store } = makeSyncStore());
 
 		ctx = {
 			app: new App(),
@@ -263,67 +266,66 @@ describe('syncOneFile record mtime correctness', () => {
 		driveFiles.set('note.md', { driveFileId: 'drive-note-1', content: enc('old text'), mtime: 1000 });
 	});
 
-	const pushAction: SyncAction = {
-		type: 'push',
+	const pushCandidate = (): Candidate => makeCandidate({
 		path: 'note.md',
+		actionType: 'push',
+		driveFileId: 'drive-note-1',
 		local:  { path: 'note.md', mtime: 2000, size: 10 },
 		remote: { path: 'note.md', mtime: 1000, size: 8, driveFileId: 'drive-note-1' },
-	};
+	});
 
-	it('push: stores local OS mtime as localMtime, not the Drive write timestamp', async () => {
-		await syncOneFile(pushAction, ctx, true);
+	it('push: syncedState.localMtime matches the pre-write local OS mtime, not the Drive write timestamp', async () => {
+		const result = await syncOneFile(pushCandidate(), ctx, true);
 
-		const rec = records.get('note.md')!;
 		// If this stores Drive server time instead of 2000, the next poll sees
 		// local as "modified" and loops forever.
-		expect(rec.localMtime).toBe(2000);
+		expect(result.syncedState?.localMtime).toBe(2000);
 	});
 
-	it('push: stores post-write Drive mtime as remoteMtime, not the pre-write value', async () => {
-		await syncOneFile(pushAction, ctx, true);
+	it('push: syncedState.remoteMtime is post-write Drive mtime, not the pre-write value', async () => {
+		const result = await syncOneFile(pushCandidate(), ctx, true);
 
-		const rec = records.get('note.md')!;
 		// If this stores the stale pre-write 1000 instead of the new Drive mtime,
 		// the next poll sees remote as "modified" and triggers a conflict loop.
-		expect(rec.remoteMtime).not.toBe(1000);
-		expect(rec.remoteMtime).toBeGreaterThan(0);
+		expect(result.syncedState?.remoteMtime).not.toBe(1000);
+		expect(result.syncedState?.remoteMtime).toBeGreaterThan(0);
 	});
 
-	it('pull: stores post-write local size as localSize, not the pre-pull value', async () => {
+	it('pull: syncedState.localSize is post-write local size, not the pre-pull value', async () => {
 		// Remote has larger content (size 10) than the local file (size 8).
 		// If we store action.local.size (8) instead of the post-write size (10),
 		// the next poll sees a size mismatch and pushes the file back.
-		const pullAction: SyncAction = {
-			type: 'pull',
+		const pullCandidate: Candidate = makeCandidate({
 			path: 'note.md',
+			actionType: 'pull',
+			driveFileId: 'drive-note-1',
 			local:  { path: 'note.md', mtime: 1000, size: 8 },
 			remote: { path: 'note.md', mtime: 2000, size: 10, driveFileId: 'drive-note-1' },
-		};
+		});
 
-		await syncOneFile(pullAction, ctx, true);
+		const result = await syncOneFile(pullCandidate, ctx, true);
 
-		const rec = records.get('note.md')!;
-		expect(rec).toBeDefined();
+		expect(result.syncedState).toBeDefined();
 		// localSize must match the pulled content (remote size = 10), not the stale pre-pull size (8).
-		expect(rec.localSize).toBe(localFiles.get('note.md')!.content.byteLength);
+		expect(result.syncedState?.localSize).toBe(localFiles.get('note.md')!.content.byteLength);
 	});
 
-	it('merge: stores post-write Drive mtime as remoteMtime, not the pre-write value', async () => {
+	it('merge: syncedState.remoteMtime is post-write Drive mtime, not the pre-write value', async () => {
 		ctx = { ...ctx, settings: () => mockSettings({ textFileConflict: 'Merge' }) };
 
-		const conflictAction: SyncAction = {
-			type: 'conflict',
+		const conflictCandidate: Candidate = makeCandidate({
 			path: 'note.md',
+			actionType: 'conflict',
+			driveFileId: 'drive-note-1',
 			local:  { path: 'note.md', mtime: 2000, size: 10 },
 			remote: { path: 'note.md', mtime: 1000, size: 8, driveFileId: 'drive-note-1' },
-		};
+		});
 
-		await syncOneFile(conflictAction, ctx, true);
+		const result = await syncOneFile(conflictCandidate, ctx, true);
 
-		const rec = records.get('note.md')!;
-		expect(rec).toBeDefined();
-		expect(rec.remoteMtime).not.toBe(1000);
-		expect(rec.remoteMtime).toBeGreaterThan(0);
+		expect(result.syncedState).toBeDefined();
+		expect(result.syncedState?.remoteMtime).not.toBe(1000);
+		expect(result.syncedState?.remoteMtime).toBeGreaterThan(0);
 	});
 });
 
@@ -352,8 +354,8 @@ describe('syncOneFile noOp and pull edge-cases', () => {
 	});
 
 	it('noOp: returns changed=false without touching any store or fs', async () => {
-		const action: SyncAction = { type: 'noOp', path: 'untracked.md' };
-		const result = await syncOneFile(action, ctx, false);
+		const candidate = makeCandidate({ path: 'untracked.md', actionType: 'noOp' });
+		const result = await syncOneFile(candidate, ctx, false);
 		expect(result).toEqual({ changed: false, merged: false, hadConflictMarkers: false });
 	});
 
@@ -361,13 +363,13 @@ describe('syncOneFile noOp and pull edge-cases', () => {
 		const warnFn = vi.fn();
 		const localLogger = { ...stubLogger, warning: warnFn } as unknown as Logger;
 		ctx = { ...ctx, logger: localLogger };
-		const action: SyncAction = {
-			type: 'pull',
+		const candidate = makeCandidate({
 			path: 'gone.md',
+			actionType: 'pull',
 			// No driveFileId in remote, and driveFs.stat will return null for unknown path.
 			remote: undefined,
-		};
-		const result = await syncOneFile(action, ctx, false);
+		});
+		const result = await syncOneFile(candidate, ctx, false);
 		expect(result.changed).toBe(false);
 		expect(warnFn).toHaveBeenCalled();
 	});
@@ -383,13 +385,12 @@ describe('syncOneFile delete actions', () => {
 	let driveFs: DriveFsAdapter;
 	let driveFiles: Map<string, { driveFileId: string; content: ArrayBuffer; mtime: number }>;
 	let store: SyncStore;
-	let records: Map<string, SyncRecord>;
 	let ctx: SyncContext;
 
 	beforeEach(() => {
 		({ localFs, files: localFiles } = makeLocalFs());
 		({ driveFs, files: driveFiles } = makeDriveFs());
-		({ store, records } = makeSyncStore());
+		({ store } = makeSyncStore());
 
 		ctx = {
 			app: new App(),
@@ -405,80 +406,76 @@ describe('syncOneFile delete actions', () => {
 
 		localFiles.set('note.md', { content: enc('local text'), mtime: 1000, size: 10 });
 		driveFiles.set('note.md', { driveFileId: 'drive-note-1', content: enc('local text'), mtime: 1000 });
-		records.set('note.md', {
-			path: 'note.md', driveFileId: 'drive-note-1',
-			localMtime: 1000, remoteMtime: 1000,
-			localSize: 10, remoteSize: 10, syncedAt: 0,
-		});
 	});
 
-	it('deleteRemote: removes the file from Drive and the sync record', async () => {
-		const action: SyncAction = {
-			type: 'deleteRemote',
+	it('deleteRemote: removes the file from Drive and returns changed=true', async () => {
+		const candidate: Candidate = makeCandidate({
 			path: 'note.md',
+			actionType: 'deleteRemote',
+			driveFileId: 'drive-note-1',
 			remote: { path: 'note.md', mtime: 1000, size: 10, driveFileId: 'drive-note-1' },
-		};
+		});
 
-		const result = await syncOneFile(action, ctx, true);
+		const result = await syncOneFile(candidate, ctx, true);
 
 		expect(result.changed).toBe(true);
 		expect(driveFiles.has('note.md')).toBe(false);
-		expect(records.has('note.md')).toBe(false);
 		// Local file is untouched.
 		expect(localFiles.has('note.md')).toBe(true);
+		// Caller (BulkSync / resolution-executor) handles candidateStore.remove().
+		expect(result.syncedState).toBeUndefined();
 	});
 
-	it('deleteRemote: returns changed=false when Drive file is already gone', async () => {
+	it('deleteRemote: returns changed=true even when Drive file is already gone', async () => {
 		// Remote file disappeared between planning and execution.
 		driveFiles.clear();
 
-		const action: SyncAction = {
-			type: 'deleteRemote',
+		const candidate: Candidate = makeCandidate({
 			path: 'note.md',
-			remote: undefined, // no driveFileId in action; stat will return null
-		};
+			actionType: 'deleteRemote',
+			driveFileId: '',
+			remote: undefined, // no driveFileId; stat will return null
+		});
 
-		const result = await syncOneFile(action, ctx, true);
+		const result = await syncOneFile(candidate, ctx, true);
 
-		// driveFs.stat returns null → no delete attempted, record still cleaned up.
+		// deleteContent still called → changed: true so caller can remove the candidate.
 		expect(result.changed).toBe(true);
-		expect(records.has('note.md')).toBe(false);
 	});
 
-	it('deleteLocal: removes the local file and the sync record', async () => {
-		const action: SyncAction = {
-			type: 'deleteLocal',
+	it('deleteLocal: removes the local file and returns changed=true', async () => {
+		const candidate: Candidate = makeCandidate({
 			path: 'note.md',
+			actionType: 'deleteLocal',
+			driveFileId: 'drive-note-1',
 			local: { path: 'note.md', mtime: 1000, size: 10 },
-		};
+		});
 
-		const result = await syncOneFile(action, ctx, true);
+		const result = await syncOneFile(candidate, ctx, true);
 
 		expect(result.changed).toBe(true);
 		expect(localFiles.has('note.md')).toBe(false);
-		expect(records.has('note.md')).toBe(false);
 		// Drive file is untouched.
 		expect(driveFiles.has('note.md')).toBe(true);
 	});
 
-	it('deleteLocal: no-ops the file delete when local is already gone (both-deleted race), still cleans the record', async () => {
+	it('deleteLocal: calls localFs.delete even when local is already gone (both-deleted race)', async () => {
 		// Simulate the race: local was already deleted before syncOneFile runs.
 		localFiles.delete('note.md');
 
 		const deleteSpy = vi.spyOn(localFs, 'delete');
 
-		const action: SyncAction = {
-			type: 'deleteLocal',
+		const candidate: Candidate = makeCandidate({
 			path: 'note.md',
+			actionType: 'deleteLocal',
+			driveFileId: 'drive-note-1',
 			local: undefined, // file gone on local side
-		};
+		});
 
-		const result = await syncOneFile(action, ctx, true);
+		const result = await syncOneFile(candidate, ctx, true);
 
 		expect(result.changed).toBe(true);
-		// localFs.delete called (it is a no-op when the TFile is absent).
+		// localFs.delete called (it is a no-op when the TFile is absent in real Obsidian).
 		expect(deleteSpy).toHaveBeenCalledWith('note.md');
-		// Orphaned record must be cleaned up.
-		expect(records.has('note.md')).toBe(false);
 	});
 });

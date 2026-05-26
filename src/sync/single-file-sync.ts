@@ -1,8 +1,8 @@
 import type { Workspace } from 'obsidian';
 import { MarkdownView } from 'obsidian';
-import type { SyncContext } from './types';
-import { buildMixedEntries } from './change-detector';
-import { planActions } from './decision-engine';
+import type { Candidate, SyncContext } from './types';
+import type { CandidateStore } from './candidate-store';
+import { planAction } from './decision-engine';
 import { syncOneFile } from './file-syncer';
 import { ConfirmationModal } from '../ui/confirmation-modal';
 import { GDriveError } from '../gdrive/errors';
@@ -15,6 +15,7 @@ import { GDriveError } from '../gdrive/errors';
 export async function singleFileSync(
 	path: string,
 	ctx: SyncContext,
+	candidateStore: CandidateStore,
 	workspace: Workspace,
 	setStatusBar: (text: string) => void,
 	clearHoldDown?: (path: string) => void,
@@ -27,47 +28,89 @@ export async function singleFileSync(
 	ctx.logger.debug(`singleFileSync: ${path} — fetching remote status`);
 
 	try {
-		const [localSide, remoteSide, record] = await Promise.all([
+		const [localSide, remoteSide] = await Promise.all([
 			Promise.resolve(ctx.localFs.stat(path)),
 			ctx.driveFs.stat(rootFolderId, path),
-			ctx.store.getRecord(path),
 		]);
 
-		const hasHistory = !!record;
-		const entries = buildMixedEntries(
-			localSide ? [localSide] : [],
-			remoteSide ? [remoteSide] : [],
-			record ? [record] : [],
-		);
+		// Look up the existing candidate from the store to get sync history.
+		// If not found (brand-new path not yet discovered by a bulk pass),
+		// build a transient Candidate with no history.
+		const existing = candidateStore.getAll().find(c => c.path === path);
+		const candidate: Candidate = existing
+			? { ...existing, local: localSide ?? undefined, remote: remoteSide ?? undefined }
+			: {
+				path,
+				state: 'Default',
+				actionType: 'noOp',  // will be recomputed below
+				driveFileId: remoteSide?.driveFileId ?? '',
+				syncedLocalMtime: 0,
+				syncedRemoteMtime: 0,
+				syncedLocalSize: 0,
+				syncedRemoteSize: 0,
+				syncedAt: 0,
+				deferredAt: 0,
+				deferredLocalMtime: 0,
+				deferredRemoteMtime: 0,
+				local: localSide ?? undefined,
+				remote: remoteSide ?? undefined,
+			};
 
-		const actions = planActions(entries, hasHistory).filter(a => a.type !== 'noOp');
-		if (actions.length === 0) {
+		const vaultHasHistory = candidateStore.hasSyncHistory();
+		const actionType = planAction(
+			existing ?? null,
+			localSide ?? undefined,
+			remoteSide ?? undefined,
+			vaultHasHistory,
+		);
+		candidate.actionType = actionType;
+
+		if (actionType === 'noOp') {
 			ctx.logger.debug(`singleFileSync: ${path} — no action needed`);
 			return;
 		}
 
-		const action = actions[0]!;
-		ctx.logger.debug(`singleFileSync: ${path} — action=${action.type}`);
+		ctx.logger.debug(`singleFileSync: ${path} — action=${actionType}`);
 
-		const fileResult = await syncOneFile(action, ctx, hasHistory);
+		const fileResult = await syncOneFile(candidate, ctx, vaultHasHistory);
 
 		if (!fileResult.changed) return;
 
-		if (fileResult.conflictLocalPath) {
-			// Conflict files created — reopen view on the local conflict file.
+		// Update CandidateStore based on the result.
+		if (actionType === 'deleteLocal' || actionType === 'deleteRemote') {
+			await candidateStore.remove(path);
+		} else if (fileResult.syncedState) {
+			if (existing) {
+				await candidateStore.markSynced(path, fileResult.syncedState);
+			} else {
+				// Newly-discovered file: insert as synced.
+				await candidateStore.insertSynced(path, fileResult.syncedState);
+			}
+		}
+		if (fileResult.newSyncedFiles) {
+			for (const f of fileResult.newSyncedFiles) {
+				const { path: newPath, ...state } = f;
+				await candidateStore.insertSynced(newPath, state);
+			}
+		}
+
+		// If conflict files were created (keep-both / delete-conflict), reopen the view.
+		const localConflictPath = fileResult.newSyncedFiles?.[0]?.path;
+		const remoteConflictPath = fileResult.newSyncedFiles?.[1]?.path;
+		if (localConflictPath) {
 			const overlay = showSyncOverlay(path, workspace);
 			try {
-				await reopenOnConflictFile(fileResult.conflictLocalPath, workspace);
+				await reopenOnConflictFile(localConflictPath, workspace);
 				await ConfirmationModal.prompt(
 					ctx.app,
 					'Sync conflict',
 					`Sync downloaded a conflicting change to the currently open file. ` +
-					`The conflicting file is <code>${fileResult.conflictRemotePath ?? ''}</code>`,
+					`The conflicting file is <code>${remoteConflictPath ?? ''}</code>`,
 				);
 			} finally {
 				overlay();
 			}
-		} else if (action.type === 'pull' || fileResult.merged) {
+		} else if (actionType === 'pull' || fileResult.merged) {
 			// Content changed on disk — refresh the open view.
 			const overlay = showSyncOverlay(path, workspace);
 			try {

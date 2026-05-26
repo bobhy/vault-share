@@ -1,25 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import { SyncStore, EMPTY_STATS } from './store';
-import type { SyncRecord, SyncStats } from './types';
+import type { SyncStats } from './types';
 
 beforeEach(() => {
 	// eslint-disable-next-line obsidianmd/prefer-active-doc -- test env setup, not production UI code
 	globalThis.indexedDB = new IDBFactory();
 });
-
-function makeRecord(path: string, overrides: Partial<SyncRecord> = {}): SyncRecord {
-	return {
-		path,
-		driveFileId: `drive-${path}`,
-		localMtime: 1000,
-		remoteMtime: 2000,
-		localSize: 100,
-		remoteSize: 100,
-		syncedAt: 3000,
-		...overrides,
-	};
-}
 
 describe('SyncStore', () => {
 	let store: SyncStore;
@@ -31,50 +18,6 @@ describe('SyncStore', () => {
 
 	afterEach(() => {
 		store.close();
-	});
-
-	// -------------------------------------------------------------------------
-	// sync-records store
-	// -------------------------------------------------------------------------
-
-	describe('sync records', () => {
-		it('returns undefined for unknown path', async () => {
-			expect(await store.getRecord('missing.md')).toBeUndefined();
-		});
-
-		it('round-trips a record', async () => {
-			const rec = makeRecord('notes/hello.md');
-			await store.putRecord(rec);
-			expect(await store.getRecord('notes/hello.md')).toEqual(rec);
-		});
-
-		it('overwrites an existing record with the same path', async () => {
-			await store.putRecord(makeRecord('a.md', { localMtime: 100 }));
-			await store.putRecord(makeRecord('a.md', { localMtime: 999 }));
-			expect((await store.getRecord('a.md'))!.localMtime).toBe(999);
-		});
-
-		it('getAllRecords returns all stored records', async () => {
-			await store.putRecord(makeRecord('a.md'));
-			await store.putRecord(makeRecord('b.md'));
-			const all = await store.getAllRecords();
-			expect(all).toHaveLength(2);
-			expect(all.map(r => r.path).sort()).toEqual(['a.md', 'b.md']);
-		});
-
-		it('getAllRecords returns empty array when no records exist', async () => {
-			expect(await store.getAllRecords()).toEqual([]);
-		});
-
-		it('deleteRecord removes the record', async () => {
-			await store.putRecord(makeRecord('x.md'));
-			await store.deleteRecord('x.md');
-			expect(await store.getRecord('x.md')).toBeUndefined();
-		});
-
-		it('deleteRecord is a no-op for unknown path', async () => {
-			await expect(store.deleteRecord('ghost.md')).resolves.toBeUndefined();
-		});
 	});
 
 	// -------------------------------------------------------------------------
@@ -102,6 +45,25 @@ describe('SyncStore', () => {
 			const result = await store.getContent('f.md');
 			expect(new TextDecoder().decode(result)).toBe('v2');
 		});
+
+		it('deleteContent removes the entry', async () => {
+			const buf = new TextEncoder().encode('to delete').buffer;
+			await store.putContent('del.md', buf);
+			await store.deleteContent('del.md');
+			expect(await store.getContent('del.md')).toBeUndefined();
+		});
+
+		it('deleteContent is a no-op for unknown path', async () => {
+			await expect(store.deleteContent('ghost.md')).resolves.toBeUndefined();
+		});
+
+		it('clearContent removes all entries', async () => {
+			await store.putContent('a.md', new TextEncoder().encode('a').buffer);
+			await store.putContent('b.md', new TextEncoder().encode('b').buffer);
+			await store.clearContent();
+			expect(await store.getContent('a.md')).toBeUndefined();
+			expect(await store.getContent('b.md')).toBeUndefined();
+		});
 	});
 
 	// -------------------------------------------------------------------------
@@ -123,6 +85,12 @@ describe('SyncStore', () => {
 			await store.putStats({ ...EMPTY_STATS, filesPushed: 1 });
 			await store.putStats({ ...EMPTY_STATS, filesPushed: 99 });
 			expect((await store.getStats()).filesPushed).toBe(99);
+		});
+
+		it('clearStats resets to EMPTY_STATS', async () => {
+			await store.putStats({ ...EMPTY_STATS, filesPushed: 7 });
+			await store.clearStats();
+			expect(await store.getStats()).toEqual(EMPTY_STATS);
 		});
 	});
 
@@ -148,72 +116,22 @@ describe('SyncStore', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// clearHistory
-	// -------------------------------------------------------------------------
-
-	describe('clearHistory', () => {
-		it('removes all records and content', async () => {
-			await store.putRecord(makeRecord('a.md'));
-			await store.putContent('a.md', new ArrayBuffer(4));
-			await store.clearHistory();
-			expect(await store.getAllRecords()).toEqual([]);
-			expect(await store.getContent('a.md')).toBeUndefined();
-		});
-
-		it('leaves stats and client id intact', async () => {
-			await store.putStats({ ...EMPTY_STATS, filesPushed: 7 });
-			await store.putClientId('my-id');
-			await store.clearHistory();
-			expect((await store.getStats()).filesPushed).toBe(7);
-			expect(await store.getClientId()).toBe('my-id');
-		});
-	});
-
-	// -------------------------------------------------------------------------
-	// clearAll
-	// -------------------------------------------------------------------------
-
-	describe('clearAll', () => {
-		it('removes records, content, and stats', async () => {
-			await store.putRecord(makeRecord('a.md'));
-			await store.putContent('a.md', new ArrayBuffer(4));
-			await store.putStats({ ...EMPTY_STATS, bulkSyncPasses: 10 });
-			await store.clearAll();
-			expect(await store.getAllRecords()).toEqual([]);
-			expect(await store.getContent('a.md')).toBeUndefined();
-			expect(await store.getStats()).toEqual(EMPTY_STATS);
-		});
-
-		it('leaves client id intact', async () => {
-			await store.putClientId('device-abc');
-			await store.clearAll();
-			expect(await store.getClientId()).toBe('device-abc');
-		});
-	});
-
-	// -------------------------------------------------------------------------
 	// schema upgrade (cold-start)
 	// -------------------------------------------------------------------------
 
 	describe('schema upgrade', () => {
 		it('drops and recreates stores on version bump (cold-start)', async () => {
-			// Write data at version 1.
-			await store.putRecord(makeRecord('before.md'));
+			// Write content at the current version, then verify a fresh store starts empty.
+			await store.putContent('before.md', new TextEncoder().encode('x').buffer);
 			store.close();
 
-			// Re-open at a higher version — simulates a schema migration.
-			// We can't bump DB_VERSION from here, so we create a helper with a
-			// different dbName and an upgrade that mimics the cold-start pattern.
-			let upgradeFired = false;
+			// Re-open at a higher version simulates a schema migration.
+			// We can't bump DB_VERSION from here, but we can verify that a fresh-named
+			// store opens cleanly and starts empty (tests the creation path).
 			const helper2 = new SyncStore('test-vault-v2');
-			// We cannot trigger oldVersion > 0 in a fresh IDB, but we can verify
-			// that the store opens cleanly and starts empty.
 			await helper2.open();
-			expect(await helper2.getAllRecords()).toEqual([]);
+			expect(await helper2.getContent('before.md')).toBeUndefined();
 			helper2.close();
-
-			upgradeFired = true;
-			expect(upgradeFired).toBe(true);
 		});
 	});
 });

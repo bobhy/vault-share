@@ -1,6 +1,7 @@
 import type { EventRef, Workspace, WorkspaceLeaf } from 'obsidian';
 import type { SyncContext } from './types';
 import type { BulkSync } from './bulk-sync';
+import type { CandidateStore } from './candidate-store';
 import { singleFileSync } from './single-file-sync';
 
 interface PerFileState {
@@ -18,22 +19,22 @@ interface PerFileState {
 export interface SyncSchedulerDeps {
 	ctx: SyncContext;
 	bulkSync: BulkSync;
+	candidateStore: CandidateStore;
 	workspace: Workspace;
 	setStatusBar: (text: string) => void;
 	registerEvent: (ref: EventRef) => void;
 	registerInterval: (id: number) => void;
 	/**
 	 * Returns the current sharing-paused state synchronously.
-	 * Backed by {@link DeferralManager.isPausedSync}, which reads from a cache that is
-	 * kept in sync with every {@link DeferralManager.setPaused} call.
+	 * Backed by {@link CandidateStore.isPausedSync}, which reads from a cache that is
+	 * kept in sync with every {@link CandidateStore.setPaused} call.
 	 * Must be accurate before the first scheduler tick (warm the cache via
-	 * `await deferralManager.init()` before calling {@link SyncScheduler.start}).
+	 * `await candidateStore.init()` before calling {@link SyncScheduler.start}).
 	 */
 	isSharingPaused: () => boolean;
 	/**
 	 * Returns true if the given vault path is currently deferred.
-	 * Backed by {@link DeferralManager.isDeferredPathSync}, which reads from a cache
-	 * populated by {@link DeferralManager.init}.
+	 * Backed by {@link CandidateStore.isDeferred}, which reads from the in-memory cache.
 	 * Prevents single-file sync from executing a deferred file while sharing is
 	 * otherwise running (e.g. after the user has partially released candidates).
 	 */
@@ -203,7 +204,7 @@ export class SyncScheduler {
 				state.nextHoldDownAt = Infinity;
 				state.nextPollAt = state.monitored ? now + pollMs : Infinity;
 				if (!this.deps.isDeferredPath(path)) {
-					void singleFileSync(path, ctx, workspace, setStatusBar, p => this.clearHoldDown(p));
+					void singleFileSync(path, ctx, this.deps.candidateStore, workspace, setStatusBar, p => this.clearHoldDown(p));
 				}
 			}
 		}

@@ -171,18 +171,152 @@ When both sides have the same bytes but different mtimes, the planner correctly 
 identical-content case at execution time and reconciles the `SyncRecord` without any file
 writes, so future planning passes see `noOp` for those paths.
 
-*(Full design TBD — to be specced before Phase 2 implementation begins.)*
+### Hash source: Drive's `sha256Checksum`
+
+Google Drive API v3 provides a `sha256Checksum` field on every File resource for binary
+files stored in Drive (added August 2022). It is returned for free alongside existing
+metadata in `files.list` responses — no extra API call — when added to the `fields=`
+parameter. The field is documented as *"if available"*: it may be absent for files uploaded
+before August 2022, or lazily populated in edge cases. Absent = missing/empty field, never
+an error.
+
+Vault files (`.md`, `.json`, images, etc.) always qualify. Google Workspace documents
+(Docs, Sheets, Slides) do not, but vault-share never syncs those.
+
+`sha256Checksum` pairs directly with `crypto.subtle.digest('SHA-256', ...)` — the standard
+Web Crypto API available on all platforms including Obsidian mobile. No external library is
+needed.
+
+The "if available" gap is self-healing: every file vault-share pushes or updates will have
+its `sha256Checksum` populated in the response going forward.
+
+### Design
+
+#### Layer 1 — Drive API: surface `sha256Checksum`
+
+Add `sha256Checksum?: string` to the `DriveFile` interface in `src/gdrive/api.ts` and to
+the `assertDriveFile` validator. Add `sha256Checksum` to the `fields=` string in every
+method that requests file metadata:
+
+| Method | Current `fields=` | Addition |
+|---|---|---|
+| `listChildren` | `files(id,name,mimeType,modifiedTime)` | `sha256Checksum` |
+| `getFile` | `id,name,mimeType,modifiedTime` | `sha256Checksum` |
+| `findChild` | `files(id,name,mimeType,modifiedTime)` | `sha256Checksum` |
+| `createFileWithContent` | `id,name,mimeType,modifiedTime` | `sha256Checksum` |
+| `updateFileContent` | `id,name,mimeType,modifiedTime` | `sha256Checksum` |
+
+#### Layer 2 — Drive FS adapter: thread `sha256Checksum` into `DriveFileSide`
+
+Add `sha256Checksum?: string` to `DriveFileSide` in `src/sync/drive-fs.ts`. Populate it
+from `DriveFile.sha256Checksum` wherever `DriveFileSide` objects are constructed (in
+`walkFolder` and `stat`). The write path (`driveFs.write`) already returns a `DriveFile`;
+thread `sha256Checksum` through to the returned `DriveFileSide` so newly pushed files
+immediately have their hash available for the next planning pass.
+
+`DriveFileSide` flows into `SyncAction.remote` via `MixedEntry`, so the hash arrives at
+the executor with no further plumbing.
+
+#### Layer 3 — Hash utility
+
+New file `src/sync/content-hash.ts`:
+
+```ts
+/**
+ * Compute the SHA-256 hex digest of an ArrayBuffer using Web Crypto.
+ * Available on all platforms including Obsidian mobile (no Node.js required).
+ */
+export async function sha256Hex(content: ArrayBuffer): Promise<string> {
+    const hashBuffer = await crypto.subtle.digest('SHA-256', content);
+    return Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+}
+```
+
+#### Layer 4 — Execution: short-circuit identical-content conflicts
+
+In `src/sync/file-syncer.ts`, at the top of the `conflict` case, before calling
+`resolveConflict`:
+
+```
+1. Size fast-path: if action.local.size !== action.remote.size → skip hash, fall through
+   to resolveConflict (content is definitely different).
+
+2. Hash fast-path: if action.remote.sha256Checksum is absent → fall through to
+   resolveConflict (no hash to compare against; pre-2022 file or edge case).
+
+3. Read local content: await ctx.localFs.read(action.path)
+
+4. Compute local hash: await sha256Hex(localContent)
+
+5. Compare: if localHash !== action.remote.sha256Checksum → fall through to resolveConflict,
+   passing localContent as a pre-read to avoid a second local read inside resolveConflict.
+
+6. Identical content: write SyncRecord with actual current timestamps from both sides.
+   No file writes. Store local content in sync-content cache.
+   Log at INFO: "Timestamp reconciled (identical content): <path>"
+   Return { changed: true, identicalContent: true, merged: false, hadConflictMarkers: false }
+```
+
+Step 5 passes `localContent` into `resolveConflict` as an optional `preread` argument to
+avoid a redundant local file read for genuine conflicts. `resolveConflict` and its internal
+strategy functions accept `preread?: { localContent: ArrayBuffer }` and use it when present.
+
+#### Layer 5 — Result accounting
+
+Add to `FileSyncResult`:
+```ts
+identicalContent: boolean;   // true when hash matched; no file writes performed
+```
+
+Add to `SyncPassResult`:
+```ts
+identicalTimestamps: number; // count of files reconciled via hash match
+```
+
+`BulkSync.doRun` increments `result.identicalTimestamps` when `fileResult.identicalContent`
+is true, and includes the count in the status bar summary when > 0:
+`"Shared: 0 downloaded, 0 uploaded, 0 deleted, 200 timestamps reconciled"`
+
+### Files affected
+
+| File | Change |
+|---|---|
+| `src/gdrive/api.ts` | Add `sha256Checksum?: string` to `DriveFile`; add to all `fields=` strings; update `assertDriveFile` |
+| `src/sync/drive-fs.ts` | Add `sha256Checksum?: string` to `DriveFileSide`; populate from `DriveFile` in `walkFolder`, `stat`, and write path |
+| `src/sync/types.ts` | Add `identicalContent: boolean` to `FileSyncResult`; add `identicalTimestamps: number` to `SyncPassResult` |
+| `src/sync/content-hash.ts` | New file: `sha256Hex()` utility |
+| `src/sync/file-syncer.ts` | Size fast-path; hash fast-path; local read + hash; SyncRecord reconcile for identical; `preread` threading |
+| `src/sync/conflict-resolver.ts` | Accept optional `preread?: { localContent: ArrayBuffer }`; use when present to skip re-read |
+| `src/sync/bulk-sync.ts` | Count `identicalTimestamps`; include in status bar summary |
+| `src/gdrive/api.test.ts` | Verify `sha256Checksum` is included in `fields=` and passed through `assertDriveFile` |
+| `src/sync/drive-fs.test.ts` | Verify `sha256Checksum` flows from `DriveFile` into `DriveFileSide` |
+| `src/sync/content-hash.ts` | Unit tests for `sha256Hex` (mock `crypto.subtle`) |
+| `src/sync/file-syncer.test.ts` | Size fast-path; hash fast-path (absent hash); identical-content path (SyncRecord written, no resolveConflict); differing-content path (resolveConflict called with preread) |
+| `specs/ARCHITECTURE.md` | **Update after implementation is complete** — see §Architecture doc task below |
+
+### Graceful degradation summary
+
+| Condition | Behaviour |
+|---|---|
+| `sha256Checksum` absent on remote | Fall through to normal conflict resolution |
+| Sizes differ | Fall through immediately (skip hash computation) |
+| Hashes differ | Fall through to `resolveConflict`, passing pre-read local content |
+| Hash matches | Reconcile SyncRecord only; no file writes; count as `identicalTimestamps` |
 
 ---
 
 ## Architecture doc task
 
-After Phase 1 implementation is merged, update `specs/ARCHITECTURE.md` to document:
+Update `specs/ARCHITECTURE.md` after each phase merges:
+
+### After Phase 1
 
 1. The **plan → review → execute** flow as a first-class mode distinct from the automated
-   schedule-and-sync loop. The three phases are: `doPlanning` (enumerate + plan),
-   user review in the Sharing Status panel / Candidate list modal (filter), and
-   `executeApproved` (execute without re-planning or threshold guard).
+   schedule-and-sync loop. The three phases are: `doPlanning` (enumerate + plan), user
+   review in the Sharing Status panel / Candidate list modal (filter), and `executeApproved`
+   (execute without re-planning or threshold guard).
 
 2. The updated **`ViewCandidate`** type: that it extends `SyncAction` and is the single
    representation used from planning through to execution, avoiding lossy projection.
@@ -190,3 +324,17 @@ After Phase 1 implementation is merged, update `specs/ARCHITECTURE.md` to docume
 3. The **`DeferredCandidate`** / **`ViewCandidate`** distinction: `DeferredCandidate` is the
    persisted IDB snapshot (survives restarts, supplies mtimes for auto-revocation);
    `ViewCandidate` is the live in-memory representation used by the UI and executor.
+
+### After Phase 2
+
+1. The **`sha256Checksum`** field on `DriveFileSide`: that it comes free from the Drive
+   `files.list` response, requires no extra API call, and is used at conflict-execution time
+   to short-circuit identical-content conflicts without a remote file download.
+
+2. The **identical-content fast path** in `file-syncer`: size check → hash check →
+   SyncRecord reconcile. Explain the three-level graceful degradation (absent hash, size
+   mismatch, hash mismatch) so future maintainers understand why `resolveConflict` is not
+   always called for `conflict`-typed actions.
+
+3. The **`identicalTimestamps`** counter in `SyncPassResult` and its appearance in the
+   status bar summary.

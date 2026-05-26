@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { SyncContext } from './types';
+import type { Candidate, SyncContext } from './types';
 import type { DriveFileSide } from './drive-fs';
 import { buildConflictFilename, resolveConflict } from './conflict-resolver';
 
@@ -14,7 +14,7 @@ function makeDriveSide(overrides: Partial<DriveFileSide> = {}): DriveFileSide {
 function makeMockCtx(): SyncContext & {
 	localFs: { read: ReturnType<typeof vi.fn>; write: ReturnType<typeof vi.fn>; stat: ReturnType<typeof vi.fn>; rename: ReturnType<typeof vi.fn> };
 	driveFs: { write: ReturnType<typeof vi.fn>; stat: ReturnType<typeof vi.fn>; readBinary: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> };
-	store: { getContent: ReturnType<typeof vi.fn>; putRecord: ReturnType<typeof vi.fn> };
+	store: { getContent: ReturnType<typeof vi.fn>; putContent: ReturnType<typeof vi.fn> };
 	statsTracker: { recordPush: ReturnType<typeof vi.fn>; recordPull: ReturnType<typeof vi.fn>; recordMerge: ReturnType<typeof vi.fn>; recordContentConflict: ReturnType<typeof vi.fn>; recordDeleteConflict: ReturnType<typeof vi.fn>; recordAPIResponseTime: ReturnType<typeof vi.fn>; recordClockSkew: ReturnType<typeof vi.fn> };
 } {
 	const localFs = {
@@ -31,7 +31,7 @@ function makeMockCtx(): SyncContext & {
 	};
 	const store = {
 		getContent: vi.fn().mockResolvedValue(null),
-		putRecord: vi.fn().mockResolvedValue(undefined),
+		putContent: vi.fn().mockResolvedValue(undefined),
 	};
 	const statsTracker = {
 		recordPush: vi.fn(),
@@ -53,6 +53,32 @@ function makeMockCtx(): SyncContext & {
 		app: {} as never,
 		logger: {} as never,
 	} as unknown as ReturnType<typeof makeMockCtx>;
+}
+
+/** Build a full Candidate for conflict tests. */
+function makeConflictCandidate(
+	path: string,
+	local: Candidate['local'],
+	remote: Candidate['remote'],
+	overrides: Partial<Candidate> = {},
+): Candidate {
+	return {
+		path,
+		state: 'Default',
+		actionType: 'conflict',
+		driveFileId: remote?.driveFileId ?? '',
+		syncedLocalMtime: 0,
+		syncedRemoteMtime: 0,
+		syncedLocalSize: 0,
+		syncedRemoteSize: 0,
+		syncedAt: 0,
+		deferredAt: 0,
+		deferredLocalMtime: 0,
+		deferredRemoteMtime: 0,
+		local,
+		remote,
+		...overrides,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -90,14 +116,13 @@ describe('buildConflictFilename', () => {
 describe('resolveConflict: Use Newer', () => {
 	it('pushes local content to Drive when local is newer', async () => {
 		const ctx = makeMockCtx();
-		const action = {
-			type: 'conflict' as const,
-			path: 'test.md',
-			local: { path: 'test.md', mtime: 2000, size: 10 },
-			remote: { path: 'test.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
-		};
+		const candidate = makeConflictCandidate(
+			'test.md',
+			{ path: 'test.md', mtime: 2000, size: 10 },
+			{ path: 'test.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
+		);
 
-		const result = await resolveConflict(action, 'Keep Both', 'Use Newer', ctx);
+		const result = await resolveConflict(candidate, 'Keep Both', 'Use Newer', ctx);
 
 		expect(ctx.localFs.read).toHaveBeenCalledWith('test.md');
 		expect(ctx.driveFs.write).toHaveBeenCalledWith('root-id', 'test.md', expect.anything(), expect.anything(), expect.anything());
@@ -108,14 +133,13 @@ describe('resolveConflict: Use Newer', () => {
 	it('pulls remote content to local when remote is newer', async () => {
 		const ctx = makeMockCtx();
 		ctx.driveFs.stat.mockResolvedValue(makeDriveSide({ driveFileId: 'remote-id' }));
-		const action = {
-			type: 'conflict' as const,
-			path: 'test.md',
-			local: { path: 'test.md', mtime: 500, size: 10 },
-			remote: { path: 'test.md', mtime: 2000, size: 10, driveFileId: 'remote-id' },
-		};
+		const candidate = makeConflictCandidate(
+			'test.md',
+			{ path: 'test.md', mtime: 500, size: 10 },
+			{ path: 'test.md', mtime: 2000, size: 10, driveFileId: 'remote-id' },
+		);
 
-		const result = await resolveConflict(action, 'Keep Both', 'Use Newer', ctx);
+		const result = await resolveConflict(candidate, 'Keep Both', 'Use Newer', ctx);
 
 		expect(ctx.driveFs.stat).toHaveBeenCalledWith('root-id', 'test.md');
 		expect(ctx.driveFs.readBinary).toHaveBeenCalledWith('remote-id');
@@ -133,20 +157,20 @@ describe('resolveConflict: Keep Both', () => {
 	it('renames local file, writes remote locally, pushes both to Drive, and deletes original', async () => {
 		const ctx = makeMockCtx();
 		ctx.driveFs.stat.mockResolvedValue(makeDriveSide({ driveFileId: 'original-drive-id' }));
-		const action = {
-			type: 'conflict' as const,
-			path: 'note.md',
-			local: { path: 'note.md', mtime: 2000, size: 10 },
-			remote: { path: 'note.md', mtime: 1000, size: 10, driveFileId: 'original-drive-id' },
-		};
+		const candidate = makeConflictCandidate(
+			'note.md',
+			{ path: 'note.md', mtime: 2000, size: 10 },
+			{ path: 'note.md', mtime: 1000, size: 10, driveFileId: 'original-drive-id' },
+		);
 
-		const result = await resolveConflict(action, 'Keep Both', 'Keep Both', ctx);
+		const result = await resolveConflict(candidate, 'Keep Both', 'Keep Both', ctx);
 
 		expect(ctx.localFs.rename).toHaveBeenCalled();
 		expect(ctx.localFs.write).toHaveBeenCalled();
 		expect(ctx.driveFs.write).toHaveBeenCalledTimes(2);
 		expect(ctx.driveFs.delete).toHaveBeenCalledWith('original-drive-id');
-		expect(ctx.store.putRecord).toHaveBeenCalledTimes(2);
+		// Conflict copies are returned as newSyncedFiles, not stored via putRecord.
+		expect(result.newSyncedFiles).toHaveLength(2);
 		expect(ctx.statsTracker.recordContentConflict).toHaveBeenCalled();
 		expect(result.merged).toBe(false);
 		expect(result.localConflictPath).toMatch(/note-conflict-/);
@@ -164,14 +188,13 @@ describe('resolveConflict: Merge', () => {
 		ctx.localFs.read.mockResolvedValue(new TextEncoder().encode('line1\nline2\n').buffer);
 		ctx.driveFs.stat.mockResolvedValue(makeDriveSide({ driveFileId: 'remote-id' }));
 		ctx.driveFs.readBinary.mockResolvedValue(new TextEncoder().encode('line1\nline2\n').buffer);
-		const action = {
-			type: 'conflict' as const,
-			path: 'note.md',
-			local: { path: 'note.md', mtime: 2000, size: 10 },
-			remote: { path: 'note.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
-		};
+		const candidate = makeConflictCandidate(
+			'note.md',
+			{ path: 'note.md', mtime: 2000, size: 10 },
+			{ path: 'note.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
+		);
 
-		const result = await resolveConflict(action, 'Keep Both', 'Merge', ctx);
+		const result = await resolveConflict(candidate, 'Keep Both', 'Merge', ctx);
 
 		expect(ctx.localFs.write).toHaveBeenCalledWith('note.md', expect.anything());
 		expect(ctx.driveFs.write).toHaveBeenCalledWith('root-id', 'note.md', expect.anything(), expect.anything(), expect.anything());
@@ -185,14 +208,13 @@ describe('resolveConflict: Merge', () => {
 		ctx.driveFs.stat.mockResolvedValue(makeDriveSide({ driveFileId: 'remote-id' }));
 		// Remote has different content and base is empty (store returns null) → conflict
 		ctx.driveFs.readBinary.mockResolvedValue(new TextEncoder().encode('remote only line\n').buffer);
-		const action = {
-			type: 'conflict' as const,
-			path: 'note.md',
-			local: { path: 'note.md', mtime: 2000, size: 10 },
-			remote: { path: 'note.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
-		};
+		const candidate = makeConflictCandidate(
+			'note.md',
+			{ path: 'note.md', mtime: 2000, size: 10 },
+			{ path: 'note.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
+		);
 
-		await resolveConflict(action, 'Keep Both', 'Merge', ctx);
+		await resolveConflict(candidate, 'Keep Both', 'Merge', ctx);
 
 		expect(ctx.statsTracker.recordContentConflict).toHaveBeenCalled();
 	});
@@ -200,35 +222,34 @@ describe('resolveConflict: Merge', () => {
 	it('treats a disappeared remote as a push (race condition)', async () => {
 		const ctx = makeMockCtx();
 		ctx.driveFs.stat.mockResolvedValue(null); // remote vanished between planning and merge
-		const action = {
-			type: 'conflict' as const,
-			path: 'note.md',
-			local: { path: 'note.md', mtime: 2000, size: 10 },
-			remote: { path: 'note.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
-		};
+		const candidate = makeConflictCandidate(
+			'note.md',
+			{ path: 'note.md', mtime: 2000, size: 10 },
+			{ path: 'note.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
+		);
 
-		const result = await resolveConflict(action, 'Keep Both', 'Merge', ctx);
+		const result = await resolveConflict(candidate, 'Keep Both', 'Merge', ctx);
 
 		expect(ctx.driveFs.write).toHaveBeenCalled();
 		expect(ctx.statsTracker.recordPush).toHaveBeenCalled();
 		expect(result).toEqual({ merged: false, hadConflictMarkers: false });
 	});
 
-	it('uses stored base content when a sync record provides one', async () => {
+	it('uses stored base content when syncedAt > 0 (candidate has sync history)', async () => {
 		const ctx = makeMockCtx();
 		ctx.localFs.read.mockResolvedValue(new TextEncoder().encode('base\nlocal change\n').buffer);
 		ctx.driveFs.stat.mockResolvedValue(makeDriveSide({ driveFileId: 'remote-id' }));
 		ctx.driveFs.readBinary.mockResolvedValue(new TextEncoder().encode('base\nremote change\n').buffer);
 		ctx.store.getContent.mockResolvedValue(new TextEncoder().encode('base\n').buffer);
-		const action = {
-			type: 'conflict' as const,
-			path: 'note.md',
-			local: { path: 'note.md', mtime: 2000, size: 10 },
-			remote: { path: 'note.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
-			record: { path: 'note.md', driveFileId: 'remote-id', localMtime: 0, remoteMtime: 0, localSize: 0, remoteSize: 0, syncedAt: 0 },
-		};
+		// syncedAt > 0 tells resolveMerge to fetch cached base content.
+		const candidate = makeConflictCandidate(
+			'note.md',
+			{ path: 'note.md', mtime: 2000, size: 10 },
+			{ path: 'note.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
+			{ syncedAt: 1000 },
+		);
 
-		await resolveConflict(action, 'Keep Both', 'Merge', ctx);
+		await resolveConflict(candidate, 'Keep Both', 'Merge', ctx);
 
 		expect(ctx.store.getContent).toHaveBeenCalledWith('note.md');
 	});
@@ -236,14 +257,13 @@ describe('resolveConflict: Merge', () => {
 	it('uses fileStrategy (Keep Both) for non-eligible file extensions even when textStrategy is Merge', async () => {
 		const ctx = makeMockCtx();
 		ctx.driveFs.stat.mockResolvedValue(makeDriveSide({ driveFileId: 'original-id' }));
-		const action = {
-			type: 'conflict' as const,
-			path: 'image.png',
-			local: { path: 'image.png', mtime: 2000, size: 100 },
-			remote: { path: 'image.png', mtime: 1000, size: 100, driveFileId: 'original-id' },
-		};
+		const candidate = makeConflictCandidate(
+			'image.png',
+			{ path: 'image.png', mtime: 2000, size: 100 },
+			{ path: 'image.png', mtime: 1000, size: 100, driveFileId: 'original-id' },
+		);
 
-		const result = await resolveConflict(action, 'Keep Both', 'Merge', ctx);
+		const result = await resolveConflict(candidate, 'Keep Both', 'Merge', ctx);
 
 		// Keep Both path: renames local and writes remote copy
 		expect(ctx.localFs.rename).toHaveBeenCalled();
@@ -259,37 +279,36 @@ describe('resolveConflict: Merge', () => {
 describe('resolveConflict: delete conflicts', () => {
 	it('creates a placeholder locally and on Drive when local was deleted', async () => {
 		const ctx = makeMockCtx();
-		const action = {
-			type: 'conflict' as const,
-			path: 'note.md',
-			local: undefined,
-			remote: { path: 'note.md', mtime: 2000, size: 10, driveFileId: 'remote-id' },
-		};
+		const candidate = makeConflictCandidate(
+			'note.md',
+			undefined,  // local deleted
+			{ path: 'note.md', mtime: 2000, size: 10, driveFileId: 'remote-id' },
+		);
 
-		const result = await resolveConflict(action, 'Keep Both', 'Merge', ctx);
+		const result = await resolveConflict(candidate, 'Keep Both', 'Merge', ctx);
 
 		expect(ctx.localFs.write).toHaveBeenCalled();
 		expect(ctx.driveFs.write).toHaveBeenCalled();
-		expect(ctx.store.putRecord).toHaveBeenCalled();
+		// Placeholder file returned as newSyncedFiles (no putRecord call).
+		expect(result.newSyncedFiles).toHaveLength(1);
 		expect(ctx.statsTracker.recordDeleteConflict).toHaveBeenCalled();
-		expect(result).toEqual({ merged: false, hadConflictMarkers: false });
+		expect(result).toMatchObject({ merged: false, hadConflictMarkers: false });
 	});
 
 	it('creates a placeholder on Drive when remote was deleted', async () => {
 		const ctx = makeMockCtx();
-		const action = {
-			type: 'conflict' as const,
-			path: 'note.md',
-			local: { path: 'note.md', mtime: 2000, size: 10 },
-			remote: undefined,
-		};
+		const candidate = makeConflictCandidate(
+			'note.md',
+			{ path: 'note.md', mtime: 2000, size: 10 },
+			undefined,  // remote deleted
+		);
 
-		const result = await resolveConflict(action, 'Keep Both', 'Merge', ctx);
+		const result = await resolveConflict(candidate, 'Keep Both', 'Merge', ctx);
 
 		expect(ctx.localFs.write).toHaveBeenCalled();
 		expect(ctx.driveFs.write).toHaveBeenCalled();
-		expect(ctx.store.putRecord).toHaveBeenCalled();
+		expect(result.newSyncedFiles).toHaveLength(1);
 		expect(ctx.statsTracker.recordDeleteConflict).toHaveBeenCalled();
-		expect(result).toEqual({ merged: false, hadConflictMarkers: false });
+		expect(result).toMatchObject({ merged: false, hadConflictMarkers: false });
 	});
 });

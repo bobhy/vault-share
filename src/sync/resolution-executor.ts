@@ -1,4 +1,5 @@
-import type { SyncContext, ViewCandidate } from './types';
+import type { Candidate, SyncContext } from './types';
+import type { CandidateStore } from './candidate-store';
 import { syncOneFile } from './file-syncer';
 import { threeWayMerge, type MergeResult } from './merge';
 
@@ -6,11 +7,28 @@ import { threeWayMerge, type MergeResult } from './merge';
  * Execute the planned action for a candidate immediately.
  * Used by the **Proceed** button for push / pull / deleteLocal / deleteRemote candidates.
  *
- * Since {@link ViewCandidate} extends {@link SyncAction}, the candidate is passed
- * directly to {@link syncOneFile} without any reconstruction step.
+ * Updates {@link CandidateStore} on success so the next planning pass does not
+ * re-plan the same file.
  */
-export async function executeAction(candidate: ViewCandidate, ctx: SyncContext): Promise<void> {
-	await syncOneFile(candidate, ctx, true);
+export async function executeAction(
+	candidate: Candidate,
+	ctx: SyncContext,
+	candidateStore: CandidateStore,
+): Promise<void> {
+	const result = await syncOneFile(candidate, ctx, true);
+	if (!result.changed) return;
+
+	if (candidate.actionType === 'deleteLocal' || candidate.actionType === 'deleteRemote') {
+		await candidateStore.remove(candidate.path);
+	} else if (result.syncedState) {
+		await candidateStore.markSynced(candidate.path, result.syncedState);
+	}
+	if (result.newSyncedFiles) {
+		for (const f of result.newSyncedFiles) {
+			const { path, ...state } = f;
+			await candidateStore.insertSynced(path, state);
+		}
+	}
 }
 
 /**
@@ -19,45 +37,48 @@ export async function executeAction(candidate: ViewCandidate, ctx: SyncContext):
  *
  * | Planned | Reverse |
  * |---------|---------|
- * | push    | Trash the local file and delete the sync record |
- * | pull    | Delete the Drive file and delete the sync record |
+ * | push    | Trash the local file and remove the candidate |
+ * | pull    | Delete the Drive file and remove the candidate |
  * | deleteLocal | Restore the file from Drive to local |
  * | deleteRemote | Re-upload the local file to Drive |
  */
-export async function executeBackOut(candidate: ViewCandidate, ctx: SyncContext): Promise<void> {
+export async function executeBackOut(
+	candidate: Candidate,
+	ctx: SyncContext,
+	candidateStore: CandidateStore,
+): Promise<void> {
 	const rootFolderId = ctx.driveFolderId();
 	const sampler = { value: false };
+	const driveFileId = candidate.remote?.driveFileId ?? candidate.driveFileId;
 
-	switch (candidate.type) {
+	switch (candidate.actionType) {
 		case 'push': {
 			// Local has unsaved changes; back out = discard local.
 			await ctx.localFs.delete(candidate.path);
-			await ctx.store.deleteRecord(candidate.path);
+			await candidateStore.remove(candidate.path);
 			return;
 		}
 
 		case 'pull': {
 			// Drive has a newer file we don't want; back out = delete from Drive.
-			const driveFileId = candidate.remote?.driveFileId ?? candidate.record?.driveFileId;
 			if (driveFileId) await ctx.driveFs.delete(driveFileId);
-			await ctx.store.deleteRecord(candidate.path);
+			await candidateStore.remove(candidate.path);
 			return;
 		}
 
 		case 'deleteLocal': {
 			// Remote deleted; back out = restore it from Drive.
-			const driveFileId = candidate.remote?.driveFileId ?? candidate.record?.driveFileId;
-			if (!driveFileId) throw new Error(`No Drive file ID available to restore ${candidate.path}`);
-			const content = await ctx.driveFs.readBinary(driveFileId);
+			const fid = driveFileId;
+			if (!fid) throw new Error(`No Drive file ID available to restore ${candidate.path}`);
+			const content = await ctx.driveFs.readBinary(fid);
 			await ctx.localFs.write(candidate.path, content);
 			const localSide = ctx.localFs.stat(candidate.path);
-			await ctx.store.putRecord({
-				path: candidate.path,
-				driveFileId,
+			await candidateStore.markSynced(candidate.path, {
+				driveFileId: fid,
 				localMtime: localSide?.mtime ?? 0,
 				localSize: localSide?.size ?? 0,
-				remoteMtime: candidate.remote?.mtime ?? 0,
-				remoteSize: candidate.remote?.size ?? 0,
+				remoteMtime: candidate.remote?.mtime ?? candidate.syncedRemoteMtime,
+				remoteSize: candidate.remote?.size ?? candidate.syncedRemoteSize,
 				syncedAt: Date.now(),
 			});
 			return;
@@ -68,8 +89,7 @@ export async function executeBackOut(candidate: ViewCandidate, ctx: SyncContext)
 			const content = await ctx.localFs.read(candidate.path);
 			const driveSide = await ctx.driveFs.write(rootFolderId, candidate.path, content, ctx.statsTracker, sampler);
 			const localSide = ctx.localFs.stat(candidate.path);
-			await ctx.store.putRecord({
-				path: candidate.path,
+			await candidateStore.markSynced(candidate.path, {
 				driveFileId: driveSide.driveFileId,
 				localMtime: localSide?.mtime ?? 0,
 				localSize: localSide?.size ?? 0,
@@ -81,7 +101,7 @@ export async function executeBackOut(candidate: ViewCandidate, ctx: SyncContext)
 		}
 
 		default:
-			throw new Error(`executeBackOut: unsupported action type '${candidate.type}'`);
+			throw new Error(`executeBackOut: unsupported action type '${candidate.actionType}'`);
 	}
 }
 
@@ -90,39 +110,67 @@ export async function executeBackOut(candidate: ViewCandidate, ctx: SyncContext)
  * current `textFileConflict` setting.
  * Used by the **Merge** button for text-file conflict candidates.
  */
-export async function executeMerge(candidate: ViewCandidate, ctx: SyncContext): Promise<void> {
+export async function executeMerge(
+	candidate: Candidate,
+	ctx: SyncContext,
+	candidateStore: CandidateStore,
+): Promise<void> {
 	const mergeCtx: SyncContext = {
 		...ctx,
 		settings: () => ({ ...ctx.settings(), textFileConflict: 'Merge' }),
 	};
-	await syncOneFile({ ...candidate, type: 'conflict' }, mergeCtx, true);
+	const forMerge: Candidate = { ...candidate, actionType: 'conflict' };
+	const result = await syncOneFile(forMerge, mergeCtx, true);
+	if (result.changed && result.syncedState) {
+		await candidateStore.markSynced(candidate.path, result.syncedState);
+	}
 }
 
 /**
  * Resolve a binary conflict by keeping the local version (push local to Drive).
  * Used by the **Keep local** button for non-text-file conflict candidates.
  */
-export async function executeKeepLocal(candidate: ViewCandidate, ctx: SyncContext): Promise<void> {
-	await syncOneFile({ ...candidate, type: 'push' }, ctx, true);
+export async function executeKeepLocal(
+	candidate: Candidate,
+	ctx: SyncContext,
+	candidateStore: CandidateStore,
+): Promise<void> {
+	const forPush: Candidate = { ...candidate, actionType: 'push' };
+	const result = await syncOneFile(forPush, ctx, true);
+	if (result.changed && result.syncedState) {
+		await candidateStore.markSynced(candidate.path, result.syncedState);
+	}
 }
 
 /**
  * Resolve a binary conflict by keeping the group vault version (pull Drive to local).
  * Used by the **Keep group vault** button for non-text-file conflict candidates.
  */
-export async function executeKeepGroupVault(candidate: ViewCandidate, ctx: SyncContext): Promise<void> {
-	await syncOneFile({ ...candidate, type: 'pull' }, ctx, true);
+export async function executeKeepGroupVault(
+	candidate: Candidate,
+	ctx: SyncContext,
+	candidateStore: CandidateStore,
+): Promise<void> {
+	const forPull: Candidate = { ...candidate, actionType: 'pull' };
+	const result = await syncOneFile(forPull, ctx, true);
+	if (result.changed && result.syncedState) {
+		await candidateStore.markSynced(candidate.path, result.syncedState);
+	}
 }
 
 /**
- * Resolve a conflict by deleting both sides and the sync record.
+ * Resolve a conflict by deleting both sides and removing the candidate.
  * Used by the **Delete both** button for non-text-file conflict candidates.
  */
-export async function executeDeleteBoth(candidate: ViewCandidate, ctx: SyncContext): Promise<void> {
-	const driveFileId = candidate.remote?.driveFileId ?? candidate.record?.driveFileId;
+export async function executeDeleteBoth(
+	candidate: Candidate,
+	ctx: SyncContext,
+	candidateStore: CandidateStore,
+): Promise<void> {
+	const driveFileId = candidate.remote?.driveFileId ?? candidate.driveFileId;
 	await ctx.localFs.delete(candidate.path);
 	if (driveFileId) await ctx.driveFs.delete(driveFileId);
-	await ctx.store.deleteRecord(candidate.path);
+	await candidateStore.remove(candidate.path);
 }
 
 /**
@@ -130,9 +178,9 @@ export async function executeDeleteBoth(candidate: ViewCandidate, ctx: SyncConte
  * Used to pre-populate the editable panel in PendingListModal before the user edits.
  * Does not write to either vault side.
  */
-export async function computeMerge(candidate: ViewCandidate, ctx: SyncContext): Promise<MergeResult> {
+export async function computeMerge(candidate: Candidate, ctx: SyncContext): Promise<MergeResult> {
 	const dec = new TextDecoder();
-	const driveFileId = candidate.remote?.driveFileId ?? candidate.record?.driveFileId;
+	const driveFileId = candidate.remote?.driveFileId ?? candidate.driveFileId;
 
 	const localBytes = await ctx.localFs.read(candidate.path);
 	const localText = dec.decode(localBytes);
@@ -156,9 +204,10 @@ export async function computeMerge(candidate: ViewCandidate, ctx: SyncContext): 
  * merged content and confirmed there are no remaining conflict markers.
  */
 export async function writeResolvedMerge(
-	candidate: ViewCandidate,
+	candidate: Candidate,
 	mergedContent: string,
 	ctx: SyncContext,
+	candidateStore: CandidateStore,
 ): Promise<void> {
 	const rootFolderId = ctx.driveFolderId();
 	const sampler = { value: false };
@@ -167,8 +216,8 @@ export async function writeResolvedMerge(
 	await ctx.localFs.write(candidate.path, mergedBytes);
 	const driveSide = await ctx.driveFs.write(rootFolderId, candidate.path, mergedBytes, ctx.statsTracker, sampler);
 	const localSide = ctx.localFs.stat(candidate.path);
-	await ctx.store.putRecord({
-		path: candidate.path,
+	await ctx.store.putContent(candidate.path, mergedBytes);
+	await candidateStore.markSynced(candidate.path, {
 		driveFileId: driveSide.driveFileId,
 		localMtime: localSide?.mtime ?? 0,
 		localSize: localSide?.size ?? 0,
@@ -176,7 +225,6 @@ export async function writeResolvedMerge(
 		remoteSize: driveSide.size,
 		syncedAt: Date.now(),
 	});
-	await ctx.store.putContent(candidate.path, mergedBytes);
 	ctx.statsTracker.recordMerge();
 }
 
@@ -185,7 +233,11 @@ export async function writeResolvedMerge(
  * Requires a cached base in the sync-content store; throws if none is available.
  * Used by the **Back out** button for text-file conflict candidates.
  */
-export async function executeConflictBackOut(candidate: ViewCandidate, ctx: SyncContext): Promise<void> {
+export async function executeConflictBackOut(
+	candidate: Candidate,
+	ctx: SyncContext,
+	candidateStore: CandidateStore,
+): Promise<void> {
 	const baseContent = await ctx.store.getContent(candidate.path);
 	if (!baseContent) {
 		throw new Error(
@@ -197,8 +249,8 @@ export async function executeConflictBackOut(candidate: ViewCandidate, ctx: Sync
 	await ctx.localFs.write(candidate.path, baseContent);
 	const driveSide = await ctx.driveFs.write(rootFolderId, candidate.path, baseContent, ctx.statsTracker, sampler);
 	const localSide = ctx.localFs.stat(candidate.path);
-	await ctx.store.putRecord({
-		path: candidate.path,
+	await ctx.store.putContent(candidate.path, baseContent);
+	await candidateStore.markSynced(candidate.path, {
 		driveFileId: driveSide.driveFileId,
 		localMtime: localSide?.mtime ?? 0,
 		localSize: localSide?.size ?? 0,
@@ -206,5 +258,4 @@ export async function executeConflictBackOut(candidate: ViewCandidate, ctx: Sync
 		remoteSize: driveSide.size,
 		syncedAt: Date.now(),
 	});
-	await ctx.store.putContent(candidate.path, baseContent);
 }

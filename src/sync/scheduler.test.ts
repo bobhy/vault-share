@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SyncScheduler } from './scheduler';
 import type { SyncSchedulerDeps } from './scheduler';
 import type { SyncContext } from './types';
+import type { CandidateStore } from './candidate-store';
 import type { BulkSync } from './bulk-sync';
 import type { EventRef, Workspace } from 'obsidian';
 import { mockSettings } from '../__mocks__/sync-test-helpers';
@@ -98,9 +99,14 @@ function makeScheduler(
 	const bulkSyncRunSpy = vi.fn().mockResolvedValue({});
 	const bulkSync = { run: bulkSyncRunSpy } as unknown as BulkSync;
 
+	const candidateStore = {
+		getAll: vi.fn().mockReturnValue([]),
+	} as unknown as CandidateStore;
+
 	const deps: SyncSchedulerDeps = {
 		ctx,
 		bulkSync,
+		candidateStore,
 		workspace,
 		setStatusBar: vi.fn(),
 		registerEvent: vi.fn(),
@@ -151,6 +157,7 @@ describe('SyncScheduler', () => {
 			expect.anything(),
 			expect.anything(),
 			expect.anything(),
+			expect.anything(),
 		);
 	});
 
@@ -194,7 +201,7 @@ describe('SyncScheduler', () => {
 		expect(singleFileSyncSpy).not.toHaveBeenCalled();
 
 		await tick(2000); // now 6 s after edit — past the 5 s holdDown
-		expect(singleFileSyncSpy).toHaveBeenCalledWith('notes/hello.md', expect.anything(), expect.anything(), expect.anything(), expect.anything());
+		expect(singleFileSyncSpy).toHaveBeenCalledWith('notes/hello.md', expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything());
 	});
 
 	it('resets the holdDown timer on each subsequent edit', async () => {
@@ -395,7 +402,7 @@ describe('SyncScheduler', () => {
 		await tick(2000); // 6 s total — past the 5 s hold-down
 		expect(singleFileSyncSpy).toHaveBeenCalledWith(
 			'notes/hello.md',
-			expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+			expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(),
 		);
 	});
 
@@ -524,7 +531,7 @@ describe('SyncScheduler', () => {
 		paused = false; // simulate DeferralManager.setPaused(false)
 		await tick(1000);
 		expect(singleFileSyncSpy).toHaveBeenCalledWith(
-			'notes/hello.md', expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+			'notes/hello.md', expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(),
 		);
 		expect(bulkSyncRunSpy).toHaveBeenCalledTimes(1);
 	});

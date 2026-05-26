@@ -1,4 +1,4 @@
-import type { SyncContext, ViewCandidate } from '../sync/types';
+import type { Candidate, SyncContext } from '../sync/types';
 import { computeMerge } from '../sync/resolution-executor';
 import { isMergeEligible } from '../sync/merge';
 
@@ -28,7 +28,7 @@ export interface TextareaRef {
  */
 export async function loadFilePanels(
 	container: HTMLElement,
-	candidate: ViewCandidate,
+	candidate: Candidate,
 	ctx: SyncContext,
 	textareaRef: TextareaRef,
 ): Promise<void> {
@@ -48,7 +48,7 @@ export async function loadFilePanels(
 
 async function renderFilePanels(
 	container: HTMLElement,
-	candidate: ViewCandidate,
+	candidate: Candidate,
 	ctx: SyncContext,
 	textareaRef: TextareaRef,
 ): Promise<void> {
@@ -62,7 +62,7 @@ async function renderFilePanels(
 
 	/** Download the remote file and decode to text, or return null if the Drive file ID is unavailable. */
 	const readRemote = async (): Promise<string | null> => {
-		const driveFileId = candidate.remote?.driveFileId ?? candidate.record?.driveFileId;
+		const driveFileId = candidate.remote?.driveFileId ?? candidate.driveFileId;
 		if (!driveFileId) return null;
 		const bytes = await ctx.driveFs.readBinary(driveFileId);
 		return dec.decode(bytes);
@@ -70,7 +70,7 @@ async function renderFilePanels(
 
 	container.empty();
 
-	switch (candidate.type) {
+	switch (candidate.actionType) {
 		case 'push':
 		case 'deleteRemote': {
 			// Local vault content (read-only).

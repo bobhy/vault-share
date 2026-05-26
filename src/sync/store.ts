@@ -1,12 +1,20 @@
 import { IDBHelper, idbRequest, sanitizeDbName } from './idb';
-import type { SyncRecord, SyncStats } from './types';
+import type { SyncStats } from './types';
 
-const DB_VERSION = 2;
-const STORE_RECORDS = 'sync-records';
+/**
+ * Increment DB_VERSION on any schema change.
+ *
+ * SCHEMA_CHANGELOG
+ *   1 — initial schema: sync-records, sync-content, sync-stats, device
+ *   2 — added deferred-candidates, sync-state
+ *   3 — candidates store replaces deferred-candidates + sync-records;
+ *         sync-state store retained unchanged
+ */
+const DB_VERSION = 3;
+const STORE_CANDIDATES = 'candidates';
 const STORE_CONTENT = 'sync-content';
 const STORE_STATS = 'sync-stats';
 const STORE_DEVICE = 'device';
-const STORE_DEFERRED = 'deferred-candidates';
 const STORE_SYNC_STATE = 'sync-state';
 const STATS_KEY = 'stats';
 const CLIENT_ID_KEY = 'clientId';
@@ -24,9 +32,22 @@ export const EMPTY_STATS: SyncStats = {
 	deleteConflicts: 0,
 };
 
+/** Create all IDB object stores for schema version 3. */
+function createStores(db: IDBDatabase): void {
+	db.createObjectStore(STORE_CANDIDATES, { keyPath: 'path' });
+	db.createObjectStore(STORE_CONTENT, { keyPath: 'path' });
+	db.createObjectStore(STORE_STATS, { keyPath: 'key' });
+	db.createObjectStore(STORE_DEVICE, { keyPath: 'key' });
+	db.createObjectStore(STORE_SYNC_STATE, { keyPath: 'key' });
+}
+
 /**
  * Manages all IndexedDB object stores for vault-share.
- * On schema version change, all stores are dropped and recreated (cold-start).
+ *
+ * Schema is versioned via {@link DB_VERSION}.  The upgrade handler performs a
+ * cold-start on all pre-1.0 version bumps (drop everything, recreate).  Post-1.0
+ * migrations should replace the cold-start with incremental `if (oldVersion < N)`
+ * migration blocks.
  */
 export class SyncStore {
 	private readonly idb: IDBHelper;
@@ -36,24 +57,21 @@ export class SyncStore {
 			dbName: `vault-share-${sanitizeDbName(vaultName)}`,
 			version: DB_VERSION,
 			onUpgrade: (db, oldVersion) => {
-				// Cold-start: drop everything and recreate.
-				if (oldVersion > 0) {
+				if (oldVersion < 3) {
+					// Pre-1.0 policy: cold-start on any schema change.
+					// Post-1.0: replace this block with per-step migration logic, e.g.:
+					//   if (oldVersion < 3) { migrate_2_to_3(db); }
 					for (const name of Array.from(db.objectStoreNames)) {
 						db.deleteObjectStore(name);
 					}
+					createStores(db);
 				}
-				db.createObjectStore(STORE_RECORDS, { keyPath: 'path' });
-				db.createObjectStore(STORE_CONTENT, { keyPath: 'path' });
-				db.createObjectStore(STORE_STATS, { keyPath: 'key' });
-				db.createObjectStore(STORE_DEVICE, { keyPath: 'key' });
-				db.createObjectStore(STORE_DEFERRED, { keyPath: 'path' });
-				db.createObjectStore(STORE_SYNC_STATE, { keyPath: 'key' });
 			},
 		});
 	}
 
 	/**
-	 * Returns the underlying IDBHelper for use by peer store classes (e.g. DeferralStore)
+	 * Returns the underlying IDBHelper for use by peer store classes (e.g. CandidateStore)
 	 * that share this database connection and schema.
 	 */
 	getIdb(): IDBHelper {
@@ -68,36 +86,6 @@ export class SyncStore {
 		this.idb.close();
 	}
 
-	// --- sync-records ---
-
-	getRecord(path: string): Promise<SyncRecord | undefined> {
-		return this.idb.runTransaction(STORE_RECORDS, 'readonly', (tx) => {
-			const req = tx.objectStore(STORE_RECORDS).get(path) as IDBRequest<SyncRecord | undefined>;
-			return () => req.result;
-		});
-	}
-
-	getAllRecords(): Promise<SyncRecord[]> {
-		return this.idb.runTransaction(STORE_RECORDS, 'readonly', (tx) => {
-			const req = tx.objectStore(STORE_RECORDS).getAll() as IDBRequest<SyncRecord[]>;
-			return () => req.result;
-		});
-	}
-
-	putRecord(record: SyncRecord): Promise<void> {
-		return this.idb.runTransaction(STORE_RECORDS, 'readwrite', (tx) => {
-			tx.objectStore(STORE_RECORDS).put(record);
-			return () => undefined;
-		});
-	}
-
-	deleteRecord(path: string): Promise<void> {
-		return this.idb.runTransaction(STORE_RECORDS, 'readwrite', (tx) => {
-			tx.objectStore(STORE_RECORDS).delete(path);
-			return () => undefined;
-		});
-	}
-
 	// --- sync-content ---
 
 	getContent(path: string): Promise<ArrayBuffer | undefined> {
@@ -110,6 +98,13 @@ export class SyncStore {
 	putContent(path: string, content: ArrayBuffer): Promise<void> {
 		return this.idb.runTransaction(STORE_CONTENT, 'readwrite', (tx) => {
 			tx.objectStore(STORE_CONTENT).put({ path, content });
+			return () => undefined;
+		});
+	}
+
+	deleteContent(path: string): Promise<void> {
+		return this.idb.runTransaction(STORE_CONTENT, 'readwrite', (tx) => {
+			tx.objectStore(STORE_CONTENT).delete(path);
 			return () => undefined;
 		});
 	}
@@ -151,20 +146,17 @@ export class SyncStore {
 		});
 	}
 
-	/** Clear sync records and cached content without touching stats. */
-	clearHistory(): Promise<void> {
-		return this.idb.runTransaction([STORE_RECORDS, STORE_CONTENT], 'readwrite', (tx) => {
-			tx.objectStore(STORE_RECORDS).clear();
+	/** Clear cached content without touching stats or candidates. */
+	clearContent(): Promise<void> {
+		return this.idb.runTransaction(STORE_CONTENT, 'readwrite', (tx) => {
 			tx.objectStore(STORE_CONTENT).clear();
 			return () => undefined;
 		});
 	}
 
-	/** Clear sync history (records + content) and reset stats. */
-	async clearAll(): Promise<void> {
-		await this.idb.runTransaction([STORE_RECORDS, STORE_CONTENT, STORE_STATS], 'readwrite', (tx) => {
-			tx.objectStore(STORE_RECORDS).clear();
-			tx.objectStore(STORE_CONTENT).clear();
+	/** Clear stats only. */
+	clearStats(): Promise<void> {
+		return this.idb.runTransaction(STORE_STATS, 'readwrite', (tx) => {
 			tx.objectStore(STORE_STATS).clear();
 			return () => undefined;
 		});

@@ -1,84 +1,88 @@
-import type { MixedEntry, SyncAction, SyncActionType, FileStatus } from './types';
-import { classifyStatus } from './change-detector';
+import type { Candidate, FileSide, SyncActionType } from './types';
+
+/** File status relative to the last known sync record. */
+export type FileStatus =
+	| 'modified'
+	| 'unmodified'
+	| 'deleted'   // was in history, is now absent
+	| 'absent';   // never appeared in history
 
 /**
- * Produce a sync action for each mixed entry.
- * When hasHistory is false, uses the no-history table from the spec.
- * When hasHistory is true, uses the with-history table.
- * 'noOp' entries are included; callers may filter them.
+ * Classify one side's status relative to the candidate's last-sync record.
+ *
+ * - `absent`     — file does not exist and was never synced (`wasSynced = false`)
+ * - `deleted`    — file does not exist but has a sync record (`wasSynced = true`)
+ * - `unmodified` — file exists and its mtime/size match the record
+ * - `modified`   — file exists and differs from the record
  */
-export function planActions(entries: MixedEntry[], hasHistory: boolean): SyncAction[] {
-	return entries.map(entry => hasHistory
-		? planWithHistory(entry)
-		: planWithoutHistory(entry),
-	);
+export function classifyStatus(
+	side: FileSide | undefined,
+	syncedMtime: number,
+	syncedSize: number,
+	wasSynced: boolean,  // = candidate.syncedAt > 0
+): FileStatus {
+	if (!side) {
+		return wasSynced ? 'deleted' : 'absent';
+	}
+	if (!wasSynced) {
+		return 'modified'; // present but no history — treat as modified (new)
+	}
+	if (side.mtime === syncedMtime && side.size === syncedSize) {
+		return 'unmodified';
+	}
+	return 'modified';
 }
 
-/** No-history decision table (spec §"No sync history"). */
-function planWithoutHistory(entry: MixedEntry): SyncAction {
-	const { local, remote } = entry;
+/**
+ * Determine the sharing action for a single candidate given the current
+ * local and remote file state and the candidate's last-sync history.
+ *
+ * This is the pure decision function used by {@link CandidateStore.reconcile}.
+ * It is exported primarily for unit testing; production callers should invoke
+ * it only through `CandidateStore`.
+ *
+ * @param candidate - Existing candidate record, or `null` for a brand-new path.
+ * @param local     - Current local file metadata, or `undefined` if absent.
+ * @param remote    - Current remote file metadata, or `undefined` if absent.
+ * @param vaultHasHistory - Whether any candidate has been synced at least once.
+ */
+export function planAction(
+	candidate: Candidate | null,
+	local: FileSide | undefined,
+	remote: (FileSide & { driveFileId: string }) | undefined,
+	vaultHasHistory: boolean,
+): SyncActionType {
+	const wasSynced = (candidate?.syncedAt ?? 0) > 0;
 
-	if (local && !remote) {
-		return action('push', entry);
+	if (!vaultHasHistory || !wasSynced) {
+		// No-history path: decide purely on presence.
+		if (local && !remote) return 'push';
+		if (!local && remote) return 'pull';
+		if (local && remote) return 'conflict';
+		return 'noOp';
 	}
-	if (!local && remote) {
-		return action('pull', entry);
-	}
-	if (local && remote) {
-		return action('conflict', entry);
-	}
-	// Neither side present — can happen if a record exists for a path now gone everywhere.
-	return action('noOp', entry);
-}
 
-/** With-history decision table (spec §"With sync history"). */
-function planWithHistory(entry: MixedEntry): SyncAction {
-	const { local, remote, record } = entry;
-	const localStatus: FileStatus = classifyStatus(local, record, true);
-	const remoteStatus: FileStatus = classifyStatus(remote, record, false);
+	// With-history path: compare against the candidate's last-sync record.
+	const syncedLocalMtime  = candidate?.syncedLocalMtime  ?? 0;
+	const syncedLocalSize   = candidate?.syncedLocalSize   ?? 0;
+	const syncedRemoteMtime = candidate?.syncedRemoteMtime ?? 0;
+	const syncedRemoteSize  = candidate?.syncedRemoteSize  ?? 0;
 
-	// modified | absent or unmodified → push
-	if (localStatus === 'modified' && (remoteStatus === 'absent' || remoteStatus === 'unmodified')) {
-		return action('push', entry);
-	}
-	// absent or unmodified | modified → pull
-	if ((localStatus === 'absent' || localStatus === 'unmodified') && remoteStatus === 'modified') {
-		return action('pull', entry);
-	}
-	// deleted | unmodified → delete remote
-	if (localStatus === 'deleted' && remoteStatus === 'unmodified') {
-		return action('deleteRemote', entry);
-	}
-	// unmodified | deleted → delete local
-	if (localStatus === 'unmodified' && remoteStatus === 'deleted') {
-		return action('deleteLocal', entry);
-	}
-	// deleted | deleted → both gone simultaneously; clean up the orphaned record.
-	// localFs.delete is a no-op when the file is already absent.
-	if (localStatus === 'deleted' && remoteStatus === 'deleted') {
-		return action('deleteLocal', entry);
-	}
-	// deleted | modified  or  modified | deleted → conflict
+	const localStatus  = classifyStatus(local,  syncedLocalMtime,  syncedLocalSize,  wasSynced);
+	const remoteStatus = classifyStatus(remote, syncedRemoteMtime, syncedRemoteSize, wasSynced);
+
+	if (localStatus === 'modified' && (remoteStatus === 'absent' || remoteStatus === 'unmodified')) return 'push';
+	if ((localStatus === 'absent' || localStatus === 'unmodified') && remoteStatus === 'modified') return 'pull';
+	if (localStatus === 'deleted' && remoteStatus === 'unmodified') return 'deleteRemote';
+	if (localStatus === 'unmodified' && remoteStatus === 'deleted') return 'deleteLocal';
+	// Both sides deleted: clean up the orphaned record.
+	if (localStatus === 'deleted' && remoteStatus === 'deleted') return 'deleteLocal';
 	if (
-		(localStatus === 'deleted' && remoteStatus === 'modified') ||
-		(localStatus === 'modified' && remoteStatus === 'deleted')
-	) {
-		return action('conflict', entry);
-	}
-	// modified | modified → conflict
-	if (localStatus === 'modified' && remoteStatus === 'modified') {
-		return action('conflict', entry);
-	}
-	// unmodified | unmodified, absent | absent, etc.
-	return action('noOp', entry);
-}
+		(localStatus === 'deleted'   && remoteStatus === 'modified') ||
+		(localStatus === 'modified'  && remoteStatus === 'deleted')  ||
+		(localStatus === 'modified'  && remoteStatus === 'modified')
+	) return 'conflict';
 
-function action(type: SyncActionType, entry: MixedEntry): SyncAction {
-	return {
-		type,
-		path: entry.path,
-		local: entry.local,
-		remote: entry.remote,
-		record: entry.record,
-	};
+	// unmodified | unmodified, absent | absent, etc.
+	return 'noOp';
 }
