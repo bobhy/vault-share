@@ -11,6 +11,8 @@ export interface DriveFile {
 	name: string;
 	mimeType: string;
 	modifiedTime?: string;
+	/** Decimal string of byte count for binary files. Omitted by Drive for Google-native docs (Doc/Sheet/Slide). */
+	size?: string;
 }
 
 interface DriveFileList {
@@ -42,7 +44,7 @@ export class GDriveApi {
 	/** List files (and folders) that are direct children of parentId, handling pagination. */
 	async listChildren(parentId: string): Promise<DriveFile[]> {
 		const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`);
-		const fields = encodeURIComponent('nextPageToken,files(id,name,mimeType,modifiedTime)');
+		const fields = encodeURIComponent('nextPageToken,files(id,name,mimeType,modifiedTime,size)');
 		const order = encodeURIComponent('modifiedTime desc');
 		const base = `${DRIVE_API}/files?q=${q}&fields=${fields}&pageSize=1000&orderBy=${order}`;
 
@@ -70,7 +72,7 @@ export class GDriveApi {
 	/** Return a single file's metadata. */
 	async getFile(fileId: string): Promise<DriveFile> {
 		const token = await this.auth.getAccessToken();
-		const fields = encodeURIComponent('id,name,mimeType,modifiedTime');
+		const fields = encodeURIComponent('id,name,mimeType,modifiedTime,size');
 		const response = await requestUrl({
 			url: `${DRIVE_API}/files/${fileId}?fields=${fields}`,
 			headers: { Authorization: `Bearer ${token}` },
@@ -186,7 +188,7 @@ export class GDriveApi {
 		const q = encodeURIComponent(
 			`'${parentId}' in parents and name='${name.replace(/'/g, "\\'")}'${mimeClause} and trashed=false`,
 		);
-		const fields = encodeURIComponent('files(id,name,mimeType,modifiedTime)');
+		const fields = encodeURIComponent('files(id,name,mimeType,modifiedTime,size)');
 		const order = encodeURIComponent('modifiedTime desc');
 		const response = await requestUrl({
 			url: `${DRIVE_API}/files?q=${q}&fields=${fields}&pageSize=2&orderBy=${order}`,
@@ -208,7 +210,7 @@ export class GDriveApi {
 		const token = await this.auth.getAccessToken();
 		const { body, boundary } = buildMultipartBody({ name, parents: [parentId] }, content, mimeType);
 		const response = await requestUrl({
-			url: `${DRIVE_UPLOAD_API}/files?uploadType=multipart&fields=id,name,mimeType,modifiedTime`,
+			url: `${DRIVE_UPLOAD_API}/files?uploadType=multipart&fields=id,name,mimeType,modifiedTime,size`,
 			method: 'POST',
 			headers: {
 				Authorization: `Bearer ${token}`,
@@ -231,7 +233,7 @@ export class GDriveApi {
 		const token = await this.auth.getAccessToken();
 		const { body, boundary } = buildMultipartBody({}, content, mimeType);
 		const response = await requestUrl({
-			url: `${DRIVE_UPLOAD_API}/files/${fileId}?uploadType=multipart&fields=id,name,mimeType,modifiedTime`,
+			url: `${DRIVE_UPLOAD_API}/files/${fileId}?uploadType=multipart&fields=id,name,mimeType,modifiedTime,size`,
 			method: 'PATCH',
 			headers: {
 				Authorization: `Bearer ${token}`,

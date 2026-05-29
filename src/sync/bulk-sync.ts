@@ -185,16 +185,20 @@ export class BulkSync {
 			// Execute pending candidates one at a time, yielding between each.
 			const hasHistory = this.candidates.hasSyncHistory();
 			for (const candidate of pending) {
-				this.ctx.logger.debug(`sync ${candidate.path}: ${candidate.actionType}`);
+				// Snapshot actionType: markSynced() mutates the shared candidate
+				// reference (sets actionType='noOp'), which would make the switch
+				// below miss every case.
+				const actionType = candidate.actionType;
+				this.ctx.logger.debug(`sync ${candidate.path}: ${actionType}`);
 				const fileResult = await syncOneFile(candidate, this.ctx, hasHistory);
 
 				if (fileResult.changed) {
-					if (candidate.actionType === 'deleteLocal' || candidate.actionType === 'deleteRemote') {
+					if (actionType === 'deleteLocal' || actionType === 'deleteRemote') {
 						await this.candidates.remove(candidate.path);
 						result.deleted++;
 					} else if (fileResult.syncedState) {
 						await this.candidates.markSynced(candidate.path, fileResult.syncedState);
-						switch (candidate.actionType) {
+						switch (actionType) {
 							case 'pull': result.downloaded++; break;
 							case 'push': result.uploaded++; break;
 							case 'conflict':
@@ -257,16 +261,20 @@ export class BulkSync {
 		try {
 			// Approved actions always come from a vault that already has sync history.
 			for (const candidate of approved) {
-				this.ctx.logger.debug(`sync ${candidate.path}: ${candidate.actionType} (approved)`);
+				// Snapshot actionType: markSynced() mutates the shared candidate
+				// reference (sets actionType='noOp'), which would make the switch
+				// below miss every case.
+				const actionType = candidate.actionType;
+				this.ctx.logger.debug(`sync ${candidate.path}: ${actionType} (approved)`);
 				const fileResult = await syncOneFile(candidate, this.ctx, /* hasHistory */ true);
 
 				if (fileResult.changed) {
-					if (candidate.actionType === 'deleteLocal' || candidate.actionType === 'deleteRemote') {
+					if (actionType === 'deleteLocal' || actionType === 'deleteRemote') {
 						await this.candidates.remove(candidate.path);
 						result.deleted++;
 					} else if (fileResult.syncedState) {
 						await this.candidates.markSynced(candidate.path, fileResult.syncedState);
-						switch (candidate.actionType) {
+						switch (actionType) {
 							case 'pull': result.downloaded++; break;
 							case 'push': result.uploaded++; break;
 							case 'conflict':

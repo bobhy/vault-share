@@ -112,6 +112,15 @@ export const config: WebdriverIO.Config = {
 
 		await injectAndConfigure(br, refreshToken, SINGLE_VAULT_DRIVE_FOLDER);
 
+		// Drive accumulates leftover files across test runs (tests don't always
+		// clean up their own Drive state on failure).  Strip the test folder
+		// once per session so reconcile doesn't surface hundreds of spurious
+		// pull candidates from prior runs.
+		const { listed, deleted, failed } = await cleanupTestDriveFolder(br);
+		if (listed > 0) {
+			console.log(`wdio.before: cleaned Drive folder — listed=${listed} deleted=${deleted} failed=${failed}`);
+		}
+
 		// Cache the token so Drive API helpers in test files can access it.
 		process.env["VAULT_SHARE_REFRESH_TOKEN"] = refreshToken;
 	},
@@ -121,8 +130,11 @@ export const config: WebdriverIO.Config = {
  * Inject a GDrive refresh token and fully configure the vault-share plugin for
  * testing. Because wdio uses a fresh --user-data-dir, secretStorage is empty and
  * no keyring daemon is available in headless CI. This function:
- *   1. Injects the token directly into the auth object's memory (bypasses keyring).
- *   2. Sets the Drive folder path and resolves it so bulk-sync can run.
+ *   1. Stops the autonomous sync scheduler so tests are the sole driver of
+ *      bulk sync — eliminates races between scheduler ticks and test setup
+ *      (see runBulkSync below).
+ *   2. Injects the token directly into the auth object's memory (bypasses keyring).
+ *   3. Sets the Drive folder path and resolves it so bulk-sync can run.
  */
 export async function injectAndConfigure(
 	br: WebdriverIO.Browser,
@@ -134,11 +146,17 @@ export async function injectAndConfigure(
 			auth: { injectRefreshToken: (t: string) => void };
 			api: { resolveFolder: (path: string) => Promise<string> };
 			settings: { driveFolderPath: string };
+			scheduler: { stop: () => Promise<void> };
 		};
 		const plugin = (app as unknown as {
 			plugins: { plugins: Record<string, Plugin> };
 		}).plugins.plugins["vault-share"] as Plugin | undefined;
 		if (!plugin) throw new Error("vault-share plugin not loaded");
+
+		// Silence the heartbeat before touching auth/folder so no scheduler tick
+		// can fire a bulk sync against test files. Drains any in-flight pass
+		// started by the startup triggerBulkSync().
+		await plugin.scheduler.stop();
 
 		// Inject token directly into memory — bypasses SecretStorage/keyring,
 		// which is unavailable in headless CI. The wdio sandbox uses a fresh
@@ -148,6 +166,121 @@ export async function injectAndConfigure(
 		const folderId = await plugin.api.resolveFolder(folderPath as string);
 		(plugin as unknown as { driveFolderId: string }).driveFolderId = folderId;
 	}, refreshToken, driveFolderPath);
+}
+
+/**
+ * Delete every file and folder directly under the configured test Drive
+ * folder.  Drive's delete cascades, so subfolders (and their contents) go in
+ * a single call.
+ *
+ * Run once per worker session in the `before` hook so each session starts
+ * from a clean Drive — otherwise leftover files from prior runs reconcile as
+ * spurious `pull` candidates, inflate threshold counts, and turn cheap
+ * planning passes into multi-minute walks.
+ *
+ * Returns the number of items deleted (for logging / diagnostics).
+ */
+export async function cleanupTestDriveFolder(
+	br: WebdriverIO.Browser,
+): Promise<{ listed: number; deleted: number; failed: number }> {
+	return await br.executeObsidian(async ({ app }) => {
+		type DriveItem = { id: string; name: string };
+		type Plugin = {
+			driveFolderId: string;
+			api: {
+				listChildren: (folderId: string) => Promise<DriveItem[]>;
+				deleteFile: (fileId: string) => Promise<void>;
+			};
+		};
+		const plugin = (app as unknown as {
+			plugins: { plugins: Record<string, Plugin> };
+		}).plugins.plugins["vault-share"] as Plugin | undefined;
+		if (!plugin) throw new Error("vault-share plugin not loaded");
+		const folderId = plugin.driveFolderId;
+		if (!folderId) throw new Error("cleanupTestDriveFolder: driveFolderId not set");
+
+		const items = await plugin.api.listChildren(folderId);
+		let deleted = 0;
+		let failed = 0;
+		for (const item of items) {
+			try {
+				await plugin.api.deleteFile(item.id);
+				deleted++;
+			} catch {
+				// Best effort: a single failed delete should not abort cleanup.
+				failed++;
+			}
+		}
+		return { listed: items.length, deleted, failed };
+	}) as unknown as { listed: number; deleted: number; failed: number };
+}
+
+/**
+ * Preload sync history for the given files: writes each to both the vault and
+ * Drive, then records it as a `Synced` candidate in IDB so the next planning
+ * pass treats it as `noOp`.  After this returns, a subsequent local-side or
+ * remote-side deletion will be correctly classified as deleteRemote /
+ * deleteLocal (rather than the no-history-path "absent" case).
+ *
+ * Bypasses `bulkSync.run()` entirely — tests never need to drive the system
+ * under test in order to construct initial conditions for the system under test.
+ *
+ * File paths must be flat (no parent folders); for nested paths the caller must
+ * pre-create folders via `app.vault.createFolder()` before invoking this.
+ */
+export async function seedSyncedFiles(
+	br: WebdriverIO.Browser,
+	files: Array<{ path: string; content: string }>,
+): Promise<void> {
+	await br.executeObsidian(async ({ app }, fileList) => {
+		type DriveFile = { id: string; modifiedTime?: string };
+		type Plugin = {
+			api: { writeFile: (parentId: string, name: string, content: string) => Promise<DriveFile> };
+			driveFolderId: string;
+			candidateStore: {
+				insertSynced: (path: string, state: {
+					driveFileId: string;
+					localMtime: number;
+					remoteMtime: number;
+					localSize: number;
+					remoteSize: number;
+					syncedAt: number;
+				}) => Promise<void>;
+			};
+		};
+		const plugin = (app as unknown as {
+			plugins: { plugins: Record<string, Plugin> };
+		}).plugins.plugins["vault-share"] as Plugin | undefined;
+		if (!plugin) throw new Error("vault-share plugin not loaded");
+		const folderId = plugin.driveFolderId;
+		if (!folderId) throw new Error("seedSyncedFiles: driveFolderId not set");
+
+		for (const { path, content } of fileList as Array<{ path: string; content: string }>) {
+			// 1. Local: create the file if it does not already exist.
+			if (!app.vault.getAbstractFileByPath(path)) {
+				await app.vault.create(path, content);
+			}
+			// 2. Drive: upload (or overwrite) the file with the same content.
+			const driveFile = await plugin.api.writeFile(folderId, path, content);
+			// 3. Read back local stat to record the exact mtime/size reconcile will see.
+			const local = app.vault.getFileByPath(path);
+			if (!local) throw new Error(`seedSyncedFiles: ${path} not found after create`);
+			const remoteMtime = driveFile.modifiedTime
+				? new Date(driveFile.modifiedTime).getTime()
+				: Date.now();
+			// Drive returns the content unchanged; size matches what we wrote.
+			const size = new TextEncoder().encode(content).length;
+			// 4. Persist as Synced so the next reconcile sees state = noOp.
+			await plugin.candidateStore.insertSynced(path, {
+				driveFileId: driveFile.id,
+				localMtime: local.stat.mtime,
+				localSize: local.stat.size,
+				remoteMtime,
+				remoteSize: size,
+				syncedAt: Date.now(),
+			});
+		}
+	}, files);
 }
 
 /**

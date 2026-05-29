@@ -199,6 +199,7 @@ function driveFileToSide(path: string, file: DriveFile): DriveFileSide {
 		path,
 		driveFileId: file.id,
 		mtime: file.modifiedTime ? new Date(file.modifiedTime).getTime() : 0,
-		size: 0, // Drive API v3 doesn't return size in standard list fields; set to 0
+		// Google Docs / Sheets / Slides have no byte size; treat as 0.
+		size: file.size ? Number(file.size) : 0,
 	};
 }

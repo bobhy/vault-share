@@ -81,6 +81,7 @@ export class SyncScheduler {
 	private bulkNextRunAt = 0; // 0 = run immediately
 	private readonly fileStates = new Map<string, PerFileState>();
 	private bulkRunning = false;
+	private intervalId: number | null = null;
 
 	constructor(private readonly deps: SyncSchedulerDeps) {}
 
@@ -115,8 +116,30 @@ export class SyncScheduler {
 			state.nextHoldDownAt = Date.now() + holdMs;
 		}));
 
-		const intervalId = window.setInterval(() => { void this.tick(); }, 1000);
-		registerInterval(intervalId);
+		this.intervalId = window.setInterval(() => { void this.tick(); }, 1000);
+		registerInterval(this.intervalId);
+	}
+
+	/**
+	 * Halt the autonomous heartbeat. After this returns, no further tick will
+	 * fire and any bulk-sync pass kicked off by the most recent tick has
+	 * completed. File-open / modify / delete event handlers remain registered
+	 * (they only update per-file timer state, which is harmless without ticks).
+	 *
+	 * Distinct from {@link CandidateStore.setPaused}, which is a persisted
+	 * user-facing pause flag that also causes {@link BulkSync.run} to bail.
+	 * `stop()` is non-persisted runtime state: callers (e.g. e2e tests) can
+	 * still drive {@link BulkSync.run} directly while the scheduler is silent.
+	 */
+	async stop(): Promise<void> {
+		if (this.intervalId !== null) {
+			window.clearInterval(this.intervalId);
+			this.intervalId = null;
+		}
+		// Drain any in-flight bulk pass started by the most recent tick.
+		while (this.bulkRunning) {
+			await new Promise(r => activeWindow.setTimeout(r, 50));
+		}
 	}
 
 	destroy(): void {
