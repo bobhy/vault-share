@@ -122,9 +122,10 @@ function makeCandidateStore() {
 		fileResult: { changed: boolean; syncedState?: SyncedFileState; newSyncedFiles?: Array<{ path: string } & SyncedFileState> },
 	): Promise<void> => {
 		if (!fileResult.changed) return;
-		if (actionType === 'deleteLocal' || actionType === 'deleteRemote') {
+		const isDelete = actionType === 'deleteLocal' || actionType === 'deleteRemote';
+		if (isDelete || !fileResult.syncedState) {
 			await remove(path);
-		} else if (fileResult.syncedState) {
+		} else {
 			await markSynced(path, fileResult.syncedState);
 		}
 		if (fileResult.newSyncedFiles) {

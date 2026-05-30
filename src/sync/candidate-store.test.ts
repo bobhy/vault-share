@@ -421,6 +421,88 @@ describe('CandidateStore.insertSynced', () => {
 });
 
 // ---------------------------------------------------------------------------
+// applyFileResult
+// ---------------------------------------------------------------------------
+
+describe('CandidateStore.applyFileResult', () => {
+	let store: SyncStore;
+	afterEach(() => { store.close(); });
+
+	it('is a no-op when changed=false', async () => {
+		({ store } = await makeStore());
+		const cs = new CandidateStore(store.getIdb());
+		await cs.init();
+		await cs.insertSynced('a.md', syncedState());
+
+		await cs.applyFileResult('a.md', 'push', {
+			changed: false, merged: false, hadConflictMarkers: false,
+		});
+		expect(cs.get('a.md')).toBeDefined();
+	});
+
+	it('removes the candidate for a deleteLocal/deleteRemote action', async () => {
+		({ store } = await makeStore());
+		const cs = new CandidateStore(store.getIdb());
+		await cs.init();
+		await cs.insertSynced('a.md', syncedState());
+
+		await cs.applyFileResult('a.md', 'deleteRemote', {
+			changed: true, merged: false, hadConflictMarkers: false,
+		});
+		expect(cs.get('a.md')).toBeUndefined();
+	});
+
+	it('upserts as Synced when syncedState is set on a cached candidate', async () => {
+		({ store } = await makeStore());
+		const cs = new CandidateStore(store.getIdb());
+		await cs.init();
+		await cs.reconcile([LOCAL_A], []);  // creates 'a.md' as Default(push)
+
+		await cs.applyFileResult('a.md', 'push', {
+			changed: true, merged: false, hadConflictMarkers: false,
+			syncedState: syncedState({ driveFileId: 'drive-a' }),
+		});
+		expect(cs.get('a.md')).toMatchObject({ state: 'Synced', actionType: 'noOp' });
+	});
+
+	it('inserts as Synced when syncedState is set on a never-seen path', async () => {
+		({ store } = await makeStore());
+		const cs = new CandidateStore(store.getIdb());
+		await cs.init();
+
+		await cs.applyFileResult('brand-new.md', 'push', {
+			changed: true, merged: false, hadConflictMarkers: false,
+			syncedState: syncedState({ driveFileId: 'drive-new' }),
+		});
+		expect(cs.get('brand-new.md')).toMatchObject({ state: 'Synced', driveFileId: 'drive-new' });
+	});
+
+	it('removes the original candidate for a Keep Both conflict (changed + newSyncedFiles, no syncedState)', async () => {
+		// Regression: this used to leave the original candidate stranded until
+		// a future reconcile reclassified it as deleteLocal and another pass
+		// finally swept it up. The applyFileResult contract is now: changed
+		// without syncedState on a non-delete action means the original path
+		// is gone, drop the candidate.
+		({ store } = await makeStore());
+		const cs = new CandidateStore(store.getIdb());
+		await cs.init();
+		await cs.insertSynced('a.md', syncedState());
+
+		await cs.applyFileResult('a.md', 'conflict', {
+			changed: true, merged: false, hadConflictMarkers: false,
+			newSyncedFiles: [
+				{ path: 'a-conflict-local.md',  ...syncedState({ driveFileId: 'drive-local' })  },
+				{ path: 'a-conflict-remote.md', ...syncedState({ driveFileId: 'drive-remote' }) },
+			],
+		});
+
+		expect(cs.get('a.md')).toBeUndefined();
+		expect(cs.get('a-conflict-local.md')).toMatchObject({ state: 'Synced', driveFileId: 'drive-local' });
+		expect(cs.get('a-conflict-remote.md')).toMatchObject({ state: 'Synced', driveFileId: 'drive-remote' });
+	});
+});
+
+// ---------------------------------------------------------------------------
 // clear
 // ---------------------------------------------------------------------------
 

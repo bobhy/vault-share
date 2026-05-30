@@ -36,7 +36,7 @@ export async function singleFileSync(
 		// Look up the existing candidate from the store to get sync history.
 		// If not found (brand-new path not yet discovered by a bulk pass),
 		// build a transient Candidate with no history.
-		const existing = candidateStore.getAll().find(c => c.path === path);
+		const existing = candidateStore.get(path);
 		const candidate: Candidate = existing
 			? { ...existing, local: localSide ?? undefined, remote: remoteSide ?? undefined }
 			: {

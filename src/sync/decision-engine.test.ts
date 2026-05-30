@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Candidate, FileSide } from './types';
 import type { DriveFileSide } from './drive-fs';
-import { planAction } from './decision-engine';
+import { classifyStatus, planAction } from './decision-engine';
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -116,6 +116,31 @@ describe('planAction without history', () => {
 // ---------------------------------------------------------------------------
 // Candidate with no sync history (syncedAt = 0) but vault has history
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// classifyStatus direct contract
+// ---------------------------------------------------------------------------
+
+describe('classifyStatus', () => {
+	// Precondition: only called for candidates with syncedAt > 0. The three
+	// possible outcomes are 'deleted', 'unmodified', 'modified'.
+
+	it('returns "deleted" when the side is absent', () => {
+		expect(classifyStatus(undefined, 1000, 10)).toBe('deleted');
+	});
+
+	it('returns "unmodified" when both mtime and size match the record', () => {
+		expect(classifyStatus({ path: 'a.md', mtime: 1000, size: 10 }, 1000, 10)).toBe('unmodified');
+	});
+
+	it('returns "modified" when mtime differs', () => {
+		expect(classifyStatus({ path: 'a.md', mtime: 2000, size: 10 }, 1000, 10)).toBe('modified');
+	});
+
+	it('returns "modified" when size differs', () => {
+		expect(classifyStatus({ path: 'a.md', mtime: 1000, size: 20 }, 1000, 10)).toBe('modified');
+	});
+});
 
 describe('planAction: candidate never synced (syncedAt=0), vault has history', () => {
 	// A brand-new file that the vault hasn't synced yet, but other files have been synced.

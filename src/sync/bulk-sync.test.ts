@@ -137,9 +137,10 @@ function makeBulkSync(
 		// remove / insertSynced assertions still see the same calls.
 		applyFileResult: vi.fn(async (path: string, actionType: string, fileResult: { changed: boolean; syncedState?: unknown; newSyncedFiles?: Array<{ path: string } & Record<string, unknown>> }) => {
 			if (!fileResult.changed) return;
-			if (actionType === 'deleteLocal' || actionType === 'deleteRemote') {
+			const isDelete = actionType === 'deleteLocal' || actionType === 'deleteRemote';
+			if (isDelete || !fileResult.syncedState) {
 				await remove(path);
-			} else if (fileResult.syncedState) {
+			} else {
 				await markSynced(path, fileResult.syncedState);
 			}
 			if (fileResult.newSyncedFiles) {

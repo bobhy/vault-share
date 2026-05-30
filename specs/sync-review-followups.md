@@ -40,31 +40,35 @@ addressed; add follow-up items as new ones are discovered.
         `before:` hook bumps WebDriver's async-script timeout to 120 s
         (matching mocha's per-test timeout) so a slow Drive pass doesn't trip
         the default 30 s cutoff.
-- [ ] **(4) Dead branch in `classifyStatus`.** [decision-engine.ts:27-29](../src/sync/decision-engine.ts#L27-L29)
-    returns `'modified'` for `(side present, !wasSynced)`, but `planAction`
-    short-circuits to the no-history path whenever `!wasSynced`
-    ([decision-engine.ts:57](../src/sync/decision-engine.ts#L57)). Either the
-    branch is dead and should go, or the gate in `planAction` is wrong.
-    - Decide which and adjust. Add a unit-test asserting the chosen behaviour.
+- [x] **(4) Dead branch in `classifyStatus`.** The `!wasSynced → 'modified'`
+    branch was indeed unreachable — `planAction` short-circuits on `!wasSynced`,
+    so `classifyStatus` was only ever called with `wasSynced === true`.
+    - Done: removed the dead branch, dropped the `wasSynced` parameter (always
+        `true` at call site), removed the `'absent'` variant from `FileStatus`,
+        and stripped the now-dead `'absent'` checks from `planAction`'s
+        decision table. Added a focused unit test pinning `classifyStatus`'s
+        three-outcome contract directly. Net −9 lines, +4 test cases.
 
 ## Medium priority
 
-- [ ] **(5) O(n) candidate lookup in `singleFileSync`.**
-    [single-file-sync.ts:39](../src/sync/single-file-sync.ts#L39) does
-    `candidateStore.getAll().find(c => c.path === path)`. The backing store is
-    already a `Map`.
-    - Fix: expose `CandidateStore.get(path): Candidate | undefined` and call it.
-- [ ] **(6) Keep Both / delete-conflict leaves the original candidate stranded.**
-    [file-syncer.ts:92-128](../src/sync/file-syncer.ts#L92-L128) returns
-    `newSyncedFiles` but no `syncedState`; callers in
-    [bulk-sync.ts:236-239](../src/sync/bulk-sync.ts#L236-L239) /
-    [single-file-sync.ts:90-95](../src/sync/single-file-sync.ts#L90-L95) insert
-    the conflict-copy candidates but never `remove(candidate.path)` for the
-    original. It only gets reaped on the *next* reconcile + another pass.
-    - Fix: remove the original candidate in the Keep Both / delete-conflict
-        branch. Decide in `file-syncer.ts` whether to surface this via the result
-        (e.g. an extra `removedOriginal: boolean`) or have the caller infer it
-        from "changed && !syncedState && newSyncedFiles".
+- [x] **(5) O(n) candidate lookup in `singleFileSync`.** Was
+    `candidateStore.getAll().find(c => c.path === path)`.
+    - Done: added `CandidateStore.get(path): Candidate | undefined` — direct
+        `Map.get`, O(1). `singleFileSync` calls it; the returned reference is an
+        immutable snapshot per the contract from (2).
+- [x] **(6) Keep Both / delete-conflict leaves the original candidate stranded.**
+    Was: the conflict resolver returned `newSyncedFiles` with no `syncedState`,
+    and `applyFileResult` ignored the original path. The candidate sat in
+    conflict state until the *next* reconcile reclassified it as `deleteLocal`
+    and yet *another* pass swept it up — meanwhile the UI showed a phantom
+    conflict row for a file that no longer existed at the original path.
+    - Done: `applyFileResult` infers from the existing fields — when
+        `changed && !syncedState && !isDelete(actionType)`, the original path's
+        candidate is removed. No new field needed; the inference is the only
+        coherent reading of "the action made changes but didn't tell me how to
+        record them at this path." Documented as a decision table in the
+        method's docstring; covered by a new
+        `CandidateStore.applyFileResult` test suite (5 cases).
 - [ ] **(7) Threshold guard counts non-local changes.**
     [bulk-sync.ts:169](../src/sync/bulk-sync.ts#L169) tallies every non-`deleteLocal`
     candidate, so pulls and conflicts count toward
@@ -102,6 +106,23 @@ addressed; add follow-up items as new ones are discovered.
     the `fileStates` field describing the contract: entries are added on
     `file-open`, retained while a hold-down is pending, otherwise pruned by
     `recomputeVisibleFiles` on `layout-change`.
+- [ ] **(13) Stop duplicating `CandidateStore` behaviour in test mocks.**
+    [bulk-sync.test.ts](../src/sync/bulk-sync.test.ts) and
+    [resolution-executor.test.ts](../src/sync/resolution-executor.test.ts) each
+    carry a private hand-written `applyFileResult` that mirrors the production
+    body, plus spy slots for `markSynced` / `remove` / `insertSynced` etc.
+    Items (2), (6), and any future change to `CandidateStore` semantics force
+    parallel edits in both mocks — exactly the bug class DRY work is meant to
+    prevent. Both mocks have already been silently desynced once during this
+    work.
+    - Fix: convert both test files to instantiate a real `CandidateStore`
+        against `fake-indexeddb` (the pattern
+        [candidate-store.test.ts](../src/sync/candidate-store.test.ts) already
+        uses via `makeStore()`). Spies, where needed, can wrap real methods via
+        `vi.spyOn` so call-shape assertions still work.
+    - Why it matters now: a fourth touch of `applyFileResult` semantics is
+        likely (items (1) and (A1) both circle back through these tests), and
+        each round the mock stays correct is a coin flip.
 
 ## Architectural follow-ups
 

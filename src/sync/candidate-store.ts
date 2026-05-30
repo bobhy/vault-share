@@ -252,6 +252,19 @@ export class CandidateStore {
 
 	// ── Read (all from in-memory cache; no IDB I/O) ────────────────────────────
 
+	/**
+	 * Look up a candidate by path.  O(1).  Returns `undefined` if no candidate
+	 * exists at that path.
+	 *
+	 * The returned reference is an immutable snapshot per the contract on
+	 * {@link Candidate}; subsequent mutations replace the cache entry rather
+	 * than rewriting the returned object, so the value here is safe to read
+	 * without further synchronisation.
+	 */
+	get(path: string): Candidate | undefined {
+		return this.cache.get(path);
+	}
+
 	/** All candidates regardless of state; for the Sharing Status view count table. */
 	getAll(): Candidate[] {
 		return Array.from(this.cache.values());
@@ -483,12 +496,21 @@ export class CandidateStore {
 	 * and the single-decision paths in `resolution-executor`/`single-file-sync`
 	 * so the post-result branching lives in one place.
 	 *
-	 * - `changed === false`: no-op.
-	 * - `actionType` is a delete: removes the candidate.
-	 * - Otherwise, when `syncedState` is set: upserts as `Synced`
-	 *   ({@link markSynced} if cached, {@link insertSynced} if not).
-	 * - `newSyncedFiles` (from Keep Both / delete-conflict resolutions) are
-	 *   inserted as `Synced`.
+	 * Semantics by combination:
+	 *
+	 * | actionType            | syncedState | result for the original path     |
+	 * |-----------------------|-------------|----------------------------------|
+	 * | deleteLocal / deleteRemote | any   | remove                           |
+	 * | push / pull / conflict     | set   | upsert as Synced                 |
+	 * | conflict (Keep Both /      | unset | remove — both sides of the path  |
+	 * |   delete-conflict)         |       | are gone or moved aside          |
+	 *
+	 * `newSyncedFiles` (conflict-copy candidates produced by Keep Both /
+	 * delete-conflict resolutions) are always inserted as `Synced`.
+	 *
+	 * `changed === false` is a no-op for both the original path and any
+	 * `newSyncedFiles` (no resolver returns `newSyncedFiles` without
+	 * `changed: true` today, but the early return keeps the contract clear).
 	 *
 	 * Callers are responsible for tallying their own counters
 	 * (e.g. {@link BulkSync} updates {@link SyncPassResult}).
@@ -499,9 +521,17 @@ export class CandidateStore {
 		fileResult: SyncFileResult,
 	): Promise<void> {
 		if (!fileResult.changed) return;
-		if (actionType === 'deleteLocal' || actionType === 'deleteRemote') {
+		const isDelete = actionType === 'deleteLocal' || actionType === 'deleteRemote';
+		if (isDelete || !fileResult.syncedState) {
+			// Delete: candidate's file is gone on its surviving side.
+			// !syncedState (non-delete): conflict resolved by moving the
+			//   original aside (Keep Both renamed local + deleted remote;
+			//   delete-conflict created a placeholder at a new path). Either
+			//   way, the candidate at `path` no longer reflects any sync we
+			//   want to track. Drop it; the next reconcile will create a
+			//   fresh candidate if either side still has a file here.
 			await this.remove(path);
-		} else if (fileResult.syncedState) {
+		} else {
 			// Upsert: markSynced is a no-op for paths not in the cache (e.g.
 			// single-file-sync on a brand-new file the bulk pass hasn't seen).
 			if (this.cache.has(path)) {
