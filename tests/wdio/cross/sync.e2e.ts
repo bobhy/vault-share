@@ -9,7 +9,7 @@
  * in one vault can be pulled by the other.
  */
 
-import { CROSS_VAULT_DRIVE_FOLDER, injectAndConfigure, runBulkSync } from "../../../wdio.conf.mts";
+import { CROSS_VAULT_DRIVE_FOLDER, cleanupTestDriveFolder, injectAndConfigure, runBulkSync } from "../../../wdio.conf.mts";
 
 describe("Cross-vault sync", () => {
 	before(async () => {
@@ -27,6 +27,14 @@ describe("Cross-vault sync", () => {
 			injectAndConfigure(primary, refreshToken, CROSS_VAULT_DRIVE_FOLDER),
 			injectAndConfigure(peer, refreshToken, CROSS_VAULT_DRIVE_FOLDER),
 		]);
+
+		// Strip leftover state from prior runs so reconcile doesn't surface
+		// phantom pull candidates. Both vaults point at the same Drive folder,
+		// so cleaning from one instance suffices.
+		const { listed, deleted, failed } = await cleanupTestDriveFolder(primary);
+		if (listed > 0) {
+			console.log(`cross.before: cleaned Drive folder — listed=${listed} deleted=${deleted} failed=${failed}`);
+		}
 	});
 
 	it("pushes a new file from primary vault to peer vault via Drive", async () => {

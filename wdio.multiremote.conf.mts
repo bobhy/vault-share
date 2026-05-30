@@ -201,6 +201,14 @@ export const config: WebdriverIO.MultiremoteConfig = {
 			);
 		}));
 
+		// Bump WebDriver's async-script timeout on each instance so `runBulkSync`
+		// can await `bulkSync.run()` inside executeObsidian without hitting the
+		// 30 s default during slow Drive passes. Matches the single-vault config.
+		await Promise.all(instanceNames.map(name => {
+			const instance = mr.getInstance(name) as WebdriverIO.Browser;
+			return instance.setTimeout({ script: 120_000 });
+		}));
+
 		let refreshToken = process.env["VAULT_SHARE_REFRESH_TOKEN"];
 		if (!refreshToken) {
 			try {
