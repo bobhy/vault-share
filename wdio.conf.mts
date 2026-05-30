@@ -298,6 +298,7 @@ interface SyncPassResult {
 	deleted: number;
 	conflicts: number;
 	merges: number;
+	failed: number;
 	deferredByThreshold: boolean;
 	error?: unknown;
 }
@@ -347,7 +348,7 @@ export async function runBulkSync(br: WebdriverIO.Browser): Promise<SyncPassResu
 			// Surface the synchronous throw the same way `r.error` would.
 			return {
 				downloaded: 0, uploaded: 0, deleted: 0, conflicts: 0, merges: 0,
-				deferredByThreshold: false, error: msg,
+				failed: 0, deferredByThreshold: false, error: msg,
 			};
 		}
 	}) as unknown as SyncPassResult;

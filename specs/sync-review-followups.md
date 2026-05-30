@@ -133,6 +133,40 @@ addressed; add follow-up items as new ones are discovered.
         previously pinned the partial behaviour now assert the new outcome
         on both vaults *plus* a stability check (a second sync round on
         either side is a no-op — same content, no new placeholders).
+- [x] **(16) Approved candidate referring to a now-missing file blocked the
+    whole queue.** Was: `executeApproved`'s loop was wrapped in a single
+    try/catch, so the first throw stranded every subsequent approved
+    candidate, *and* the dead candidate stayed in `Approved` state forever
+    — next pass re-threw on the same file and blocked the queue again. The
+    same shape applied to `doRun`'s pending loop.
+    - Done: extracted a shared per-candidate helper
+        `BulkSync.syncAndApply()` with a *per-candidate* try/catch — one
+        failing file no longer aborts the rest of the queue. Both
+        `doRun` and `executeApproved` route through it.
+        - **Cancel policy:** `Local file not found:` errors (the
+            `LocalFs.getFileOrThrow` signal that the user deleted the file
+            between planning and execution) trigger
+            `candidateStore.remove(path)`. The user's explicit delete is
+            honoured; the candidate cannot re-stick on future passes.
+        - **Retry policy:** all other errors (Drive transient failures, IDB
+            issues, etc.) are logged at `error` level and the candidate is
+            left in place for the next pass to retry. `SyncPassResult` gained
+            a `failed: number` counter so callers can see partial-failure
+            outcomes without inspecting logs; `error` stays unset for
+            per-candidate failures (it remains the *pass-wide* signal —
+            listAll failure, IDB transaction crash, etc.).
+    - Three new unit tests in `bulk-sync.test.ts` pin: (a) the cancel-on-
+        missing-local case (approved queue with `gone` candidate in the
+        middle of two healthy ones — both healthy execute, gone is removed,
+        `failed === 1`), (b) the retry-on-other-error case (Drive 503 →
+        candidate kept for retry, `remove` not called), (c) the same
+        isolation applies to non-approved pending candidates.
+    - **Drive-side symmetry left as a follow-up:** a pull failing because
+        the Drive file is now gone (`GDriveError` with 404) is the
+        symmetric case. The distinguishing logic would need to live in
+        `GDriveApi` (typed error code) or the helper would have to string-
+        match Drive errors. Not in scope for this fix; will revisit if it
+        ever shows up in a real-world report.
 
 ## Low priority
 
@@ -266,6 +300,16 @@ Completed so far:
     in one sync round on each vault — the previous "next reconcile re-pushes
     the file" boomerang is gone. Two cross tests now assert the new outcome
     *and* a no-op stability round on both sides.
+- **Per-candidate failure isolation** (item 16): `BulkSync` no longer aborts
+    its whole queue when one file's sync throws. A shared
+    `syncAndApply()` helper wraps each candidate in its own try/catch;
+    `Local file not found:` errors (user deleted the file between planning
+    and execution) cancel the candidate via `candidateStore.remove(path)`,
+    other errors are logged and the candidate is left to retry next pass.
+    `SyncPassResult` gained a `failed: number` counter for partial-failure
+    visibility. Three unit tests pin the cancel-on-missing-local, the
+    retry-on-other-error, and the same isolation for non-approved pending
+    candidates.
 - **Cross-vault e2e** (item 7-equivalent, not a numbered item): cross suite
     expanded from 3 tests (17 s) to 12 tests (67 s) covering delete
     propagation both directions, modify-delete conflict both directions (with

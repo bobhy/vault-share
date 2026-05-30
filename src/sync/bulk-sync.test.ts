@@ -253,6 +253,97 @@ describe('BulkSync.run: executeApproved', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Per-candidate failure isolation (sync-review-followups item 16)
+// ---------------------------------------------------------------------------
+
+describe('BulkSync.run: per-candidate failure isolation', () => {
+	beforeEach(() => mockSyncOneFile.mockReset());
+
+	it('approved + Local file not found: cancels that candidate, completes the rest, bumps failed counter', async () => {
+		// Regression: the old code wrapped the whole approved loop in a single
+		// try/catch, so the first throw stranded every subsequent approved
+		// candidate AND the dead candidate stayed Approved forever (next pass
+		// re-threw on the same file). The fix: per-candidate try/catch, and
+		// for "Local file not found:" specifically, remove the candidate so
+		// the queue can never re-stick on it.
+		const approved = [
+			makeCandidate('alive-a.md', 'push', { state: 'Approved' }),
+			makeCandidate('gone.md',    'push', { state: 'Approved' }),
+			makeCandidate('alive-b.md', 'push', { state: 'Approved' }),
+		];
+		// Iteration order matches array order.
+		mockSyncOneFile
+			.mockResolvedValueOnce(makeSuccessResult('push'))
+			.mockRejectedValueOnce(new Error('Local file not found: gone.md'))
+			.mockResolvedValueOnce(makeSuccessResult('push'));
+
+		const { bulk, candidateStore } = makeBulkSync(0, [], approved);
+		const result = await bulk.run();
+
+		// Both healthy candidates executed (markSynced called for each).
+		expect(candidateStore.markSynced).toHaveBeenCalledWith('alive-a.md', expect.any(Object));
+		expect(candidateStore.markSynced).toHaveBeenCalledWith('alive-b.md', expect.any(Object));
+		expect(result.uploaded).toBe(2);
+
+		// The missing-local candidate was *cancelled* — remove was called for
+		// its path. This is what unblocks the next pass.
+		expect(candidateStore.remove).toHaveBeenCalledWith('gone.md');
+
+		// Pass counters reflect one failure.
+		expect(result.failed).toBe(1);
+		// Catastrophic-error field stays unset; one bad file isn't a pass-wide error.
+		expect(result.error).toBeUndefined();
+	});
+
+	it('approved + transient (non-not-found) error keeps the candidate and lets the rest proceed', async () => {
+		// Transient errors (network blip, Drive 5xx, IDB hiccup) should NOT
+		// cancel the candidate — the next pass should retry. Only the explicit
+		// "Local file not found:" signal cancels.
+		const approved = [
+			makeCandidate('alive-a.md', 'push', { state: 'Approved' }),
+			makeCandidate('flaky.md',   'push', { state: 'Approved' }),
+			makeCandidate('alive-b.md', 'push', { state: 'Approved' }),
+		];
+		mockSyncOneFile
+			.mockResolvedValueOnce(makeSuccessResult('push'))
+			.mockRejectedValueOnce(new Error('Drive request failed: 503 Service Unavailable'))
+			.mockResolvedValueOnce(makeSuccessResult('push'));
+
+		const { bulk, candidateStore } = makeBulkSync(0, [], approved);
+		const result = await bulk.run();
+
+		// Healthy candidates still ran.
+		expect(candidateStore.markSynced).toHaveBeenCalledWith('alive-a.md', expect.any(Object));
+		expect(candidateStore.markSynced).toHaveBeenCalledWith('alive-b.md', expect.any(Object));
+		expect(result.uploaded).toBe(2);
+		expect(result.failed).toBe(1);
+
+		// Crucially: the flaky candidate was NOT removed — it'll retry next pass.
+		expect(candidateStore.remove).not.toHaveBeenCalledWith('flaky.md');
+	});
+
+	it('normal (non-approved) pending: same per-candidate isolation applies', async () => {
+		// The shared helper means doRun's pending loop has the same behaviour.
+		// One bad file shouldn't strand the rest.
+		const pending = [
+			makeCandidate('alive.md', 'push'),
+			makeCandidate('gone.md',  'push'),
+		];
+		mockSyncOneFile
+			.mockResolvedValueOnce(makeSuccessResult('push'))
+			.mockRejectedValueOnce(new Error('Local file not found: gone.md'));
+
+		const { bulk, candidateStore } = makeBulkSync(2, pending, []);
+		const result = await bulk.run();
+
+		expect(candidateStore.markSynced).toHaveBeenCalledWith('alive.md', expect.any(Object));
+		expect(candidateStore.remove).toHaveBeenCalledWith('gone.md');
+		expect(result.uploaded).toBe(1);
+		expect(result.failed).toBe(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // doRun: normal planning path
 // ---------------------------------------------------------------------------
 

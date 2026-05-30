@@ -127,6 +127,7 @@ export class BulkSync {
 			deleted: 0,
 			conflicts: 0,
 			merges: 0,
+			failed: 0,
 			deferredByThreshold: false,
 		};
 
@@ -196,22 +197,14 @@ export class BulkSync {
 			// Execute pending candidates one at a time, yielding between each.
 			const hasHistory = this.candidates.hasSyncHistory();
 			for (const candidate of pending) {
-				// Snapshot actionType: applyFileResult → markSynced mutates the
-				// shared candidate reference (sets actionType='noOp'), and the
-				// tally below must read the pre-mutation value.
-				const actionType = candidate.actionType;
-				this.ctx.logger.debug(`sync ${candidate.path}: ${actionType}`);
-				const fileResult = await syncOneFile(candidate, this.ctx, hasHistory);
-				tallyFileResult(actionType, fileResult, result);
-				await this.candidates.applyFileResult(candidate.path, actionType, fileResult);
-
+				await this.syncAndApply(candidate, hasHistory, /* approved */ false, result);
 				// Yield to allow queued single-file sync microtasks to run.
 				await Promise.resolve();
 			}
 
 			await this.ctx.statsTracker.flush();
 
-			const summary = `Shared: ${result.downloaded} downloaded, ${result.uploaded} uploaded, ${result.deleted} deleted`;
+			const summary = summarize(result);
 			this.setStatusBar(summary);
 			this.ctx.logger.info(summary);
 
@@ -239,6 +232,7 @@ export class BulkSync {
 			deleted: 0,
 			conflicts: 0,
 			merges: 0,
+			failed: 0,
 			deferredByThreshold: false,
 		};
 
@@ -251,22 +245,14 @@ export class BulkSync {
 		try {
 			// Approved actions always come from a vault that already has sync history.
 			for (const candidate of approved) {
-				// Snapshot actionType: applyFileResult → markSynced mutates the
-				// shared candidate reference (sets actionType='noOp'), and the
-				// tally below must read the pre-mutation value.
-				const actionType = candidate.actionType;
-				this.ctx.logger.debug(`sync ${candidate.path}: ${actionType} (approved)`);
-				const fileResult = await syncOneFile(candidate, this.ctx, /* hasHistory */ true);
-				tallyFileResult(actionType, fileResult, result);
-				await this.candidates.applyFileResult(candidate.path, actionType, fileResult);
-
+				await this.syncAndApply(candidate, /* hasHistory */ true, /* approved */ true, result);
 				// Yield to allow queued single-file sync microtasks to run.
 				await Promise.resolve();
 			}
 
 			await this.ctx.statsTracker.flush();
 
-			const summary = `Shared: ${result.downloaded} downloaded, ${result.uploaded} uploaded, ${result.deleted} deleted`;
+			const summary = summarize(result);
 			this.setStatusBar(summary);
 			this.ctx.logger.info(summary);
 
@@ -281,10 +267,68 @@ export class BulkSync {
 	}
 
 	/**
+	 * Execute one candidate and apply its result to the store, with a
+	 * per-candidate try/catch so a single failing file doesn't block the rest
+	 * of the queue.
+	 *
+	 * Two error policies:
+	 *   - `Local file not found: <path>` (from {@link LocalFs.getFileOrThrow}):
+	 *     the user deleted the file between planning and execution. Cancel
+	 *     the candidate via {@link CandidateStore.remove} so we don't crash
+	 *     on the same file every pass. This is the bug-class that motivated
+	 *     this method — see sync-review-followups item (16).
+	 *   - Any other error (transient Drive failures, IDB issues, etc.):
+	 *     log at `error` level, bump `result.failed`, and leave the
+	 *     candidate alone for the next pass to retry.
+	 *
+	 * Note that the actionType snapshot is taken *before* `applyFileResult`
+	 * mutates the candidate's `actionType` to `'noOp'` via `markSynced`, so
+	 * `tallyFileResult` sees the pre-mutation value.
+	 */
+	private async syncAndApply(
+		candidate: Candidate,
+		hasHistory: boolean,
+		approved: boolean,
+		result: SyncPassResult,
+	): Promise<void> {
+		const actionType = candidate.actionType;
+		const tag = approved ? ' (approved)' : '';
+		this.ctx.logger.debug(`sync ${candidate.path}: ${actionType}${tag}`);
+
+		try {
+			const fileResult = await syncOneFile(candidate, this.ctx, hasHistory);
+			tallyFileResult(actionType, fileResult, result);
+			await this.candidates.applyFileResult(candidate.path, actionType, fileResult);
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			result.failed++;
+			this.ctx.logger.error(
+				`sync ${candidate.path} (${actionType}${tag}) failed`,
+				msg,
+			);
+
+			// The only error we *cancel* the candidate for is "local file
+			// gone." Everything else stays in the cache for retry.
+			if (err instanceof Error && err.message.startsWith('Local file not found:')) {
+				this.ctx.logger.info(
+					`cancelling candidate ${candidate.path}: local file no longer exists`,
+				);
+				await this.candidates.remove(candidate.path);
+			}
+		}
+	}
+
+	/**
 	 * Total count of non-`Synced` candidates from the most recent planning pass.
 	 * Returns `null` before the first plan has run.
 	 */
 	getPendingCount(): number | null {
 		return this.candidates.getPendingCount();
 	}
+}
+
+/** Build a one-line summary of pass results for the status bar / info log. */
+function summarize(r: SyncPassResult): string {
+	const base = `Shared: ${r.downloaded} downloaded, ${r.uploaded} uploaded, ${r.deleted} deleted`;
+	return r.failed > 0 ? `${base}, ${r.failed} failed` : base;
 }

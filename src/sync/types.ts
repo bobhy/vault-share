@@ -153,6 +153,15 @@ export interface SyncPassResult {
 	deleted: number;
 	conflicts: number;
 	merges: number;
+	/**
+	 * Per-candidate failures during execution.  An individual candidate may
+	 * fail (e.g. its local file was deleted between planning and execution);
+	 * `BulkSync` logs the error and continues to the next candidate rather
+	 * than aborting the pass, and bumps this counter.  Distinct from
+	 * {@link error}, which signals a *pass-wide* failure (network outage on
+	 * the listAll round-trip, IDB transaction crash, etc.).
+	 */
+	failed: number;
 	/** True if the pass was halted because the action count exceeded the deferral threshold. */
 	deferredByThreshold: boolean;
 	error?: Error;
