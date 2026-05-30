@@ -556,7 +556,7 @@ describe('CandidateStore.onChanged', () => {
 		await cs.init();
 
 		const onChanged = vi.fn();
-		cs.onChanged = onChanged;
+		cs.onChange(onChanged);
 
 		await cs.reconcile([LOCAL_A], []);
 		expect(onChanged).toHaveBeenCalledTimes(1);
@@ -569,7 +569,7 @@ describe('CandidateStore.onChanged', () => {
 
 		// No local, no remote, no existing candidates → no-op.
 		const onChanged = vi.fn();
-		cs.onChanged = onChanged;
+		cs.onChange(onChanged);
 
 		await cs.reconcile([], []);
 		expect(onChanged).not.toHaveBeenCalled();
@@ -582,7 +582,7 @@ describe('CandidateStore.onChanged', () => {
 
 		await cs.reconcile([LOCAL_A], []);
 		const onChanged = vi.fn();
-		cs.onChanged = onChanged;
+		cs.onChange(onChanged);
 
 		await cs.approve(['a.md']);
 		expect(onChanged).toHaveBeenCalledTimes(1);
@@ -594,7 +594,7 @@ describe('CandidateStore.onChanged', () => {
 		await cs.init();
 
 		const onChanged = vi.fn();
-		cs.onChanged = onChanged;
+		cs.onChange(onChanged);
 
 		await cs.setPaused(true);
 		expect(onChanged).toHaveBeenCalledTimes(1);

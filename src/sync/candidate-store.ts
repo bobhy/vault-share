@@ -41,11 +41,36 @@ export class CandidateStore {
 	/** `null` until {@link init} has been awaited. */
 	private cachedPaused: boolean | null = null;
 
+	private readonly changeListeners = new Set<() => void>();
+
 	/**
-	 * Fired whenever any persistent state changes.
-	 * Wired in `main.ts` to {@link updateStatusBar} + {@link refreshSharingStatusViews}.
+	 * Subscribe to "store changed" notifications. The listener fires after any
+	 * persistent state mutation ({@link reconcile}, {@link approve}, {@link defer},
+	 * {@link markSynced}, {@link remove}, {@link insertSynced}, {@link setPaused},
+	 * {@link clear}, {@link deferAllAndPause}).
+	 *
+	 * Returns an unsubscribe function — call it on view teardown to prevent leaks.
+	 *
+	 * Listeners run synchronously in registration order. Throwing from a listener
+	 * does not abort subsequent listeners (errors are logged to the console and
+	 * swallowed); listeners must own their own error handling.
 	 */
-	onChanged: (() => void) | null = null;
+	onChange(listener: () => void): () => void {
+		this.changeListeners.add(listener);
+		return () => { this.changeListeners.delete(listener); };
+	}
+
+	private fireChanged(): void {
+		for (const listener of this.changeListeners) {
+			try {
+				listener();
+			} catch (err) {
+				// Listeners are UI code; an error here must not abort the store
+				// mutation that triggered the notification.
+				console.error('CandidateStore change listener threw', err);
+			}
+		}
+	}
 
 	constructor(private readonly idb: IDBHelper) {}
 
@@ -134,82 +159,83 @@ export class CandidateStore {
 				continue;
 			}
 
-			// Update ephemeral fields.
-			existing.local = local;
-			existing.remote = remote;
-
+			// Existing candidate: never mutate `existing` — build `next` and replace
+			// the cache entry. Holders of the old reference (e.g. an open UI list)
+			// get a stable snapshot until they re-read via getAll() / getByType().
 			const prevActionType = existing.actionType;
-			const prevState = existing.state;
 			const newActionType = planAction(existing, local, remote, vaultHasHistory);
-			existing.actionType = newActionType;
 
-			if (newActionType === 'noOp') {
-				if (!local && !remote) {
-					// File gone from both sides → remove candidate entirely.
-					toRemove.push(path);
-					this.cache.delete(path);
-				} else if (existing.state !== 'Synced') {
-					// Files agree — promote to Synced.
-					existing.state = 'Synced';
-					if (local) {
-						existing.syncedLocalMtime = local.mtime;
-						existing.syncedLocalSize = local.size;
-					}
-					if (remote) {
-						existing.syncedRemoteMtime = remote.mtime;
-						existing.syncedRemoteSize = remote.size;
-						existing.driveFileId = remote.driveFileId;
-					}
-					existing.syncedAt = Date.now();
-					existing.deferredAt = 0;
-					existing.deferredLocalMtime = 0;
-					existing.deferredRemoteMtime = 0;
-					toWrite.push(toPersistent(existing));
-				}
+			if (newActionType === 'noOp' && !local && !remote) {
+				// File gone from both sides → remove candidate entirely.
+				toRemove.push(path);
+				this.cache.delete(path);
 				continue;
 			}
 
-			// actionType is not noOp — apply state machine.
-			let stateChanged = false;
-			switch (existing.state) {
-				case 'Synced':
-					// Something changed — demote to Default.
-					existing.state = 'Default';
-					stateChanged = true;
-					break;
+			// Base: copy existing, refresh ephemerals, set the new actionType.
+			let next: Candidate = { ...existing, local, remote, actionType: newActionType };
+			let persistedChanged = newActionType !== prevActionType;
 
-				case 'Default':
-					// Stay Default; record if actionType changed.
-					if (newActionType !== prevActionType) stateChanged = true;
-					break;
-
-				case 'Deferred': {
-					// Auto-revocation: if either mtime changed, transition back to Default.
-					const currentLocalMtime = local?.mtime ?? 0;
-					const currentRemoteMtime = remote?.mtime ?? 0;
-					if (
-						currentLocalMtime !== existing.deferredLocalMtime ||
-						currentRemoteMtime !== existing.deferredRemoteMtime
-					) {
-						existing.state = 'Default';
-						existing.deferredAt = 0;
-						existing.deferredLocalMtime = 0;
-						existing.deferredRemoteMtime = 0;
-						stateChanged = true;
-					} else if (newActionType !== prevActionType) {
-						stateChanged = true;
-					}
-					break;
+			if (newActionType === 'noOp') {
+				if (existing.state !== 'Synced') {
+					// Files agree — promote to Synced.
+					next = {
+						...next,
+						state: 'Synced',
+						syncedLocalMtime: local?.mtime ?? next.syncedLocalMtime,
+						syncedLocalSize: local?.size ?? next.syncedLocalSize,
+						syncedRemoteMtime: remote?.mtime ?? next.syncedRemoteMtime,
+						syncedRemoteSize: remote?.size ?? next.syncedRemoteSize,
+						driveFileId: remote?.driveFileId ?? next.driveFileId,
+						syncedAt: Date.now(),
+						deferredAt: 0,
+						deferredLocalMtime: 0,
+						deferredRemoteMtime: 0,
+					};
+					persistedChanged = true;
 				}
+			} else {
+				// actionType is not noOp — apply the state machine.
+				switch (existing.state) {
+					case 'Synced':
+						// Something changed — demote to Default.
+						next = { ...next, state: 'Default' };
+						persistedChanged = true;
+						break;
 
-				case 'Approved':
-					// Stay Approved; note actionType changes so UI stays consistent.
-					if (newActionType !== prevActionType) stateChanged = true;
-					break;
+					case 'Default':
+						// Stay Default; persistedChanged already covers actionType drift.
+						break;
+
+					case 'Deferred': {
+						// Auto-revocation: if either mtime changed, transition back to Default.
+						const currentLocalMtime = local?.mtime ?? 0;
+						const currentRemoteMtime = remote?.mtime ?? 0;
+						if (
+							currentLocalMtime !== existing.deferredLocalMtime ||
+							currentRemoteMtime !== existing.deferredRemoteMtime
+						) {
+							next = {
+								...next,
+								state: 'Default',
+								deferredAt: 0,
+								deferredLocalMtime: 0,
+								deferredRemoteMtime: 0,
+							};
+							persistedChanged = true;
+						}
+						break;
+					}
+
+					case 'Approved':
+						// Stay Approved; persistedChanged already covers actionType drift.
+						break;
+				}
 			}
 
-			if (stateChanged || existing.state !== prevState) {
-				toWrite.push(toPersistent(existing));
+			this.cache.set(path, next);
+			if (persistedChanged) {
+				toWrite.push(toPersistent(next));
 			}
 		}
 
@@ -220,7 +246,7 @@ export class CandidateStore {
 				for (const path of toRemove) store.delete(path);
 				return () => undefined;
 			});
-			this.onChanged?.();
+			this.fireChanged();
 		}
 	}
 
@@ -285,13 +311,17 @@ export class CandidateStore {
 		if (paths.length === 0) return;
 		const toWrite: PersistedCandidate[] = [];
 		for (const path of paths) {
-			const c = this.cache.get(path);
-			if (!c) continue;
-			c.state = 'Approved';
-			c.deferredAt = 0;
-			c.deferredLocalMtime = 0;
-			c.deferredRemoteMtime = 0;
-			toWrite.push(toPersistent(c));
+			const existing = this.cache.get(path);
+			if (!existing) continue;
+			const next: Candidate = {
+				...existing,
+				state: 'Approved',
+				deferredAt: 0,
+				deferredLocalMtime: 0,
+				deferredRemoteMtime: 0,
+			};
+			this.cache.set(path, next);
+			toWrite.push(toPersistent(next));
 		}
 		if (toWrite.length === 0) return;
 		await this.idb.runTransaction(STORE_CANDIDATES, 'readwrite', (tx) => {
@@ -299,7 +329,7 @@ export class CandidateStore {
 			for (const c of toWrite) store.put(c);
 			return () => undefined;
 		});
-		this.onChanged?.();
+		this.fireChanged();
 	}
 
 	/**
@@ -311,13 +341,17 @@ export class CandidateStore {
 		if (paths.length === 0) return;
 		const toWrite: PersistedCandidate[] = [];
 		for (const path of paths) {
-			const c = this.cache.get(path);
-			if (!c) continue;
-			c.state = 'Deferred';
-			c.deferredAt = now;
-			c.deferredLocalMtime = c.local?.mtime ?? 0;
-			c.deferredRemoteMtime = c.remote?.mtime ?? 0;
-			toWrite.push(toPersistent(c));
+			const existing = this.cache.get(path);
+			if (!existing) continue;
+			const next: Candidate = {
+				...existing,
+				state: 'Deferred',
+				deferredAt: now,
+				deferredLocalMtime: existing.local?.mtime ?? 0,
+				deferredRemoteMtime: existing.remote?.mtime ?? 0,
+			};
+			this.cache.set(path, next);
+			toWrite.push(toPersistent(next));
 		}
 		if (toWrite.length === 0) return;
 		await this.idb.runTransaction(STORE_CANDIDATES, 'readwrite', (tx) => {
@@ -325,7 +359,7 @@ export class CandidateStore {
 			for (const c of toWrite) store.put(c);
 			return () => undefined;
 		});
-		this.onChanged?.();
+		this.fireChanged();
 	}
 
 	// ── Threshold guard ────────────────────────────────────────────────────────
@@ -338,21 +372,30 @@ export class CandidateStore {
 	async deferAllAndPause(pending: Candidate[]): Promise<void> {
 		const now = Date.now();
 		this.cachedPaused = true;
-		for (const c of pending) {
-			if (c.state === 'Default') {
-				c.state = 'Deferred';
-				c.deferredAt = now;
-				c.deferredLocalMtime = c.local?.mtime ?? 0;
-				c.deferredRemoteMtime = c.remote?.mtime ?? 0;
-			}
+		const toWrite: PersistedCandidate[] = [];
+		for (const stale of pending) {
+			// `stale` is the caller's snapshot — re-read the live cache by path so
+			// the "Default → Deferred" check sees current state, not whatever the
+			// caller captured before any concurrent mutation.
+			const existing = this.cache.get(stale.path);
+			if (!existing || existing.state !== 'Default') continue;
+			const next: Candidate = {
+				...existing,
+				state: 'Deferred',
+				deferredAt: now,
+				deferredLocalMtime: existing.local?.mtime ?? 0,
+				deferredRemoteMtime: existing.remote?.mtime ?? 0,
+			};
+			this.cache.set(stale.path, next);
+			toWrite.push(toPersistent(next));
 		}
 		await this.idb.runTransaction([STORE_CANDIDATES, STORE_SYNC_STATE], 'readwrite', (tx) => {
 			const candidateStore = tx.objectStore(STORE_CANDIDATES);
-			for (const c of pending) candidateStore.put(toPersistent(c));
+			for (const c of toWrite) candidateStore.put(c);
 			tx.objectStore(STORE_SYNC_STATE).put({ key: PAUSED_KEY, value: true });
 			return () => undefined;
 		});
-		this.onChanged?.();
+		this.fireChanged();
 	}
 
 	// ── Execution lifecycle (called by BulkSync after syncOneFile) ────────────
@@ -363,24 +406,28 @@ export class CandidateStore {
 	 * Persists to IDB.  Fires {@link onChanged}.
 	 */
 	async markSynced(path: string, state: NonNullable<SyncFileResult['syncedState']>): Promise<void> {
-		const c = this.cache.get(path);
-		if (!c) return;
-		c.state = 'Synced';
-		c.actionType = 'noOp';
-		c.driveFileId = state.driveFileId;
-		c.syncedLocalMtime = state.localMtime;
-		c.syncedRemoteMtime = state.remoteMtime;
-		c.syncedLocalSize = state.localSize;
-		c.syncedRemoteSize = state.remoteSize;
-		c.syncedAt = state.syncedAt;
-		c.deferredAt = 0;
-		c.deferredLocalMtime = 0;
-		c.deferredRemoteMtime = 0;
+		const existing = this.cache.get(path);
+		if (!existing) return;
+		const next: Candidate = {
+			...existing,
+			state: 'Synced',
+			actionType: 'noOp',
+			driveFileId: state.driveFileId,
+			syncedLocalMtime: state.localMtime,
+			syncedRemoteMtime: state.remoteMtime,
+			syncedLocalSize: state.localSize,
+			syncedRemoteSize: state.remoteSize,
+			syncedAt: state.syncedAt,
+			deferredAt: 0,
+			deferredLocalMtime: 0,
+			deferredRemoteMtime: 0,
+		};
+		this.cache.set(path, next);
 		await this.idb.runTransaction(STORE_CANDIDATES, 'readwrite', (tx) => {
-			tx.objectStore(STORE_CANDIDATES).put(toPersistent(c));
+			tx.objectStore(STORE_CANDIDATES).put(toPersistent(next));
 			return () => undefined;
 		});
-		this.onChanged?.();
+		this.fireChanged();
 	}
 
 	/**
@@ -395,7 +442,7 @@ export class CandidateStore {
 			tx.objectStore(STORE_CANDIDATES).delete(path);
 			return () => undefined;
 		});
-		this.onChanged?.();
+		this.fireChanged();
 	}
 
 	/**
@@ -425,7 +472,7 @@ export class CandidateStore {
 			tx.objectStore(STORE_CANDIDATES).put(toPersistent(candidate));
 			return () => undefined;
 		});
-		this.onChanged?.();
+		this.fireChanged();
 	}
 
 	/**
@@ -482,7 +529,7 @@ export class CandidateStore {
 			tx.objectStore(STORE_CANDIDATES).clear();
 			return () => undefined;
 		});
-		this.onChanged?.();
+		this.fireChanged();
 	}
 
 	// ── Paused flag ────────────────────────────────────────────────────────────
@@ -513,6 +560,6 @@ export class CandidateStore {
 			tx.objectStore(STORE_SYNC_STATE).put({ key: PAUSED_KEY, value: paused });
 			return () => undefined;
 		});
-		this.onChanged?.();
+		this.fireChanged();
 	}
 }

@@ -116,8 +116,10 @@ export default class VaultSharePlugin extends Plugin {
 		this.candidateStore = new CandidateStore(this.store.getIdb());
 		const candidateStore = this.candidateStore;
 
-		// Wire the onChanged callback: update status bar and refresh all Sharing Status views.
-		candidateStore.onChanged = () => {
+		// Wire the change listener: update status bar and refresh all Sharing Status views.
+		// PendingListModal subscribes separately in its onOpen; the modal's own
+		// listener handles re-rendering its rows when reconcile fires mid-modal.
+		candidateStore.onChange(() => {
 			const count = candidateStore.getPendingCount();
 			if (!this.deferralNoticeShown && count !== null && count > 0) {
 				this.deferralNoticeShown = true;
@@ -125,7 +127,7 @@ export default class VaultSharePlugin extends Plugin {
 			}
 			this.updateDeferralStatusBar();
 			this.refreshSharingStatusViews();
-		};
+		});
 
 		// Warm the in-memory cache so isPausedSync() and isDeferred() are accurate
 		// from the very first scheduler tick.

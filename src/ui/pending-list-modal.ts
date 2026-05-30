@@ -81,6 +81,8 @@ export class PendingListModal extends Modal {
 	private readonly accepted = new Map<string, boolean>();
 	private expandedPath: string | null = null;
 	private listEl: HTMLUListElement | null = null;
+	/** Unsubscribe handle from {@link CandidateStore.onChange}; set in onOpen, cleared in onClose. */
+	private unsubscribe: (() => void) | null = null;
 
 	constructor(
 		app: App,
@@ -135,11 +137,53 @@ export class PendingListModal extends Modal {
 			.addEventListener('click', () => { void this.applyAccepted(); });
 		footer.createEl('button', { text: 'Cancel' })
 			.addEventListener('click', () => { this.close(); });
+
+		// Subscribe to store changes so the rows re-render when reconcile (or any
+		// other mutation path) updates candidates while the modal is open.
+		// Without this, a candidate that auto-resolves in the background still
+		// appears here and the user can Apply against a phantom row.
+		this.unsubscribe = this.candidateStore.onChange(() => { this.refresh(); });
 	}
 
 	onClose(): void {
+		this.unsubscribe?.();
+		this.unsubscribe = null;
 		this.contentEl.empty();
 		this.listEl = null;
+	}
+
+	/**
+	 * Re-read candidates from the store and re-render the list, preserving the
+	 * user's checkbox selections for rows that still exist.
+	 *
+	 * Triggered by {@link CandidateStore.onChange}.  Callers do not invoke this
+	 * directly.
+	 */
+	private refresh(): void {
+		this.candidates = this.candidateStore.getByType(this.actionType);
+
+		const present = new Set(this.candidates.map(c => c.path));
+		// Drop accepted-map entries for candidates no longer in this view.
+		for (const path of [...this.accepted.keys()]) {
+			if (!present.has(path)) this.accepted.delete(path);
+		}
+		// New candidates (e.g. a reconcile that introduced fresh pushes) get the
+		// same default the constructor would have set.
+		for (const c of this.candidates) {
+			if (!this.accepted.has(c.path)) {
+				this.accepted.set(c.path, c.state === 'Default');
+			}
+		}
+		// Collapse the expanded accordion if its candidate disappeared.
+		if (this.expandedPath !== null && !present.has(this.expandedPath)) {
+			this.expandedPath = null;
+		}
+
+		this.rerenderList();
+
+		// Auto-close if the store has emptied this view (e.g. all candidates were
+		// resolved by a background sync). Matches the post-Apply behaviour.
+		if (this.candidates.length === 0) this.close();
 	}
 
 	/** Rebuild the candidate list in-place after a resolution succeeds. */

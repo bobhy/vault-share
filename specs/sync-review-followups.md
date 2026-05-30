@@ -11,20 +11,22 @@ addressed; add follow-up items as new ones are discovered.
     - Done: deleted the private copies in `candidate-store.ts`; it now imports
         `planAction` from `decision-engine.ts`. Existing `candidate-store.test.ts`
         and the full e2e suite pass.
-- [ ] **(2) Shared candidate references are mutated in place.** `markSynced`,
-    `reconcile`, `defer`, `deferAllAndPause` reassign fields on cached `Candidate`
-    objects. The bug we just fixed (
-    [bulk-sync.ts:215](../src/sync/bulk-sync.ts#L215),
-    [bulk-sync.ts:294](../src/sync/bulk-sync.ts#L294))
-    was a direct consequence. UI code that reads `candidate.local` /
-    `candidate.actionType` after an `await` on a store mutation sees the
-    post-mutation value.
-    - Fix direction (pick one):
-        - `CandidateStore` replaces the cache entry with a fresh object on every
-            mutation (cheap, no API change for callers).
-        - `getAll` / `getByType` / `getPending` / `getApproved` return defensive
-            copies.
-    - Either way: document `Candidate` as immutable to readers in `types.ts`.
+- [x] **(2) Shared candidate references are mutated in place.** `markSynced`,
+    `reconcile`, `defer`, `deferAllAndPause`, `approve` reassigned fields on
+    cached `Candidate` objects. The bug we already fixed in `bulk-sync.ts` was a
+    direct consequence.
+    - Done: every mutation point in `CandidateStore` now builds a fresh
+        `Candidate` (spread + override) and replaces the cache entry via
+        `cache.set(path, next)`. Held references become stable snapshots; they
+        go *stale* after a mutation but never lie about their fields.
+    - The single-slot `onChanged` callback was widened to a multi-listener
+        `onChange(fn): unsubscribe`, so non-`main.ts` subscribers can register
+        without stomping on each other. `main.ts` is the first subscriber
+        (status bar + sharing-status views); `PendingListModal` is the second
+        (refreshes its rows so user input always targets the live store, not
+        a phantom row from reconcile-ago).
+    - Immutability contract documented in
+        [types.ts:46-65](../src/sync/types.ts#L46-L65).
 - [ ] **(3) `BulkSync.run()` early-return is silent.** When `this.running` is true,
     the second caller gets `{0,0,0,…,deferredByThreshold:false}` synchronously
     and `lastPassResult`/`lastPassCompletedAt` are not touched. Callers cannot
@@ -101,10 +103,28 @@ addressed; add follow-up items as new ones are discovered.
 
 ## Architectural follow-ups
 
-- [ ] **(A1) The `Candidate` object conflates IDB row + cache entry + planning
-    input/output + UI row + deferral sentinel.** Split into a persistent record +
-    a transient planning view. Removes the mutation hazards in (2) by
-    construction.
+- [ ] **(A1) Type-hygiene: `Candidate` has sentinel-valued optional sub-shapes.**
+    Downgraded from "Architectural" to "type-hygiene cleanup, low priority"
+    after (2) landed — the original justification ("removes mutation hazards
+    by construction") is moot now that replace-on-write + the documented
+    immutability contract enforce the same invariant by policy. The remaining
+    motivations are smaller:
+    - Deferral sentinels (`deferredAt`, `deferredLocalMtime`,
+        `deferredRemoteMtime`) are always present but only meaningful when
+        `state === 'Deferred'`. They are `0` on every other state, and the
+        auto-revoke check has to know which fields are valid.
+    - The four `synced*` fields plus `driveFileId` are similarly sentinel-valued
+        on never-synced candidates. The "`syncedAt > 0` means the rest is
+        trustworthy" convention is encoded across `decision-engine.ts`,
+        `candidate-store.ts`, and `file-syncer.ts` as scattered `wasSynced`
+        checks.
+    - Ephemeral `local` / `remote` are optional in the type but mandatory in
+        most code paths (execute loop, planning, conflict resolution all assume
+        reconcile populated them).
+    - Fix direction: discriminated union on `state`, so each variant carries
+        only the fields valid in that state. Big consumer-side ripple — defer
+        until the next time something else has us touching these types
+        broadly.
 - [x] **(A2) `doRun` and `executeApproved` duplicated post-result handling.**
     Done: extracted a private `tallyFileResult(actionType, fileResult, result)`
     in `bulk-sync.ts` paired with `CandidateStore.applyFileResult(path,

@@ -43,6 +43,25 @@ export type CandidateState = 'Synced' | 'Default' | 'Deferred' | 'Approved';
  *
  * All four sharing layers — planning, UI, deferral, execution — work directly
  * with `Candidate`.  There are no intermediate projection types.
+ *
+ * ### Immutability contract
+ *
+ * `Candidate` is **immutable to readers**. Any reference returned by
+ * `CandidateStore.getAll()` / `getByType()` / `getApproved()` / `getPending()`
+ * is a stable snapshot — its fields will not change underneath the holder.
+ *
+ * `CandidateStore` enforces this by **replacing** the cache entry on every
+ * mutation (reconcile, markSynced, defer, approve, …) rather than rewriting
+ * the existing object in place. Held references therefore go *stale* after a
+ * mutation (they still describe the candidate at the moment of fetch), but
+ * they do not lie about their fields. Callers that need the current view must
+ * re-fetch from the store; subscribe to {@link CandidateStore.onChange} for a
+ * notification when re-fetching is worthwhile.
+ *
+ * Code that constructs a `Candidate` outside the store (e.g.
+ * `single-file-sync.ts` building a transient candidate for a brand-new path)
+ * is free to mutate its own object until it hands the candidate over to
+ * `CandidateStore`.
  */
 export interface Candidate {
 	// ── Identity (IDB key) ────────────────────────────────────────────────────
