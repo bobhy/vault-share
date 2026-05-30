@@ -89,6 +89,30 @@ addressed; add follow-up items as new ones are discovered.
     re-stats Drive ([file-syncer.ts:103](../src/sync/file-syncer.ts#L103)).
     - Fix: re-stat Drive after a pull so the persisted record matches Drive's
         current mtime.
+- [x] **(18) Default `excludeRules` pushed plugin internals to Drive and
+    didn't protect against `.trash` mode.** Two related problems in the
+    same setting:
+    - The `!.obsidian/plugins/vault-share` re-include meant the plugin's own
+        `main.js` / `manifest.json` / `styles.css` *and* `data.json` were
+        pushed to Drive on every sync. `data.json` is per-device state
+        (driveFolderPath, OAuth-derived fields), and propagating it across
+        peers is a correctness/security footgun. Build artifacts likewise
+        should not cross between installs.
+    - No `.trash` exclusion meant a user who picked Obsidian's "Move to
+        .trash folder" deletion mode would silently re-push every deleted
+        file to Drive (and pull it back into peer vaults' `.trash/`) as if
+        it were new content.
+    - Done: defaults are now `['.obsidian', '.trash']` — no re-include for
+        the plugin folder, and `.trash` excluded for the in-vault trash mode.
+        Documented inline at
+        [settings.ts:43-54](../src/settings.ts#L43-L54). All 18/18 single +
+        12/12 cross e2e tests still pass; no fixture depended on the plugin
+        re-include.
+    - **Migration note:** per project convention, no migration code was
+        written. Existing users keep their stored `excludeRules` (which
+        contain the old defaults) until they manually edit or reset. A
+        release note for upgraders should suggest replacing
+        `!.obsidian/plugins/vault-share` with `.trash` in their settings.
 - [ ] **(14) `resolveDeleteConflict` only creates a placeholder; it does not
     propagate the surviving side.** With the `resolvedInPlace` fix from the
     cross-suite work, bulk sync no longer *crashes* on delete-conflict — but
@@ -229,6 +253,12 @@ Completed so far:
     lookups; `applyFileResult` infers "original is gone" from `changed &&
     !syncedState && !isDelete` so Keep Both / delete-conflict no longer
     strand the original candidate.
+- **Default `excludeRules` fix** (item 18): removed the
+    `!.obsidian/plugins/vault-share` re-include (plugin internals + per-device
+    `data.json` no longer cross the boundary) and added `.trash` to the
+    default exclude list (in-vault trash mode no longer pushes deleted files
+    to peers). Existing users keep their stored excludes; new users get the
+    safer defaults.
 - **Cross-vault e2e** (item 7-equivalent, not a numbered item): cross suite
     expanded from 3 tests (17 s) to 12 tests (67 s) covering delete
     propagation both directions, modify-delete conflict both directions (with

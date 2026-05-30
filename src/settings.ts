@@ -42,8 +42,16 @@ export interface VaultShareSettings {
 
 export const DEFAULT_SETTINGS: VaultShareSettings = {
 	driveFolderPath: '',  // overridden at runtime with /vault-share/<vault-name>; never used as-is
+	// Defaults:
+	// - `.obsidian` — exclude the entire config directory. Per-vault state
+	//   (plugin builds, OAuth tokens, the plugin's own `data.json`) must not
+	//   sync across devices; each install manages its own copy.
+	// - `.trash` — exclude Obsidian's in-vault trash folder. Files deleted
+	//   under the "Move to .trash folder" setting end up here, and without
+	//   this rule they would be re-pushed to Drive (and pulled back into
+	//   peer vaults' `.trash/`) as if they were new files.
 	// eslint-disable-next-line obsidianmd/hardcoded-config-path -- static constant; Vault#configDir is unavailable here; runtime code should use vault.configDir if overriding
-	excludeRules: ['.obsidian', '!.obsidian/plugins/vault-share'],
+	excludeRules: ['.obsidian', '.trash'],
 	fileConflict: 'Keep Both',
 	textFileConflict: 'Merge',
 	fileModificationConfirmationThreshold: 10,
