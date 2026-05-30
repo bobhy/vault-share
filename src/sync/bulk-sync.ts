@@ -1,7 +1,33 @@
-import type { Candidate, SyncContext, SyncPassResult } from './types';
+import type { Candidate, SyncActionType, SyncContext, SyncFileResult, SyncPassResult } from './types';
 import type { ExcludeMatcher } from './exclude';
 import type { CandidateStore } from './candidate-store';
 import { syncOneFile } from './file-syncer';
+
+/**
+ * Tally one file's sync result into a {@link SyncPassResult} counter set.
+ * Pure function — does not touch the store. Pairs with
+ * {@link CandidateStore.applyFileResult}, which handles the store side.
+ */
+function tallyFileResult(
+	actionType: SyncActionType,
+	fileResult: SyncFileResult,
+	result: SyncPassResult,
+): void {
+	if (!fileResult.changed) return;
+	if (actionType === 'deleteLocal' || actionType === 'deleteRemote') {
+		result.deleted++;
+		return;
+	}
+	if (!fileResult.syncedState) return;
+	switch (actionType) {
+		case 'pull': result.downloaded++; break;
+		case 'push': result.uploaded++; break;
+		case 'conflict':
+			result.conflicts++;
+			if (fileResult.merged) result.merges++;
+			break;
+	}
+}
 
 /**
  * Orchestrates a full vault synchronization pass.
@@ -185,35 +211,14 @@ export class BulkSync {
 			// Execute pending candidates one at a time, yielding between each.
 			const hasHistory = this.candidates.hasSyncHistory();
 			for (const candidate of pending) {
-				// Snapshot actionType: markSynced() mutates the shared candidate
-				// reference (sets actionType='noOp'), which would make the switch
-				// below miss every case.
+				// Snapshot actionType: applyFileResult → markSynced mutates the
+				// shared candidate reference (sets actionType='noOp'), and the
+				// tally below must read the pre-mutation value.
 				const actionType = candidate.actionType;
 				this.ctx.logger.debug(`sync ${candidate.path}: ${actionType}`);
 				const fileResult = await syncOneFile(candidate, this.ctx, hasHistory);
-
-				if (fileResult.changed) {
-					if (actionType === 'deleteLocal' || actionType === 'deleteRemote') {
-						await this.candidates.remove(candidate.path);
-						result.deleted++;
-					} else if (fileResult.syncedState) {
-						await this.candidates.markSynced(candidate.path, fileResult.syncedState);
-						switch (actionType) {
-							case 'pull': result.downloaded++; break;
-							case 'push': result.uploaded++; break;
-							case 'conflict':
-								result.conflicts++;
-								if (fileResult.merged) result.merges++;
-								break;
-						}
-					}
-					if (fileResult.newSyncedFiles) {
-						for (const f of fileResult.newSyncedFiles) {
-							const { path, ...state } = f;
-							await this.candidates.insertSynced(path, state);
-						}
-					}
-				}
+				tallyFileResult(actionType, fileResult, result);
+				await this.candidates.applyFileResult(candidate.path, actionType, fileResult);
 
 				// Yield to allow queued single-file sync microtasks to run.
 				await Promise.resolve();
@@ -261,35 +266,14 @@ export class BulkSync {
 		try {
 			// Approved actions always come from a vault that already has sync history.
 			for (const candidate of approved) {
-				// Snapshot actionType: markSynced() mutates the shared candidate
-				// reference (sets actionType='noOp'), which would make the switch
-				// below miss every case.
+				// Snapshot actionType: applyFileResult → markSynced mutates the
+				// shared candidate reference (sets actionType='noOp'), and the
+				// tally below must read the pre-mutation value.
 				const actionType = candidate.actionType;
 				this.ctx.logger.debug(`sync ${candidate.path}: ${actionType} (approved)`);
 				const fileResult = await syncOneFile(candidate, this.ctx, /* hasHistory */ true);
-
-				if (fileResult.changed) {
-					if (actionType === 'deleteLocal' || actionType === 'deleteRemote') {
-						await this.candidates.remove(candidate.path);
-						result.deleted++;
-					} else if (fileResult.syncedState) {
-						await this.candidates.markSynced(candidate.path, fileResult.syncedState);
-						switch (actionType) {
-							case 'pull': result.downloaded++; break;
-							case 'push': result.uploaded++; break;
-							case 'conflict':
-								result.conflicts++;
-								if (fileResult.merged) result.merges++;
-								break;
-						}
-					}
-					if (fileResult.newSyncedFiles) {
-						for (const f of fileResult.newSyncedFiles) {
-							const { path, ...state } = f;
-							await this.candidates.insertSynced(path, state);
-						}
-					}
-				}
+				tallyFileResult(actionType, fileResult, result);
+				await this.candidates.applyFileResult(candidate.path, actionType, fileResult);
 
 				// Yield to allow queued single-file sync microtasks to run.
 				await Promise.resolve();

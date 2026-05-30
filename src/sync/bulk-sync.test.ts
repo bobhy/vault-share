@@ -119,17 +119,36 @@ function makeBulkSync(
 		} as unknown as SyncContext['logger'],
 	};
 
+	const markSynced = vi.fn().mockResolvedValue(undefined);
+	const remove = vi.fn().mockResolvedValue(undefined);
+	const insertSynced = vi.fn().mockResolvedValue(undefined);
 	const candidateStore = {
 		isPaused: vi.fn().mockResolvedValue(false),
 		getApproved: vi.fn().mockReturnValue(approvedCandidates),
 		getPending: vi.fn().mockReturnValue(pendingCandidates),
 		reconcile: vi.fn().mockResolvedValue(undefined),
-		markSynced: vi.fn().mockResolvedValue(undefined),
-		remove: vi.fn().mockResolvedValue(undefined),
+		markSynced,
+		remove,
 		deferAllAndPause: vi.fn().mockResolvedValue(undefined),
 		hasSyncHistory: vi.fn().mockReturnValue(true),
-		insertSynced: vi.fn().mockResolvedValue(undefined),
+		insertSynced,
 		getPendingCount: vi.fn().mockReturnValue(pendingCandidates.length),
+		// Mirror CandidateStore.applyFileResult so the existing markSynced /
+		// remove / insertSynced assertions still see the same calls.
+		applyFileResult: vi.fn(async (path: string, actionType: string, fileResult: { changed: boolean; syncedState?: unknown; newSyncedFiles?: Array<{ path: string } & Record<string, unknown>> }) => {
+			if (!fileResult.changed) return;
+			if (actionType === 'deleteLocal' || actionType === 'deleteRemote') {
+				await remove(path);
+			} else if (fileResult.syncedState) {
+				await markSynced(path, fileResult.syncedState);
+			}
+			if (fileResult.newSyncedFiles) {
+				for (const f of fileResult.newSyncedFiles) {
+					const { path: newPath, ...state } = f;
+					await insertSynced(newPath, state);
+				}
+			}
+		}),
 	} as unknown as BulkSyncHarness['candidateStore'];
 
 	const excludeMatcher = { isExcluded: () => false } as unknown as ExcludeMatcher;

@@ -1,86 +1,11 @@
 import type { IDBHelper } from './idb';
 import type { Candidate, FileSide, SyncActionType, SyncFileResult, SyncedFileState } from './types';
 import type { DriveFileSide } from './drive-fs';
+import { planAction } from './decision-engine';
 
 const STORE_CANDIDATES = 'candidates';
 const STORE_SYNC_STATE = 'sync-state';
 const PAUSED_KEY = 'syncPaused';
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/** File status relative to the last known sync. */
-type FileStatus = 'modified' | 'unmodified' | 'deleted' | 'absent';
-
-/**
- * Classify a side's status relative to the candidate's last-sync history.
- *
- * - `absent`     — file does not exist and was never synced
- * - `deleted`    — file does not exist but was once synced (syncedAt > 0)
- * - `unmodified` — file exists and mtime/size match the last-sync record
- * - `modified`   — file exists and differs from the last-sync record
- */
-function classifyStatus(
-	side: FileSide | undefined,
-	syncedMtime: number,
-	syncedSize: number,
-	wasSynced: boolean,   // = candidate.syncedAt > 0
-): FileStatus {
-	if (!side) {
-		return wasSynced ? 'deleted' : 'absent';
-	}
-	if (!wasSynced) {
-		return 'modified'; // present but never synced — treat as modified (new)
-	}
-	if (side.mtime === syncedMtime && side.size === syncedSize) {
-		return 'unmodified';
-	}
-	return 'modified';
-}
-
-/**
- * Determine the action type for a candidate given current local/remote state.
- * Mirrors the logic of the former `planActions` in `decision-engine.ts`.
- */
-function planAction(
-	candidate: Candidate | null,
-	local: FileSide | undefined,
-	remote: (FileSide & { driveFileId: string }) | undefined,
-	vaultHasHistory: boolean,
-): SyncActionType {
-	const wasSynced = (candidate?.syncedAt ?? 0) > 0;
-
-	if (!vaultHasHistory || !wasSynced) {
-		// No-history path: use presence alone.
-		if (local && !remote) return 'push';
-		if (!local && remote) return 'pull';
-		if (local && remote) return 'conflict';
-		return 'noOp';
-	}
-
-	// With-history path: compare against last-sync record.
-	const syncedLocalMtime = candidate?.syncedLocalMtime ?? 0;
-	const syncedLocalSize = candidate?.syncedLocalSize ?? 0;
-	const syncedRemoteMtime = candidate?.syncedRemoteMtime ?? 0;
-	const syncedRemoteSize = candidate?.syncedRemoteSize ?? 0;
-
-	const localStatus: FileStatus = classifyStatus(local, syncedLocalMtime, syncedLocalSize, wasSynced);
-	const remoteStatus: FileStatus = classifyStatus(remote, syncedRemoteMtime, syncedRemoteSize, wasSynced);
-
-	if (localStatus === 'modified' && (remoteStatus === 'absent' || remoteStatus === 'unmodified')) return 'push';
-	if ((localStatus === 'absent' || localStatus === 'unmodified') && remoteStatus === 'modified') return 'pull';
-	if (localStatus === 'deleted' && remoteStatus === 'unmodified') return 'deleteRemote';
-	if (localStatus === 'unmodified' && remoteStatus === 'deleted') return 'deleteLocal';
-	if (localStatus === 'deleted' && remoteStatus === 'deleted') return 'deleteLocal'; // both gone — clean up
-	if (
-		(localStatus === 'deleted' && remoteStatus === 'modified') ||
-		(localStatus === 'modified' && remoteStatus === 'deleted') ||
-		(localStatus === 'modified' && remoteStatus === 'modified')
-	) return 'conflict';
-
-	return 'noOp';
-}
 
 /** Persistent shape stored in IDB (ephemeral fields excluded). */
 type PersistedCandidate = Omit<Candidate, 'local' | 'remote'>;
@@ -501,6 +426,49 @@ export class CandidateStore {
 			return () => undefined;
 		});
 		this.onChanged?.();
+	}
+
+	/**
+	 * Apply a {@link SyncFileResult} from {@link syncOneFile} to the store.
+	 *
+	 * The single point that translates a file-syncer outcome into the
+	 * corresponding store mutations. Used by both the bulk-sync execute loops
+	 * and the single-decision paths in `resolution-executor`/`single-file-sync`
+	 * so the post-result branching lives in one place.
+	 *
+	 * - `changed === false`: no-op.
+	 * - `actionType` is a delete: removes the candidate.
+	 * - Otherwise, when `syncedState` is set: upserts as `Synced`
+	 *   ({@link markSynced} if cached, {@link insertSynced} if not).
+	 * - `newSyncedFiles` (from Keep Both / delete-conflict resolutions) are
+	 *   inserted as `Synced`.
+	 *
+	 * Callers are responsible for tallying their own counters
+	 * (e.g. {@link BulkSync} updates {@link SyncPassResult}).
+	 */
+	async applyFileResult(
+		path: string,
+		actionType: SyncActionType,
+		fileResult: SyncFileResult,
+	): Promise<void> {
+		if (!fileResult.changed) return;
+		if (actionType === 'deleteLocal' || actionType === 'deleteRemote') {
+			await this.remove(path);
+		} else if (fileResult.syncedState) {
+			// Upsert: markSynced is a no-op for paths not in the cache (e.g.
+			// single-file-sync on a brand-new file the bulk pass hasn't seen).
+			if (this.cache.has(path)) {
+				await this.markSynced(path, fileResult.syncedState);
+			} else {
+				await this.insertSynced(path, fileResult.syncedState);
+			}
+		}
+		if (fileResult.newSyncedFiles) {
+			for (const f of fileResult.newSyncedFiles) {
+				const { path: newPath, ...state } = f;
+				await this.insertSynced(newPath, state);
+			}
+		}
 	}
 
 	/**

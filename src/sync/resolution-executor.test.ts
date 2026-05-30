@@ -114,7 +114,27 @@ function makeCandidateStore() {
 	const markSynced = vi.fn<(path: string, state: SyncedFileState) => Promise<void>>().mockResolvedValue(undefined);
 	const remove = vi.fn<(path: string) => Promise<void>>().mockResolvedValue(undefined);
 	const insertSynced = vi.fn<(path: string, state: SyncedFileState) => Promise<void>>().mockResolvedValue(undefined);
-	const store = { markSynced, remove, insertSynced } as unknown as CandidateStore;
+	// Mirror CandidateStore.applyFileResult so the existing markSynced /
+	// remove / insertSynced assertions still see the same calls.
+	const applyFileResult = async (
+		path: string,
+		actionType: string,
+		fileResult: { changed: boolean; syncedState?: SyncedFileState; newSyncedFiles?: Array<{ path: string } & SyncedFileState> },
+	): Promise<void> => {
+		if (!fileResult.changed) return;
+		if (actionType === 'deleteLocal' || actionType === 'deleteRemote') {
+			await remove(path);
+		} else if (fileResult.syncedState) {
+			await markSynced(path, fileResult.syncedState);
+		}
+		if (fileResult.newSyncedFiles) {
+			for (const f of fileResult.newSyncedFiles) {
+				const { path: newPath, ...state } = f;
+				await insertSynced(newPath, state);
+			}
+		}
+	};
+	const store = { markSynced, remove, insertSynced, applyFileResult } as unknown as CandidateStore;
 	return { store, markSynced, remove, insertSynced };
 }
 

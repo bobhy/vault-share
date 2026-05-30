@@ -76,23 +76,9 @@ export async function singleFileSync(
 
 		if (!fileResult.changed) return;
 
-		// Update CandidateStore based on the result.
-		if (actionType === 'deleteLocal' || actionType === 'deleteRemote') {
-			await candidateStore.remove(path);
-		} else if (fileResult.syncedState) {
-			if (existing) {
-				await candidateStore.markSynced(path, fileResult.syncedState);
-			} else {
-				// Newly-discovered file: insert as synced.
-				await candidateStore.insertSynced(path, fileResult.syncedState);
-			}
-		}
-		if (fileResult.newSyncedFiles) {
-			for (const f of fileResult.newSyncedFiles) {
-				const { path: newPath, ...state } = f;
-				await candidateStore.insertSynced(newPath, state);
-			}
-		}
+		// applyFileResult upserts (markSynced for cached, insertSynced for new),
+		// so the existing/new distinction doesn't need to be handled here.
+		await candidateStore.applyFileResult(path, actionType, fileResult);
 
 		// If conflict files were created (keep-both / delete-conflict), reopen the view.
 		const localConflictPath = fileResult.newSyncedFiles?.[0]?.path;

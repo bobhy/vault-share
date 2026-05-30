@@ -15,20 +15,10 @@ export async function executeAction(
 	ctx: SyncContext,
 	candidateStore: CandidateStore,
 ): Promise<void> {
+	// Snapshot actionType before applyFileResult mutates the shared candidate.
+	const actionType = candidate.actionType;
 	const result = await syncOneFile(candidate, ctx, true);
-	if (!result.changed) return;
-
-	if (candidate.actionType === 'deleteLocal' || candidate.actionType === 'deleteRemote') {
-		await candidateStore.remove(candidate.path);
-	} else if (result.syncedState) {
-		await candidateStore.markSynced(candidate.path, result.syncedState);
-	}
-	if (result.newSyncedFiles) {
-		for (const f of result.newSyncedFiles) {
-			const { path, ...state } = f;
-			await candidateStore.insertSynced(path, state);
-		}
-	}
+	await candidateStore.applyFileResult(candidate.path, actionType, result);
 }
 
 /**
@@ -121,9 +111,7 @@ export async function executeMerge(
 	};
 	const forMerge: Candidate = { ...candidate, actionType: 'conflict' };
 	const result = await syncOneFile(forMerge, mergeCtx, true);
-	if (result.changed && result.syncedState) {
-		await candidateStore.markSynced(candidate.path, result.syncedState);
-	}
+	await candidateStore.applyFileResult(candidate.path, 'conflict', result);
 }
 
 /**
@@ -137,9 +125,7 @@ export async function executeKeepLocal(
 ): Promise<void> {
 	const forPush: Candidate = { ...candidate, actionType: 'push' };
 	const result = await syncOneFile(forPush, ctx, true);
-	if (result.changed && result.syncedState) {
-		await candidateStore.markSynced(candidate.path, result.syncedState);
-	}
+	await candidateStore.applyFileResult(candidate.path, 'push', result);
 }
 
 /**
@@ -153,9 +139,7 @@ export async function executeKeepGroupVault(
 ): Promise<void> {
 	const forPull: Candidate = { ...candidate, actionType: 'pull' };
 	const result = await syncOneFile(forPull, ctx, true);
-	if (result.changed && result.syncedState) {
-		await candidateStore.markSynced(candidate.path, result.syncedState);
-	}
+	await candidateStore.applyFileResult(candidate.path, 'pull', result);
 }
 
 /**
