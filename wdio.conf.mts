@@ -87,6 +87,11 @@ export const config: WebdriverIO.Config = {
 	before: async (_caps, _specs, b) => {
 		const br = b as WebdriverIO.Browser;
 
+		// Bump WebDriver's async-script timeout so `runBulkSync` can await
+		// `bulkSync.run()` inside executeObsidian without hitting the 30 s
+		// default during slow Drive passes. Matches mocha's per-test timeout.
+		await br.setTimeout({ script: 120_000 });
+
 		// Wait for the wdio-obsidian-service bridge to be ready before calling
 		// executeObsidian — avoids the "not a function" retry warnings on startup.
 		await br.waitUntil(
@@ -300,24 +305,20 @@ interface SyncPassResult {
 /**
  * Trigger a bulk sync pass and wait for it to complete.
  *
- * Fires the sync without awaiting inside `executeObsidian` to avoid hitting
- * WebDriver's async-script timeout on slow Drive API responses.  Completion
- * is detected by polling {@link BulkSync.lastPassCompletedAt} from the Node
- * side; the test waits up to two minutes before failing.
- *
- * If a pass is already running when called, this function waits for that
- * in-flight pass to finish — the new {@link BulkSync.run} call is a no-op
- * but the running pass will still update `lastPassCompletedAt` on completion.
+ * `BulkSync.run` coalesces concurrent callers onto a single in-flight pass,
+ * so awaiting it inside `executeObsidian` returns the actual pass result
+ * (whether we triggered it or one was already running). The WebDriver
+ * async-script timeout is bumped to 120 s in the `before:` hook, matching
+ * mocha's per-test timeout.
  *
  * Note: executeObsidian serialises its callback via `func.toString()`, so no
- * module-level helpers are available inside the callbacks — all plugin access
+ * module-level helpers are available inside the callback — all plugin access
  * must be inlined.
  */
 export async function runBulkSync(br: WebdriverIO.Browser): Promise<SyncPassResult> {
-	// Fire the sync without awaiting, record the wall-clock start time.
-	const startedAt = await br.executeObsidian(({ app }) => {
+	const result = await br.executeObsidian(async ({ app }) => {
 		type Plugin = { scheduler: unknown };
-		type BulkSyncHandle = { run(): Promise<unknown> };
+		type BulkSyncHandle = { run(): Promise<SyncPassResult> };
 		const plugin = (app as unknown as {
 			plugins: { plugins: Record<string, Plugin> };
 		}).plugins.plugins['vault-share'] as Plugin | undefined;
@@ -325,39 +326,9 @@ export async function runBulkSync(br: WebdriverIO.Browser): Promise<SyncPassResu
 		const bulkSync = (plugin.scheduler as unknown as {
 			deps: { bulkSync: BulkSyncHandle };
 		}).deps.bulkSync;
-		void bulkSync.run();   // completion signalled via lastPassCompletedAt
-		return Date.now();
-	}) as unknown as number;
+		return bulkSync.run();
+	}) as unknown as SyncPassResult;
 
-	// Poll until the in-flight pass reports completion, capturing the result in
-	// the same check to avoid a separate round-trip after the condition fires.
-	let result: SyncPassResult | null = null;
-	await br.waitUntil(
-		async () => {
-			const { completedAt, passResult } = await br.executeObsidian(({ app }) => {
-				type Plugin = { scheduler: unknown };
-				type BulkSyncHandle = { lastPassCompletedAt: number; lastPassResult: unknown };
-				const plugin = (app as unknown as {
-					plugins: { plugins: Record<string, Plugin> };
-				}).plugins.plugins['vault-share'] as Plugin | undefined;
-				const bulkSync = (plugin?.scheduler as unknown as {
-					deps: { bulkSync: BulkSyncHandle };
-				} | undefined)?.deps.bulkSync;
-				return {
-					completedAt: bulkSync?.lastPassCompletedAt ?? 0,
-					passResult:  bulkSync?.lastPassResult ?? null,
-				};
-			}) as unknown as { completedAt: number; passResult: SyncPassResult | null };
-			if (completedAt > startedAt) {
-				result = passResult;
-				return true;
-			}
-			return false;
-		},
-		{ timeout: 120_000, interval: 100, timeoutMsg: 'Bulk sync did not complete within 2 minutes' },
-	);
-
-	if (!result) throw new Error('Bulk sync completed but lastPassResult is null');
 	if (result.error) {
 		const msg = result.error instanceof Error ? result.error.message : String(result.error);
 		throw new Error(`Bulk sync failed: ${msg}`);

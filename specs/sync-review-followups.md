@@ -27,17 +27,19 @@ addressed; add follow-up items as new ones are discovered.
         a phantom row from reconcile-ago).
     - Immutability contract documented in
         [types.ts:46-65](../src/sync/types.ts#L46-L65).
-- [ ] **(3) `BulkSync.run()` early-return is silent.** When `this.running` is true,
-    the second caller gets `{0,0,0,…,deferredByThreshold:false}` synchronously
-    and `lastPassResult`/`lastPassCompletedAt` are not touched. Callers cannot
-    distinguish "no-op because already running" from "ran, no work to do."
-    See [bulk-sync.ts:95-99](../src/sync/bulk-sync.ts#L95-L99).
-    - Fix direction:
-        - Return `null` (or a typed sentinel) so the caller can decide whether to
-            wait, **or**
-        - Have the second caller `await` the in-flight pass and return *its* result.
-    - The e2e `runBulkSync` helper in `wdio.conf.mts` should drop its polling
-        once this is fixed.
+- [x] **(3) `BulkSync.run()` early-return is silent.** Was: a concurrent caller
+    got `{0,0,0,…}` synchronously with no signal that nothing actually ran.
+    - Done: `BulkSync` now holds a single `inFlight: Promise<SyncPassResult> | null`.
+        Concurrent callers receive that Promise and observe the same pass's
+        result. `lastPassResult` / `lastPassCompletedAt` / `onPassCompleted` /
+        `isRunning` (all added solely to work around the silent-zero bug) were
+        removed — `run()` returning a real Promise is the only signal callers
+        need.
+    - The e2e `runBulkSync` helper collapsed from ~50 lines of fire-and-poll
+        to a single `await bulkSync.run()` inside `executeObsidian`. The
+        `before:` hook bumps WebDriver's async-script timeout to 120 s
+        (matching mocha's per-test timeout) so a slow Drive pass doesn't trip
+        the default 30 s cutoff.
 - [ ] **(4) Dead branch in `classifyStatus`.** [decision-engine.ts:27-29](../src/sync/decision-engine.ts#L27-L29)
     returns `'modified'` for `(side present, !wasSynced)`, but `planAction`
     short-circuits to the no-history path whenever `!wasSynced`

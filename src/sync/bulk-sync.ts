@@ -53,37 +53,15 @@ function tallyFileResult(
  * notifies the caller so a user-visible Notice can be shown.
  */
 export class BulkSync {
-	private running = false;
-
 	/**
-	 * True while a {@link run} pass is actively executing.
+	 * The Promise for the currently in-flight pass, or `null` if no pass is running.
 	 *
-	 * When `isRunning` is `true`, a pass is in flight and {@link onPassCompleted}
-	 * is guaranteed to fire on completion.
+	 * Concurrent callers of {@link run} share this Promise — they observe the
+	 * *same* pass's result rather than starting a new one or getting a misleading
+	 * synchronous zero. Cleared in the IIFE's finally so a `.then(() => run())`
+	 * tail caller correctly starts a fresh pass.
 	 */
-	get isRunning(): boolean { return this.running; }
-
-	/**
-	 * Unix timestamp (ms) of the most recently completed {@link run} pass.
-	 * Zero before the first pass. Updated before {@link onPassCompleted} fires.
-	 */
-	lastPassCompletedAt = 0;
-
-	/**
-	 * Result of the most recently completed {@link run} pass.
-	 * `null` before the first pass. Updated atomically with {@link lastPassCompletedAt}.
-	 */
-	lastPassResult: SyncPassResult | null = null;
-
-	/**
-	 * Optional callback fired at the end of every {@link run} pass, after
-	 * {@link lastPassCompletedAt} and {@link lastPassResult} are updated.
-	 *
-	 * Fires regardless of how the pass ended — whether it executed actions,
-	 * was skipped (paused, not logged in, or deferred by threshold), or
-	 * encountered an error.  Not fired by {@link planOnly}.
-	 */
-	onPassCompleted: (() => void) | null = null;
+	private inFlight: Promise<SyncPassResult> | null = null;
 
 	constructor(
 		private readonly ctx: SyncContext,
@@ -118,21 +96,28 @@ export class BulkSync {
 		return all;
 	}
 
+	/**
+	 * Execute one bulk sync pass and return its result.
+	 *
+	 * If a pass is already in flight, the call coalesces onto that pass and
+	 * returns its result rather than starting a second one. This is the
+	 * "only one bulk sync at a time" invariant the scheduler relied on, made
+	 * explicit so callers always receive a meaningful {@link SyncPassResult}
+	 * instead of a synchronous zero.
+	 */
 	async run(): Promise<SyncPassResult> {
-		if (this.running) {
-			this.ctx.logger.debug('Bulk sync skipped: already running');
-			return { downloaded: 0, uploaded: 0, deleted: 0, conflicts: 0, merges: 0, deferredByThreshold: false };
+		if (this.inFlight) {
+			this.ctx.logger.debug('Bulk sync coalesced: pass already in flight');
+			return this.inFlight;
 		}
-		this.running = true;
-		try {
-			const result = await this.doRun();
-			this.lastPassResult = result;
-			return result;
-		} finally {
-			this.running = false;
-			this.lastPassCompletedAt = Date.now();
-			this.onPassCompleted?.();
-		}
+		this.inFlight = (async () => {
+			try {
+				return await this.doRun();
+			} finally {
+				this.inFlight = null;
+			}
+		})();
+		return this.inFlight;
 	}
 
 	private async doRun(): Promise<SyncPassResult> {
