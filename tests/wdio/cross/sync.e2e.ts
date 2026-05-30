@@ -351,20 +351,24 @@ describe("Cross-vault sync", () => {
 		expect(await readDrive(primary, path)).toBeNull();
 	});
 
-	// ── Modify/delete conflict — see specs/sync-review-followups.md item (6) ─
+	// ── Modify/delete conflict — see specs/sync-review-followups.md item (14) ─
 
 	/**
-	 * The delete-conflict resolver is known to be incomplete: it creates a
-	 * placeholder but does not sync the surviving side, which leads to the
-	 * deletion being effectively reverted on the next pass (item 6 in the
-	 * sync-review-followups checklist). The two tests below **pin the current
-	 * behaviour** so a future fix to `resolveDeleteConflict` produces an
-	 * intentional, reviewed assertion change rather than a silent regression.
+	 * Modify-delete conflict is resolved under **modifier-wins** semantics
+	 * (item 14): whichever side still has the file becomes canonical at the
+	 * original path, and a placeholder at a sibling `*-conflict-*` path marks
+	 * the deletion intent. Both tests verify the end state is *stable* — a
+	 * follow-up sync round on either vault is a no-op (no boomerang).
+	 *
+	 * Tag conventions in the placeholder filename:
+	 *   - The side whose local copy was deleted tags with `shortClientId`,
+	 *     since the placeholder records *that device's* deletion intent.
+	 *   - The side whose remote copy was deleted (i.e. the deletion came from
+	 *     the group) tags with the literal `'group'`.
 	 */
 
 	function placeholderPattern(originalPath: string, sideTag: "group" | "client"): RegExp {
 		// buildConflictFilename: <stem>-conflict-<id>-<timestamp>.<ext>
-		// `group` for "remote was deleted" branch; `client` (short id) otherwise.
 		const dot = originalPath.lastIndexOf(".");
 		const base = dot > originalPath.lastIndexOf("/") ? originalPath.slice(0, dot) : originalPath;
 		const ext  = dot > originalPath.lastIndexOf("/") ? originalPath.slice(dot)    : "";
@@ -374,7 +378,7 @@ describe("Cross-vault sync", () => {
 		return new RegExp(`^${escapedBase}-conflict-${tag}-[\\d\\-T:.]+${escapedExt}$`);
 	}
 
-	it("primary deletes / peer modifies — peer creates a placeholder, original is not lost (pinned behaviour)", async () => {
+	it("primary deletes / peer modifies — modifier wins, peer's content propagates back, no boomerang", async () => {
 		const { primary, peer } = vaults();
 		const path = `mod-del-a-${Date.now()}.md`;
 
@@ -383,31 +387,43 @@ describe("Cross-vault sync", () => {
 		await runBulkSync(peer);
 
 		// Primary deletes first, syncs → Drive copy gone. Peer then modifies
-		// before pulling. Peer's next sync sees local=modified, remote=absent.
+		// before pulling. Peer's next sync sees local=modified, remote=absent
+		// → resolveDeleteConflict's "remote was deleted" branch.
 		await deleteFile(primary, path);
 		await runBulkSync(primary);
 
 		await modify(peer, path, "peer modification");
 		await runBulkSync(peer);
 
-		// Expected current behaviour from resolveDeleteConflict's else-branch
-		// ("remote deleted, local modified"): a placeholder is created tagged
-		// with "group", and peer's local copy of the original IS NOT removed.
+		// Modifier-wins outcome on peer's side: the modified content stays at
+		// the original path on local AND is pushed back up to Drive, and a
+		// `-conflict-group-` placeholder records the deletion intent.
 		const peerFiles = await listVaultFiles(peer);
 		const placeholder = peerFiles.find(p => placeholderPattern(path, "group").test(p));
 		if (!placeholder) {
 			throw new Error(`peer should have created a "-conflict-group-" placeholder; saw: ${peerFiles.join(", ")}`);
 		}
-
-		// Original modified file still present locally (item 6 partial-resolution).
-		expect(await vaultHas(peer, path)).toBe(true);
 		expect(await readVault(peer, path)).toBe("peer modification");
+		expect(await readDrive(peer, path)).toBe("peer modification");
 
-		// Drive has the placeholder but not the original at this point.
-		expect(await readDrive(primary, path)).toBeNull();
+		// Primary's next sync pulls the restored content back + the placeholder,
+		// so both vaults converge on the same end state.
+		await runBulkSync(primary);
+		expect(await readVault(primary, path)).toBe("peer modification");
+		expect(await vaultHas(primary, placeholder)).toBe(true);
+
+		// Stability: another round on either side is a no-op — no new
+		// placeholders, no flipping content, no re-push of anything.
+		await runBulkSync(peer);
+		await runBulkSync(primary);
+		expect(await readVault(peer, path)).toBe("peer modification");
+		expect(await readVault(primary, path)).toBe("peer modification");
+		// Exactly one placeholder per side — no duplicates, no fresh ones from the no-op rounds above.
+		expect((await listVaultFiles(peer)).filter(p => placeholderPattern(path, "group").test(p))).toHaveLength(1);
+		expect((await listVaultFiles(primary)).filter(p => placeholderPattern(path, "group").test(p))).toHaveLength(1);
 	});
 
-	it("peer deletes / primary modifies — primary creates a client-tagged placeholder (pinned behaviour)", async () => {
+	it("peer deletes / primary modifies — modifier wins, primary pulls back, no boomerang", async () => {
 		const { primary, peer } = vaults();
 		const path = `mod-del-b-${Date.now()}.md`;
 
@@ -416,25 +432,40 @@ describe("Cross-vault sync", () => {
 		await runBulkSync(peer);
 
 		// Peer modifies and syncs → Drive has the modified version. Primary
-		// then deletes locally. Primary's sync sees local=absent, remote=modified.
+		// then deletes locally. Primary's sync sees local=absent, remote=modified
+		// → resolveDeleteConflict's "local was deleted" branch.
 		await modify(peer, path, "peer modification");
 		await runBulkSync(peer);
 
 		await deleteFile(primary, path);
 		await runBulkSync(primary);
 
-		// resolveDeleteConflict's if-branch ("local deleted, remote modified"):
-		// placeholder is tagged with the short client id, not "group".
+		// Modifier-wins outcome on primary's side: the modified content is
+		// pulled back to primary's local at the original path, and a
+		// `-conflict-<shortClientId>-` placeholder records the deletion intent
+		// (tagged with this device's id since *this* device wanted to delete).
 		const primaryFiles = await listVaultFiles(primary);
 		const placeholder = primaryFiles.find(p => placeholderPattern(path, "client").test(p));
 		if (!placeholder) {
 			throw new Error(`primary should have created a "-conflict-<clientid>-" placeholder; saw: ${primaryFiles.join(", ")}`);
 		}
+		expect(await readVault(primary, path)).toBe("peer modification");
+		expect(await readDrive(primary, path)).toBe("peer modification");
 
-		// Current behaviour: primary's local does NOT have the original file
-		// (it was deleted before the conflict was discovered). The placeholder
-		// is the only artifact at the original stem.
-		expect(await vaultHas(primary, path)).toBe(false);
+		// Peer's next sync pulls the placeholder; the file content was already
+		// peer's own, so no other change happens on peer.
+		await runBulkSync(peer);
+		expect(await readVault(peer, path)).toBe("peer modification");
+		expect(await vaultHas(peer, placeholder)).toBe(true);
+
+		// Stability: another round on either side is a no-op.
+		await runBulkSync(primary);
+		await runBulkSync(peer);
+		expect(await readVault(primary, path)).toBe("peer modification");
+		expect(await readVault(peer, path)).toBe("peer modification");
+		// Exactly one placeholder per side — no duplicates, no fresh ones from the no-op rounds above.
+		expect((await listVaultFiles(primary)).filter(p => placeholderPattern(path, "client").test(p))).toHaveLength(1);
+		expect((await listVaultFiles(peer)).filter(p => placeholderPattern(path, "client").test(p))).toHaveLength(1);
 	});
 });
 

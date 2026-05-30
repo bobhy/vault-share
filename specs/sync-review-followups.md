@@ -113,27 +113,26 @@ addressed; add follow-up items as new ones are discovered.
         contain the old defaults) until they manually edit or reset. A
         release note for upgraders should suggest replacing
         `!.obsidian/plugins/vault-share` with `.trash` in their settings.
-- [ ] **(14) `resolveDeleteConflict` only creates a placeholder; it does not
-    propagate the surviving side.** With the `resolvedInPlace` fix from the
-    cross-suite work, bulk sync no longer *crashes* on delete-conflict — but
-    the resolver still leaves the original modified side untouched, which
-    produces a "boomerang": after a delete-conflict the next sync re-pushes
-    the surviving file to Drive, and the *next* pull on the deleting vault
-    restores it, effectively reverting the user's delete. Two cross tests
-    pin the current behaviour:
-    [tests/wdio/cross/sync.e2e.ts §"primary deletes / peer modifies"](../tests/wdio/cross/sync.e2e.ts)
-    and the symmetric "peer deletes / primary modifies".
-    - Fix direction: in `resolveDeleteConflict`, after creating the
-        placeholder, also reconcile the surviving side onto the original path
-        so the next reconcile sees a coherent state. Decide what "reconcile"
-        means: keep the modifier's content as the new canonical, vs. let the
-        delete win and the placeholder is the only artifact. Whichever the
-        chosen semantics, the two pinned tests are where the new behaviour
-        gets asserted.
-    - Why it's medium and not high: the boomerang isn't a data-loss bug
-        (content is preserved), and `applyFileResult`'s "remove the original
-        candidate when changed && !syncedState" rule from (6) at least makes
-        the candidate cache eventually consistent.
+- [x] **(14) `resolveDeleteConflict` boomerang — fixed under "modifier-wins"
+    semantics.** Was: the resolver only created a placeholder; the surviving
+    side was left untouched, so the next reconcile saw it as a brand-new
+    no-history push or pull and effectively reverted the user's delete.
+    - Done: both branches of `resolveDeleteConflict` now also propagate the
+        surviving side to the missing side at the original path (pull
+        remote→local when local was deleted; push local→Drive when remote
+        was deleted), and signal `restoredOriginal: true` so file-syncer's
+        conflict case builds a `syncedState` for the now-coherent original
+        AND inserts the placeholder via `newSyncedFiles`. Both vaults
+        converge on the same end state in this same sync, no boomerang.
+    - Semantic chosen: **modifier wins**. The principle "vault-share never
+        silently loses user-modified data" outweighed honoring the explicit
+        delete action; the deleter sees a placeholder making the deletion
+        intent visible, and can re-delete from there if desired.
+    - Tests: the two cross-suite tests
+        [tests/wdio/cross/sync.e2e.ts](../tests/wdio/cross/sync.e2e.ts) that
+        previously pinned the partial behaviour now assert the new outcome
+        on both vaults *plus* a stability check (a second sync round on
+        either side is a no-op — same content, no new placeholders).
 
 ## Low priority
 
@@ -259,6 +258,14 @@ Completed so far:
     default exclude list (in-vault trash mode no longer pushes deleted files
     to peers). Existing users keep their stored excludes; new users get the
     safer defaults.
+- **Modify-delete conflict — modifier wins** (item 14): `resolveDeleteConflict`
+    now restores the surviving side on the missing side (pull remote→local
+    when local was deleted; push local→Drive when remote was deleted) and
+    signals `restoredOriginal: true` so file-syncer builds a `syncedState`
+    for the original path *and* inserts the placeholder. End state is stable
+    in one sync round on each vault — the previous "next reconcile re-pushes
+    the file" boomerang is gone. Two cross tests now assert the new outcome
+    *and* a no-op stability round on both sides.
 - **Cross-vault e2e** (item 7-equivalent, not a numbered item): cross suite
     expanded from 3 tests (17 s) to 12 tests (67 s) covering delete
     propagation both directions, modify-delete conflict both directions (with

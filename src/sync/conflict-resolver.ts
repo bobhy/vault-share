@@ -15,6 +15,20 @@ export interface ConflictResult {
 	 * inserted into {@link CandidateStore} as `Synced` candidates.
 	 */
 	newSyncedFiles?: Array<{ path: string } & SyncedFileState>;
+	/**
+	 * True when the resolver re-established coherent content at the *original*
+	 * `candidate.path` on both sides — and the caller should therefore treat
+	 * the result as "in place" (read the original, build a syncedState for it)
+	 * even when `merged` is false.
+	 *
+	 * Set by {@link resolveDeleteConflict} under modifier-wins semantics:
+	 * the surviving (modified) side is propagated to the side that had the
+	 * file deleted, and a placeholder is created at a side path to mark the
+	 * deletion intent. {@link resolveMerge} / {@link resolveUseNewer} already
+	 * signal in-place via `merged: true` or by producing no `newSyncedFiles`,
+	 * so they leave this field unset.
+	 */
+	restoredOriginal?: boolean;
 }
 
 /**
@@ -226,7 +240,30 @@ async function resolveMerge(
 	return { merged: true, hadConflictMarkers: result.hasConflicts };
 }
 
-/** Modify-delete conflict: create a placeholder on the deleted side. */
+/**
+ * Modify-delete conflict resolution under **modifier-wins** semantics.
+ *
+ * Whichever side still has the file (the *modifier*) becomes the canonical
+ * content at the original path; the side that had it deleted is brought
+ * back in line by either pulling Drive content down or pushing local content
+ * up.  A placeholder is created at a sibling `<base>-conflict-<tag>-<ts>.<ext>`
+ * path to mark the deletion intent so the user can see what happened.
+ *
+ * Tags: `shortClientId(clientId)` when the local side was the one that had
+ * its copy deleted (so the placeholder identifies *this* device's intent),
+ * and the literal `'group'` when the deletion came from the remote/group
+ * side.
+ *
+ * This is the change for sync-review-followups item (14) — the previous
+ * implementation only created the placeholder and left the original path's
+ * surviving side untouched, which produced a "boomerang" on the next
+ * reconcile (the surviving side was treated as a brand-new no-history push
+ * or pull, effectively reverting the user's delete without telling them).
+ *
+ * Returns `restoredOriginal: true` so {@link syncOneFile}'s conflict case
+ * builds a `syncedState` for the now-coherent original path, while still
+ * inserting the placeholder via `newSyncedFiles`.
+ */
 async function resolveDeleteConflict(
 	candidate: Candidate,
 	ctx: SyncContext,
@@ -241,10 +278,22 @@ async function resolveDeleteConflict(
 	const newSyncedFiles: Array<{ path: string } & SyncedFileState> = [];
 
 	if (!local) {
-		// Local was deleted; remote was modified. Create placeholder locally.
+		// Local was deleted; remote (Drive) holds the modifier's content.
+		// Pull the remote content down to the original path so local is back
+		// in sync, then create a placeholder tagged with this device's id to
+		// mark "this device's user wanted to delete this file."
+		const remoteFileId = candidate.remote?.driveFileId;
+		if (!remoteFileId) {
+			throw new Error(
+				`resolveDeleteConflict: remote driveFileId missing for ${path}; ` +
+				`a delete-conflict requires the surviving Drive file to be known`,
+			);
+		}
+		const remoteContent = await ctx.driveFs.readBinary(remoteFileId);
+		await ctx.localFs.write(path, remoteContent);
+
 		const placeholderPath = buildConflictFilename(path, shortClientId(ctx.clientId), now);
 		await ctx.localFs.write(placeholderPath, placeholderBytes);
-		// Push placeholder to Drive so all vaults see it.
 		const driveSide = await ctx.driveFs.write(rootFolderId, placeholderPath, placeholderBytes, ctx.statsTracker, sampler);
 		const localSide = ctx.localFs.stat(placeholderPath);
 		newSyncedFiles.push({
@@ -257,7 +306,13 @@ async function resolveDeleteConflict(
 			syncedAt,
 		});
 	} else {
-		// Remote was deleted; local was modified. Create placeholder on Drive.
+		// Remote was deleted; local holds the modifier's content.
+		// Push the local content back up to Drive so remote is back in sync,
+		// then create a placeholder tagged 'group' to mark "another device
+		// wanted to delete this file."
+		const localContent = await ctx.localFs.read(path);
+		await ctx.driveFs.write(rootFolderId, path, localContent, ctx.statsTracker, sampler);
+
 		const placeholderPath = buildConflictFilename(path, 'group', now);
 		await ctx.localFs.write(placeholderPath, placeholderBytes);
 		const driveSide = await ctx.driveFs.write(rootFolderId, placeholderPath, placeholderBytes, ctx.statsTracker, sampler);
@@ -275,5 +330,5 @@ async function resolveDeleteConflict(
 
 	ctx.statsTracker.recordDeleteConflict();
 
-	return { merged: false, hadConflictMarkers: false, newSyncedFiles };
+	return { merged: false, hadConflictMarkers: false, newSyncedFiles, restoredOriginal: true };
 }

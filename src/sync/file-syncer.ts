@@ -92,18 +92,19 @@ export async function syncOneFile(
 		case 'conflict': {
 			const { fileConflict, textFileConflict } = ctx.settings();
 			const conflictResult = await resolveConflict(candidate, fileConflict, textFileConflict, ctx);
-			// "In place" = the original path's content was rewritten and no
-			// side files were produced. Merge and Use Newer fit this; Keep Both
-			// (renames + leaves nothing at the original) and delete-conflict
-			// (places a side placeholder, leaves the original gone) do not.
-			// Detecting via newSyncedFiles is the unambiguous signal —
-			// localConflictPath/remoteConflictPath were only set by Keep Both
-			// historically, which left delete-conflict mis-classified as
-			// in-place and the read of `candidate.path` below throwing.
+			// "In place" = the original path now has coherent content on both
+			// sides and the caller should build a `syncedState` for it.
+			//   - Merge: `merged` is true.
+			//   - Use Newer: no `newSyncedFiles`.
+			//   - Modify-delete (item 14): `restoredOriginal` is true and a
+			//     placeholder is in `newSyncedFiles`. Both must be processed.
+			// Keep Both is the only remaining case — it renames the original
+			// aside and leaves nothing at `candidate.path`, so we fall through
+			// to the else branch.
 			const resolvedInPlace = conflictResult.merged
+				|| conflictResult.restoredOriginal
 				|| !conflictResult.newSyncedFiles?.length;
 			if (resolvedInPlace) {
-				// Merged or Use Newer: both sides now agree on the original path.
 				// Re-stat Drive to get the post-write mtime; candidate.remote carries the
 				// pre-write value and would make remote appear modified on the next poll.
 				const content = await ctx.localFs.read(candidate.path);
@@ -122,10 +123,13 @@ export async function syncOneFile(
 						remoteSize: freshRemote?.size ?? 0,
 						syncedAt: Date.now(),
 					},
+					// `undefined` for Merge / Use Newer (resolver returned no
+					// new files), the placeholder for delete-conflict.
+					newSyncedFiles: conflictResult.newSyncedFiles,
 				};
 			}
-			// Keep Both or delete-conflict: original path is gone; conflict-copy files
-			// are recorded via newSyncedFiles so the next pass won't re-plan them.
+			// Keep Both: original path is gone; conflict-copy files are
+			// recorded via newSyncedFiles so the next pass won't re-plan them.
 			await ctx.store.deleteContent(candidate.path);
 			return {
 				changed: true,
