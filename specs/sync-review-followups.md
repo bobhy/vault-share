@@ -1,5 +1,10 @@
 # Sync module review — follow-ups
 
+> **TODO:** This file tracks open follow-up items for the sync module. Each
+> unchecked entry below is an outstanding work item; a project-wide `grep
+> TODO` will surface this file. Mostly sync-module items; item (15) covers
+> e2e test infrastructure that the sync review uncovered.
+
 Tracks issues identified in the code review of `src/sync/`. Each item links to
 the relevant code and notes the fix direction. Check items off as they are
 addressed; add follow-up items as new ones are discovered.
@@ -84,6 +89,27 @@ addressed; add follow-up items as new ones are discovered.
     re-stats Drive ([file-syncer.ts:103](../src/sync/file-syncer.ts#L103)).
     - Fix: re-stat Drive after a pull so the persisted record matches Drive's
         current mtime.
+- [ ] **(14) `resolveDeleteConflict` only creates a placeholder; it does not
+    propagate the surviving side.** With the `resolvedInPlace` fix from the
+    cross-suite work, bulk sync no longer *crashes* on delete-conflict — but
+    the resolver still leaves the original modified side untouched, which
+    produces a "boomerang": after a delete-conflict the next sync re-pushes
+    the surviving file to Drive, and the *next* pull on the deleting vault
+    restores it, effectively reverting the user's delete. Two cross tests
+    pin the current behaviour:
+    [tests/wdio/cross/sync.e2e.ts §"primary deletes / peer modifies"](../tests/wdio/cross/sync.e2e.ts)
+    and the symmetric "peer deletes / primary modifies".
+    - Fix direction: in `resolveDeleteConflict`, after creating the
+        placeholder, also reconcile the surviving side onto the original path
+        so the next reconcile sees a coherent state. Decide what "reconcile"
+        means: keep the modifier's content as the new canonical, vs. let the
+        delete win and the placeholder is the only artifact. Whichever the
+        chosen semantics, the two pinned tests are where the new behaviour
+        gets asserted.
+    - Why it's medium and not high: the boomerang isn't a data-loss bug
+        (content is preserved), and `applyFileResult`'s "remove the original
+        candidate when changed && !syncedState" rule from (6) at least makes
+        the candidate cache eventually consistent.
 
 ## Low priority
 
@@ -123,6 +149,25 @@ addressed; add follow-up items as new ones are discovered.
     - Why it matters now: a fourth touch of `applyFileResult` semantics is
         likely (items (1) and (A1) both circle back through these tests), and
         each round the mock stays correct is a coin flip.
+- [ ] **(15) (e2e infrastructure) Errors silently degrade to `[object Object]`
+    when crossing the executeObsidian boundary.** `Error` objects have
+    non-enumerable `message` / `stack`, so when something inside an
+    `executeObsidian` callback returns or throws an Error, WebDriver's JSON
+    serialization on the way back to Node strips it to `{}`. The receiving
+    Node code then sees `result.error = {}`, evaluates it as truthy, and
+    typically `String()`s it to `[object Object]` — masking the real cause.
+    Fixed for `runBulkSync` in
+    [wdio.conf.mts](../wdio.conf.mts) by stringifying inside the callback,
+    but the same trap will catch any future helper that returns or rethrows
+    an Error from inside an executeObsidian callback.
+    - Fix direction: factor a small helper (perhaps
+        `safeExecuteObsidian(fn)`) that wraps the callback, catches inside,
+        converts errors to plain `{ message, stack }`, and rethrows on the
+        Node side with the real message. Use it in place of bare
+        `executeObsidian` in any code path that can fail meaningfully.
+    - Lower priority because it's a known footgun now, but worth a cheap
+        helper before the third "what does `[object Object]` mean here" debug
+        session.
 
 ## Architectural follow-ups
 
@@ -164,7 +209,49 @@ addressed; add follow-up items as new ones are discovered.
 Started: 2026-05-29. Issues identified during review of [src/sync/](../src/sync/)
 following the e2e test rescue session.
 
-DRY pass complete (items 1, A2, A3): all 392 unit tests + 18 e2e tests pass;
-lint clean. Working tree delta is net −39 production lines across
-`bulk-sync.ts`, `candidate-store.ts`, `resolution-executor.ts`,
-`single-file-sync.ts` (+ matching mock updates in two test files).
+Completed so far:
+
+- **DRY pass** (items 1, A2, A3): planAction/classifyStatus deduplicated;
+    apply-sync-result-to-store helper unified across bulk-sync, resolution-
+    executor, and single-file-sync.
+- **Mutation hazards** (item 2): CandidateStore is replace-on-write; the
+    `Candidate` immutability contract is documented in `types.ts`; the
+    single-slot `onChanged` was widened to multi-listener `onChange(fn):
+    unsubscribe`; PendingListModal subscribes and re-renders so user actions
+    no longer race against reconcile.
+- **`BulkSync.run()` coalescing** (item 3): `run()` returns the in-flight
+    Promise on concurrent calls instead of a misleading zero. The four
+    workaround fields (`lastPassResult`, `lastPassCompletedAt`, `isRunning`,
+    `onPassCompleted`) are gone, and the e2e `runBulkSync` helper collapsed
+    from fire-and-poll to a single `await`.
+- **Hygiene cluster** (items 4, 5, 6): dead `classifyStatus` branch and
+    `'absent'` variant removed; `CandidateStore.get(path)` exposed for O(1)
+    lookups; `applyFileResult` infers "original is gone" from `changed &&
+    !syncedState && !isDelete` so Keep Both / delete-conflict no longer
+    strand the original candidate.
+- **Cross-vault e2e** (item 7-equivalent, not a numbered item): cross suite
+    expanded from 3 tests (17 s) to 12 tests (67 s) covering delete
+    propagation both directions, modify-delete conflict both directions (with
+    item 14's partial behaviour pinned), non-overlapping diff3 merge,
+    concurrent independent creates, subfolder hierarchy, pause-and-resume,
+    and user-approved-cross-propagation. Writing the suite uncovered two real
+    production bugs that are *also* fixed in this pass:
+    - `file-syncer.ts` conflict-case `resolvedInPlace` was using
+        `localConflictPath`/`remoteConflictPath` (Keep-Both-only) instead of
+        `newSyncedFiles?.length` (the unambiguous signal). Delete-conflict
+        was therefore mis-classified as "in place," causing
+        `localFs.read(candidate.path)` to throw on the just-deleted original.
+    - The `executeMerge` unit test had been passing only because of that
+        same `resolvedInPlace` bug; its candidate had no `local` ephemeral,
+        so it was actually exercising delete-conflict rather than merge.
+        Updated `makeCandidate` to take a `{ local: true }` opt; the test
+        now constructs a real merge-shaped candidate.
+
+Test counts: 401/401 unit tests pass; 18/18 single-vault e2e in ~40 s;
+12/12 cross-vault e2e in ~67 s; lint clean.
+
+Open: items 7 (threshold counts non-local), 8 (pull pre-pull mtime),
+9 (drive walker ignores excludes), 10 (`isPaused` dead async), 11 (lastPass
+invariant test), 12 (scheduler.fileStates retention comment), 13 (test mocks),
+14 (resolveDeleteConflict still partial), 15 (e2e helper error degradation),
+A1 (Candidate type hygiene).

@@ -316,21 +316,44 @@ interface SyncPassResult {
  * must be inlined.
  */
 export async function runBulkSync(br: WebdriverIO.Browser): Promise<SyncPassResult> {
+	// Convert any thrown error inside the callback to a string before returning,
+	// because WebDriver's JSON serialization on the way back to Node drops
+	// Error's non-enumerable `message` / `stack`. Without this, every internal
+	// failure surfaces as the opaque message `[object Object]`.
 	const result = await br.executeObsidian(async ({ app }) => {
 		type Plugin = { scheduler: unknown };
 		type BulkSyncHandle = { run(): Promise<SyncPassResult> };
-		const plugin = (app as unknown as {
-			plugins: { plugins: Record<string, Plugin> };
-		}).plugins.plugins['vault-share'] as Plugin | undefined;
-		if (!plugin) throw new Error('vault-share plugin not loaded');
-		const bulkSync = (plugin.scheduler as unknown as {
-			deps: { bulkSync: BulkSyncHandle };
-		}).deps.bulkSync;
-		return bulkSync.run();
+		try {
+			const plugin = (app as unknown as {
+				plugins: { plugins: Record<string, Plugin> };
+			}).plugins.plugins['vault-share'] as Plugin | undefined;
+			if (!plugin) throw new Error('vault-share plugin not loaded');
+			const bulkSync = (plugin.scheduler as unknown as {
+				deps: { bulkSync: BulkSyncHandle };
+			}).deps.bulkSync;
+			const r = await bulkSync.run();
+			// Same Error-stripping problem can happen for the `error` field
+			// that doRun sets internally — flatten it to a string now so the
+			// caller's diagnostic is useful instead of `[object Object]`.
+			if (r.error) {
+				const errMsg = r.error instanceof Error
+					? `${r.error.message}\n${r.error.stack ?? ''}`
+					: String(r.error);
+				return { ...r, error: errMsg };
+			}
+			return r;
+		} catch (err) {
+			const msg = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
+			// Surface the synchronous throw the same way `r.error` would.
+			return {
+				downloaded: 0, uploaded: 0, deleted: 0, conflicts: 0, merges: 0,
+				deferredByThreshold: false, error: msg,
+			};
+		}
 	}) as unknown as SyncPassResult;
 
 	if (result.error) {
-		const msg = result.error instanceof Error ? result.error.message : String(result.error);
+		const msg = typeof result.error === 'string' ? result.error : String(result.error);
 		throw new Error(`Bulk sync failed: ${msg}`);
 	}
 	return result;

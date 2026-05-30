@@ -92,8 +92,16 @@ export async function syncOneFile(
 		case 'conflict': {
 			const { fileConflict, textFileConflict } = ctx.settings();
 			const conflictResult = await resolveConflict(candidate, fileConflict, textFileConflict, ctx);
+			// "In place" = the original path's content was rewritten and no
+			// side files were produced. Merge and Use Newer fit this; Keep Both
+			// (renames + leaves nothing at the original) and delete-conflict
+			// (places a side placeholder, leaves the original gone) do not.
+			// Detecting via newSyncedFiles is the unambiguous signal —
+			// localConflictPath/remoteConflictPath were only set by Keep Both
+			// historically, which left delete-conflict mis-classified as
+			// in-place and the read of `candidate.path` below throwing.
 			const resolvedInPlace = conflictResult.merged
-				|| (!conflictResult.localConflictPath && !conflictResult.remoteConflictPath);
+				|| !conflictResult.newSyncedFiles?.length;
 			if (resolvedInPlace) {
 				// Merged or Use Newer: both sides now agree on the original path.
 				// Re-stat Drive to get the post-write mtime; candidate.remote carries the

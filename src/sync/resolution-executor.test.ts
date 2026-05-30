@@ -164,6 +164,7 @@ function makeCandidate(
 	path: string,
 	actionType: SyncActionType,
 	driveFileId?: string,
+	opts: { local?: boolean } = {},
 ): Candidate {
 	return {
 		path,
@@ -178,6 +179,7 @@ function makeCandidate(
 		deferredAt: 0,
 		deferredLocalMtime: 0,
 		deferredRemoteMtime: 0,
+		local: opts.local ? { path, mtime: 0, size: 0 } : undefined,
 		remote: driveFileId ? { path, driveFileId, mtime: 0, size: 0 } : undefined,
 	};
 }
@@ -339,7 +341,7 @@ describe('executeMerge', () => {
 		localFiles.set('note.md', { content: enc('local version\n'), mtime: 2000, size: 14 });
 		driveFiles.set('note.md', { driveFileId: 'drive-m', content: enc('remote version\n'), mtime: 1000 });
 
-		await executeMerge(makeCandidate('note.md', 'conflict', 'drive-m'), ctx, candidateStore);
+		await executeMerge(makeCandidate('note.md', 'conflict', 'drive-m', { local: true }), ctx, candidateStore);
 
 		// Both sides should now exist and markSynced should be called.
 		expect(localFiles.has('note.md')).toBe(true);
