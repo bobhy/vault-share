@@ -96,14 +96,14 @@ async function setThreshold(
 	await vault.executeObsidian(({ app }, m, t) => {
 		type Plugin = {
 			settings: {
-				fileModificationConfirmationMin: number;
-				fileModificationConfirmationThreshold: number;
+				globalChangeMin: number;
+				globalChangeThreshold: number;
 			};
 		};
 		const plugin = (app as unknown as { plugins: { plugins: Record<string, Plugin> } })
 			.plugins.plugins["vault-share"]!;
-		plugin.settings.fileModificationConfirmationMin = m as number;
-		plugin.settings.fileModificationConfirmationThreshold = t as number;
+		plugin.settings.globalChangeMin = m as number;
+		plugin.settings.globalChangeThreshold = t as number;
 	}, min, threshold);
 }
 

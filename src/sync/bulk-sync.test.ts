@@ -87,6 +87,7 @@ function makeBulkSync(
 	localFileCount = 0,
 	pendingCandidates: Candidate[] = [],
 	approvedCandidates: Candidate[] = [],
+	remoteFileCount = 0,
 ): BulkSyncHarness {
 	const ctx: SyncContext = {
 		app: new App(),
@@ -100,7 +101,16 @@ function makeBulkSync(
 			delete: vi.fn().mockResolvedValue(undefined),
 		} as unknown as SyncContext['localFs'],
 		driveFs: {
-			listAll: vi.fn().mockResolvedValue({ files: [], duplicatePathsFound: 0 }),
+			// By default mirror local paths so the union equals max(localFileCount,
+			// remoteFileCount). Tests that need overlapping-but-distinct sets
+			// (e.g. for union-arithmetic edge cases) can override the mock
+			// after construction.
+			listAll: vi.fn().mockResolvedValue({
+				files: Array.from({ length: remoteFileCount }, (_, i) => ({
+					path: `file${i}.md`, mtime: 1000, size: 10, driveFileId: `drive-${i}`,
+				})),
+				duplicatePathsFound: 0,
+			}),
 		} as unknown as SyncContext['driveFs'],
 		store: {} as unknown as SyncContext['store'],
 		statsTracker: {
@@ -395,14 +405,16 @@ describe('BulkSync.run: normal planning path', () => {
 describe('BulkSync.run: threshold guard', () => {
 	beforeEach(() => mockSyncOneFile.mockReset());
 
-	it('calls deferAllAndPause and skips execution when action ratio exceeds threshold', async () => {
-		// Default settings: fileModificationConfirmationMin=10, threshold=50%.
-		// 10 local files, 8 pending (non-deleteLocal) = 80% > 50% → threshold fires.
+	it('calls deferAllAndPause when the global-change ratio exceeds the threshold', async () => {
+		// Mocks default to mirroring local paths into remote, so 10 local
+		// + 10 remote with overlapping paths → union = 10. Default
+		// settings: globalChangeMin = 10, globalChangeThreshold = 10.
+		// 8 pending pushes / 10 union = 80 % > 10 % → threshold fires.
 		const pending: Candidate[] = Array.from({ length: 8 }, (_, i) =>
 			makeCandidate(`file${i}.md`, 'push'),
 		);
 
-		const { bulk, candidateStore, onThresholdPause } = makeBulkSync(10, pending);
+		const { bulk, candidateStore, onThresholdPause } = makeBulkSync(10, pending, [], 10);
 		const result = await bulk.run();
 
 		expect(candidateStore.deferAllAndPause).toHaveBeenCalledWith(pending);
@@ -411,19 +423,93 @@ describe('BulkSync.run: threshold guard', () => {
 		expect(onThresholdPause).toHaveBeenCalled();
 	});
 
-	it('does not trigger threshold when vault has fewer than fileModificationConfirmationMin files', async () => {
-		// 5 local files < fileModificationConfirmationMin (10) → threshold guard disabled.
+	it('does not trigger threshold when the union is smaller than globalChangeMin', async () => {
+		// 5 local + 5 remote with overlapping paths → union = 5. With
+		// the default min of 10, the union is too small to be checked
+		// against threshold even though every file is pending.
 		const pending: Candidate[] = Array.from({ length: 5 }, (_, i) =>
-			makeCandidate(`f${i}.md`, 'push'),
+			makeCandidate(`file${i}.md`, 'push'),
 		);
 		pending.forEach(() => mockSyncOneFile.mockResolvedValueOnce(makeSuccessResult('push')));
 
-		const { bulk, candidateStore } = makeBulkSync(5, pending);
+		const { bulk, candidateStore } = makeBulkSync(5, pending, [], 5);
 		const result = await bulk.run();
 
 		expect(candidateStore.deferAllAndPause).not.toHaveBeenCalled();
 		expect(result.deferredByThreshold).toBe(false);
 		expect(mockSyncOneFile).toHaveBeenCalledTimes(5);
+	});
+
+	it('does not trigger threshold when remote is empty and there is no sync history (fresh install)', async () => {
+		// 10 local files, 0 remote, no history — every file is a push, ratio
+		// would normally be 100 %. Without history the vault is a fresh install
+		// joining a populated group vault; skip the guard so the user isn't
+		// ambushed with a deferral notice on first sync.
+		const pending: Candidate[] = Array.from({ length: 10 }, (_, i) =>
+			makeCandidate(`file${i}.md`, 'push', { syncedAt: 0 }),
+		);
+		pending.forEach(() => mockSyncOneFile.mockResolvedValueOnce(makeSuccessResult('push')));
+
+		const { bulk, candidateStore } = makeBulkSync(10, pending, [], 0);
+		// Ensure hasSyncHistory returns false for this test.
+		candidateStore.hasSyncHistory.mockReturnValue(false);
+		const result = await bulk.run();
+
+		expect(candidateStore.deferAllAndPause).not.toHaveBeenCalled();
+		expect(result.deferredByThreshold).toBe(false);
+		expect(mockSyncOneFile).toHaveBeenCalledTimes(10);
+	});
+
+	it('triggers threshold when remote is empty but sync history exists (accidental Drive wipe)', async () => {
+		// 10 local files, 0 remote, history present — signals an accidental
+		// Drive-folder wipe. Ratio = 100 % > 10 % threshold → guard fires.
+		const pending: Candidate[] = Array.from({ length: 10 }, (_, i) =>
+			makeCandidate(`file${i}.md`, 'push'),
+		);
+
+		const { bulk, candidateStore, onThresholdPause } = makeBulkSync(10, pending, [], 0);
+		// hasSyncHistory already returns true by default (syncedAt: 500 in makeCandidate).
+		const result = await bulk.run();
+
+		expect(candidateStore.deferAllAndPause).toHaveBeenCalledWith(pending);
+		expect(mockSyncOneFile).not.toHaveBeenCalled();
+		expect(result.deferredByThreshold).toBe(true);
+		expect(onThresholdPause).toHaveBeenCalled();
+	});
+
+	it('counts deleteLocal actions in the global-change ratio (remote peer mass-delete trips threshold)', async () => {
+		// 8 deleteLocal candidates / 10 union files = 80 % > 10 % → threshold fires.
+		// Previously deleteLocal was excluded from the numerator, which would have
+		// allowed a remote peer deleting most of the vault to bypass the guard.
+		const pending: Candidate[] = Array.from({ length: 8 }, (_, i) =>
+			makeCandidate(`file${i}.md`, 'deleteLocal'),
+		);
+
+		const { bulk, candidateStore, onThresholdPause } = makeBulkSync(10, pending, [], 10);
+		const result = await bulk.run();
+
+		expect(candidateStore.deferAllAndPause).toHaveBeenCalledWith(pending);
+		expect(mockSyncOneFile).not.toHaveBeenCalled();
+		expect(result.deferredByThreshold).toBe(true);
+		expect(onThresholdPause).toHaveBeenCalled();
+	});
+
+	it('does not trigger threshold when local is empty (fresh install joining a populated group vault)', async () => {
+		// 0 local files, 10 remote — every file is a pull. The
+		// empty-local guard skips the check, so the user isn't ambushed
+		// with a "10 global changes deferred for review" notice on the
+		// very first sync of a fresh install.
+		const pending: Candidate[] = Array.from({ length: 10 }, (_, i) =>
+			makeCandidate(`file${i}.md`, 'pull'),
+		);
+		pending.forEach(() => mockSyncOneFile.mockResolvedValueOnce(makeSuccessResult('pull')));
+
+		const { bulk, candidateStore } = makeBulkSync(0, pending, [], 10);
+		const result = await bulk.run();
+
+		expect(candidateStore.deferAllAndPause).not.toHaveBeenCalled();
+		expect(result.deferredByThreshold).toBe(false);
+		expect(mockSyncOneFile).toHaveBeenCalledTimes(10);
 	});
 });
 

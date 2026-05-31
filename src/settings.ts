@@ -15,11 +15,29 @@ export interface VaultShareSettings {
 	/** Conflict resolution strategy for mutually modified text files (.md, .txt). */
 	textFileConflict: TextFileConflictStrategy;
 
-	/** Show confirmation modal before bulk sync modifies more than this % of vault files. */
-	fileModificationConfirmationThreshold: number;
+	/**
+	 * Defer all pending bulk-sync work for review when a single pass would
+	 * change more than this % of all known files.  "Global changes" — the
+	 * numerator — is every pending action: pushes, pulls, conflicts,
+	 * remote-side deletions (`deleteRemote`), and local-side deletions
+	 * (`deleteLocal`).  The denominator is the size of the union of files
+	 * in local and Drive (each path counted once).
+	 *
+	 * The check is skipped entirely when either side is empty (fresh
+	 * install joining a populated group vault; or recovering from an
+	 * accidental Drive-folder wipe) — there's no established sync state
+	 * to protect in those cases.  It is also skipped when the union is
+	 * smaller than {@link globalChangeMin}.
+	 */
+	globalChangeThreshold: number;
 
-	/** Skip confirmation modal when vault has fewer than this many syncable files. */
-	fileModificationConfirmationMin: number;
+	/**
+	 * Skip the threshold check entirely when the union of local and Drive
+	 * files has fewer than this many entries.  Small vaults have noisy
+	 * ratios — a single change in a 5-entry union is 20 %, which would
+	 * otherwise trip the default 10 % threshold every time.
+	 */
+	globalChangeMin: number;
 
 	/** How often bulk sync runs, in seconds. */
 	bulkSyncPoll: number;
@@ -54,8 +72,8 @@ export const DEFAULT_SETTINGS: VaultShareSettings = {
 	excludeRules: ['.obsidian', '.trash'],
 	fileConflict: 'Keep Both',
 	textFileConflict: 'Merge',
-	fileModificationConfirmationThreshold: 10,
-	fileModificationConfirmationMin: 10,
+	globalChangeThreshold: 10,
+	globalChangeMin: 10,
 	bulkSyncPoll: 3600,
 	openFilePoll: 10,
 	openFileChangeHoldDown: 5,

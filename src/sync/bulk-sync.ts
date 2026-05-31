@@ -174,20 +174,45 @@ export class BulkSync {
 				this.ctx.statsTracker.recordPassWithDuplicates();
 			}
 
-			// Threshold guard: too many changes → defer all and pause instead of executing.
+			// Threshold guard: too many global changes → defer all and pause
+			// instead of executing. All action types count as global changes,
+			// including `deleteLocal` (a remote peer deleted a file, which is
+			// as significant as any other change). The denominator is the union
+			// of local and Drive paths so a peer-driven mass-delete or mass-pull
+			// is weighed against the total file population, not just the local
+			// subset.
+			//
+			// Remote-empty handling:
+			//   - No sync history: skip the guard. This is a fresh install
+			//     joining a populated group vault; the user expects everything
+			//     to push without a confirmation dialog.
+			//   - Sync history exists: run the guard. Remote being empty when
+			//     there is an established sync record signals an accidental
+			//     Drive-folder wipe (or the wrong folder). The ratio will be
+			//     ~100 %, so the guard fires and the user is asked to confirm
+			//     before anything is re-uploaded.
+			//
+			// Local-empty: always skip. Nothing to protect — the user has no
+			// established state on this device yet.
 			const settings = this.ctx.settings();
 			const pending = this.candidates.getPending();
-			const localFileCount = localFiles.length;
-			const modifyCount = pending.filter(a => a.actionType !== 'deleteLocal').length;
+			const globalChangeCount = pending.length;
 
+			const unionPaths = new Set<string>();
+			for (const f of localFiles)  unionPaths.add(f.path);
+			for (const f of remoteFiles) unionPaths.add(f.path);
+			const unionFileCount = unionPaths.size;
+
+			const hasHistory = this.candidates.hasSyncHistory();
 			if (
-				localFileCount >= settings.fileModificationConfirmationMin &&
-				localFileCount > 0 &&
-				(modifyCount / localFileCount) * 100 > settings.fileModificationConfirmationThreshold
+				localFiles.length > 0 &&
+				(remoteFiles.length > 0 || hasHistory) &&
+				unionFileCount >= settings.globalChangeMin &&
+				(globalChangeCount / unionFileCount) * 100 > settings.globalChangeThreshold
 			) {
 				await this.candidates.deferAllAndPause(pending);
 				result.deferredByThreshold = true;
-				const msg = `Sharing paused: ${pending.length} changes deferred for review`;
+				const msg = `Sharing paused: ${pending.length} global changes deferred for review`;
 				this.setStatusBar(msg);
 				this.ctx.logger.info(msg);
 				this.onThresholdPause(pending.length);
@@ -195,7 +220,6 @@ export class BulkSync {
 			}
 
 			// Execute pending candidates one at a time, yielding between each.
-			const hasHistory = this.candidates.hasSyncHistory();
 			for (const candidate of pending) {
 				await this.syncAndApply(candidate, hasHistory, /* approved */ false, result);
 				// Yield to allow queued single-file sync microtasks to run.

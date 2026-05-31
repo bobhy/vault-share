@@ -74,14 +74,65 @@ addressed; add follow-up items as new ones are discovered.
         record them at this path." Documented as a decision table in the
         method's docstring; covered by a new
         `CandidateStore.applyFileResult` test suite (5 cases).
-- [ ] **(7) Threshold guard counts non-local changes.**
-    [bulk-sync.ts:169](../src/sync/bulk-sync.ts#L169) tallies every non-`deleteLocal`
-    candidate, so pulls and conflicts count toward
-    `fileModificationConfirmationThreshold`. The setting name suggests "local
-    modifications," but after a long disconnection a vault could have hundreds
-    of pulls and trip the threshold unexpectedly.
-    - Fix: either rename the setting, or scope `modifyCount` to push / conflict
-        / deleteRemote (i.e. exclude pulls).
+- [x] **(7) Threshold semantics were correct in intent but mis-labelled and
+    mis-scoped at the edges.** Resolved by realigning the name, the
+    surrounding text, the denominator, and the empty-vault guard with the
+    actual intent ("any global change to either vault"), and adding a
+    one-shot migration so existing users don't lose their tuned values:
+    - **Rename:** `fileModificationConfirmation{Threshold,Min}` →
+        `globalChange{Threshold,Min}` in [settings.ts](../src/settings.ts).
+        The old name leaned local-modification; the new name describes what
+        it actually counts.
+    - **One-shot settings migration** added to
+        [main.ts onload](../src/main.ts#L49) — when loading `data.json`, if
+        the old keys are present, their values are copied across to the new
+        keys, the old keys are deleted, and the cleaned-up shape is saved
+        back so the migration only runs once per install. This is a
+        deliberate exception to the project "no migration code" convention
+        for settings; without it every existing user would silently revert
+        to defaults.
+    - **Denominator** in [bulk-sync.ts](../src/sync/bulk-sync.ts) changed
+        from `localFiles.length` to the union of local + remote paths
+        (each path counted once). This is closer to "% of all known files"
+        than "% of files on this side."
+    - **Empty-vault guard** added: the threshold check is skipped when
+        *either* side is empty — covers fresh install joining a populated
+        group vault (empty local; user shouldn't be ambushed with a "100
+        global changes deferred" notice on first sync) and recovery from
+        an accidental Drive-folder wipe (empty remote; nothing to
+        protect).
+    - **User-visible wording** unified to "global change(s)" — both the
+        notice popup in [main.ts](../src/main.ts) and the status-bar
+        message in [bulk-sync.ts](../src/sync/bulk-sync.ts). The notice
+        previously said "conflicts" which was actively misleading (the
+        threshold defers pushes/pulls/conflicts/remote-deletes
+        indiscriminately).
+    - **Updated JSDoc** on both settings fields describes the new
+        numerator/denominator and the empty-vault guard so a user
+        hand-editing `data.json` sees the actual semantics.
+    - **Tests:** rewrote the two existing threshold tests to use the new
+        names + the new union semantics, added two new tests for the
+        empty-local and empty-remote guards (fresh-install and
+        Drive-wipe scenarios), extended the test harness to optionally
+        populate remote-file paths. All assertions on the e2e side use
+        `setThreshold(min, threshold)` so just the helper internal got
+        renamed.
+    - **Follow-up resolved (deleteLocal):** the `deleteLocal` exclusion
+        in the numerator was asymmetric — remote-side deletions counted
+        but local-side ones didn't. Under the global-changes framing both
+        are equally significant (a remote peer mass-deleting most of the
+        vault should trip the guard). The filter was removed so all
+        pending action types contribute to `globalChangeCount`. JSDoc on
+        `globalChangeThreshold` and the inline comment in bulk-sync.ts
+        updated accordingly; a new unit test confirms a
+        `deleteLocal`-heavy pending list triggers `deferAllAndPause`.
+    - **Follow-up resolved (Drive-wipe vs fresh-install):** the
+        empty-remote guard previously skipped the check unconditionally.
+        Refined to distinguish the two cases via `hasSyncHistory()`: no
+        history → fresh install, skip as before; history present → remote
+        being empty signals an accidental Drive-folder wipe, so the guard
+        runs (ratio ≈ 100 % → fires, user asked to confirm before
+        re-uploading). Two new unit tests cover both branches.
 - [ ] **(8) Pull records pre-pull `remoteMtime`.**
     [file-syncer.ts:60-75](../src/sync/file-syncer.ts#L60-L75) uses
     `candidate.remote` (from reconcile, possibly stale) for `remoteMtime` /
@@ -354,6 +405,13 @@ Completed so far:
     in one sync round on each vault — the previous "next reconcile re-pushes
     the file" boomerang is gone. Two cross tests now assert the new outcome
     *and* a no-op stability round on both sides.
+- **Threshold semantics + name** (item 7): renamed
+    `fileModificationConfirmation{Threshold,Min}` to `globalChange{Threshold,Min}`
+    with a one-shot data.json migration; denominator now counts the union of
+    local + Drive paths; check skipped when either side is empty (fresh
+    install or Drive-wipe); notice popup and status-bar wording unified to
+    "global change(s)" (the popup previously said "conflicts" which was
+    misleading — pulls and pushes were counted too).
 - **`pluginReset` rebaseline** (item 17): `planAction`'s no-history path now
     treats `(both sides present) && (sizes match)` as `noOp`, and `reconcile`
     creates a Synced candidate at the current mtime/size for that case
@@ -392,11 +450,10 @@ Completed so far:
         Updated `makeCandidate` to take a `{ local: true }` opt; the test
         now constructs a real merge-shaped candidate.
 
-Test counts: 401/401 unit tests pass; 18/18 single-vault e2e in ~40 s;
-12/12 cross-vault e2e in ~67 s; lint clean.
+Test counts: 413/413 unit tests pass; 18/18 single-vault e2e in ~37 s;
+12/12 cross-vault e2e in ~75 s; lint clean.
 
-Open: items 7 (threshold counts non-local), 8 (pull pre-pull mtime),
-9 (drive walker ignores excludes), 10 (`isPaused` dead async), 11 (lastPass
-invariant test), 12 (scheduler.fileStates retention comment), 13 (test mocks),
-14 (resolveDeleteConflict still partial), 15 (e2e helper error degradation),
-A1 (Candidate type hygiene).
+Open: item 8 (pull pre-pull mtime), 9 (drive walker ignores excludes),
+10 (`isPaused` dead async), 11 (lastPass invariant test), 12
+(scheduler.fileStates retention comment), 13 (test mocks), A1 (Candidate
+type hygiene).

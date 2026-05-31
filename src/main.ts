@@ -48,13 +48,52 @@ export default class VaultSharePlugin extends Plugin {
 
 	async onload() {
 		// 1. Settings
-		const stored = await this.loadData() as unknown as Partial<VaultShareSettings>;
+		const stored = await this.loadData() as unknown as (Partial<VaultShareSettings> & {
+			// One-shot migration shape: the old field names used before
+			// sync-review-followups item (7). See the migration block below.
+			fileModificationConfirmationThreshold?: number;
+			fileModificationConfirmationMin?: number;
+		}) | null;
+
+		// One-shot rename from `fileModificationConfirmation*` to `globalChange*`
+		// (item 7 — the new names reflect that the threshold counts changes on
+		// either side of the sync, not just local modifications). Carry the
+		// stored values across; the new numerator/denominator semantics are
+		// slightly different but the user's chosen threshold/min values
+		// continue to express the same intent (their tolerance for noise).
+		// Persist the cleaned-up shape so the migration only runs once per
+		// install.
+		let migrationApplied = false;
+		if (stored) {
+			if (typeof stored.fileModificationConfirmationThreshold === 'number'
+				&& typeof stored.globalChangeThreshold !== 'number') {
+				stored.globalChangeThreshold = stored.fileModificationConfirmationThreshold;
+				migrationApplied = true;
+			}
+			if (typeof stored.fileModificationConfirmationMin === 'number'
+				&& typeof stored.globalChangeMin !== 'number') {
+				stored.globalChangeMin = stored.fileModificationConfirmationMin;
+				migrationApplied = true;
+			}
+			if (migrationApplied) {
+				delete stored.fileModificationConfirmationThreshold;
+				delete stored.fileModificationConfirmationMin;
+			}
+		}
+
 		this.settings = Object.assign(
 			{},
 			DEFAULT_SETTINGS,
 			{ driveFolderPath: `/vault-share/${this.app.vault.getName()}` },
 			stored,
 		);
+
+		// Persist the migrated shape so subsequent loads don't see the old
+		// keys. Fire-and-forget — failure to save here just means the
+		// migration is retried on next load, which is idempotent.
+		if (migrationApplied) {
+			void this.saveData(this.settings);
+		}
 
 		// 2. Auth + API
 		this.auth = new GDriveAuth(this.app);
@@ -454,7 +493,7 @@ export default class VaultSharePlugin extends Plugin {
 	/** Show a Notice when the threshold guard defers all changes and pauses sharing. */
 	private showThresholdPauseNotice(count: number): void {
 		const frag = createFragment();
-		frag.appendText(`Sharing paused — ${count} conflict${count === 1 ? '' : 's'} deferred for review — `);
+		frag.appendText(`Sharing paused — ${count} global change${count === 1 ? '' : 's'} deferred for review — `);
 		const link = frag.createEl('a', { text: 'Tap to review' });
 		link.addEventListener('click', () => { void this.activateSharingStatusView(); });
 		new Notice(frag);

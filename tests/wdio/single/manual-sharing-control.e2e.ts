@@ -73,8 +73,8 @@ type PluginHandle = {
 	candidateStore: CandidateStore;
 	bulkSync: BulkSync;
 	settings: {
-		fileModificationConfirmationMin: number;
-		fileModificationConfirmationThreshold: number;
+		globalChangeMin: number;
+		globalChangeThreshold: number;
 	};
 };
 
@@ -166,8 +166,8 @@ async function setupScenario(): Promise<void> {
 			}
 
 			// Arm the threshold: any planned action will trigger deferral.
-			plugin.settings.fileModificationConfirmationMin = 1;
-			plugin.settings.fileModificationConfirmationThreshold = 0;
+			plugin.settings.globalChangeMin = 1;
+			plugin.settings.globalChangeThreshold = 0;
 		},
 		PUSH_FILES, PULL_FILES, CONFLICT_FILES, DELETE_REMOTE_FILES, DELETE_LOCAL_FILES,
 	);
@@ -240,8 +240,8 @@ describe('Threshold deferral — all action types deferred on threshold breach',
 				plugins: { plugins: Record<string, PluginHandle> };
 			}).plugins.plugins['vault-share']!;
 
-			plugin.settings.fileModificationConfirmationMin = 10;
-			plugin.settings.fileModificationConfirmationThreshold = 10;
+			plugin.settings.globalChangeMin = 10;
+			plugin.settings.globalChangeThreshold = 10;
 
 			await plugin.candidateStore.clear();
 			await plugin.candidateStore.setPaused(false);
@@ -363,7 +363,7 @@ describe('Selective defer and approve — candidate execution control', () => {
 			await plugin.candidateStore.clear();
 			await plugin.candidateStore.setPaused(false);
 			// Disable threshold so normal planning runs execute.
-			plugin.settings.fileModificationConfirmationMin = 100;
+			plugin.settings.globalChangeMin = 100;
 
 			for (const name of files as string[]) {
 				if (!app.vault.getAbstractFileByPath(name))
@@ -383,8 +383,8 @@ describe('Selective defer and approve — candidate execution control', () => {
 
 			await plugin.candidateStore.clear();
 			await plugin.candidateStore.setPaused(false);
-			plugin.settings.fileModificationConfirmationMin = 10;
-			plugin.settings.fileModificationConfirmationThreshold = 10;
+			plugin.settings.globalChangeMin = 10;
+			plugin.settings.globalChangeThreshold = 10;
 
 			for (const name of files as string[]) {
 				const f = app.vault.getAbstractFileByPath(name);
