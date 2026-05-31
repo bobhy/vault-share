@@ -30,6 +30,11 @@ function makeCandidate(overrides: Partial<Candidate> = {}): Candidate {
 const localUnmodified: FileSide = { path: 'test.md', mtime: 1000, size: 10 };
 const localModified: FileSide   = { path: 'test.md', mtime: 2000, size: 15 };
 
+// Distinct-content fixture for "both sides present, sizes differ" tests in the
+// no-history path — size differs from remoteUnmodified, so the rebaseline
+// check below does NOT short-circuit them and the conflict path runs.
+const localDistinctContent: FileSide = { path: 'test.md', mtime: 1000, size: 11 };
+
 // Remote sides
 const remoteUnmodified: DriveFileSide = { path: 'test.md', mtime: 1000, size: 10, driveFileId: 'drive-1' };
 const remoteModified: DriveFileSide   = { path: 'test.md', mtime: 2000, size: 15, driveFileId: 'drive-1' };
@@ -104,8 +109,18 @@ describe('planAction without history', () => {
 		expect(plan(null, undefined, remoteUnmodified, false)).toBe('pull');
 	});
 
-	it('both present → conflict', () => {
-		expect(plan(null, localUnmodified, remoteUnmodified, false)).toBe('conflict');
+	it('both present, sizes match → noOp (rebaseline)', () => {
+		// No-history rebaseline: same byte size on both sides is treated as
+		// "already in sync" so reconcile can record a Synced candidate rather
+		// than fabricating a conflict. Covers the pluginReset → re-sync case
+		// and most fresh-install scenarios. See planAction's no-history
+		// branch for the trade-off rationale and known false-positive window.
+		expect(plan(null, localUnmodified, remoteUnmodified, false)).toBe('noOp');
+	});
+
+	it('both present, sizes differ → conflict', () => {
+		// Size mismatch is the strong signal that content actually differs.
+		expect(plan(null, localDistinctContent, remoteUnmodified, false)).toBe('conflict');
 	});
 
 	it('neither present → noOp', () => {
@@ -154,7 +169,15 @@ describe('planAction: candidate never synced (syncedAt=0), vault has history', (
 		expect(plan(neverSynced, undefined, remoteUnmodified, true)).toBe('pull');
 	});
 
-	it('both present → conflict (no shared history)', () => {
-		expect(plan(neverSynced, localUnmodified, remoteUnmodified, true)).toBe('conflict');
+	it('both present, sizes match → noOp (rebaseline, no shared history)', () => {
+		// Same rebaseline rule as the without-history block — `wasSynced=false`
+		// drives planAction into the no-history branch even when other
+		// candidates in the vault have history. A fresh file appearing on
+		// both sides with matching byte size is treated as already in sync.
+		expect(plan(neverSynced, localUnmodified, remoteUnmodified, true)).toBe('noOp');
+	});
+
+	it('both present, sizes differ → conflict (no shared history)', () => {
+		expect(plan(neverSynced, localDistinctContent, remoteUnmodified, true)).toBe('conflict');
 	});
 });

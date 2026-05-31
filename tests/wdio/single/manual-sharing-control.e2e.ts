@@ -139,11 +139,18 @@ async function setupScenario(): Promise<void> {
 				await plugin.api.writeFile(folderId, name, `pull content — ${name}`);
 			}
 
-			// conflict — both sides with different content, no sync record.
+			// conflict — both sides with different content AND different byte
+			// sizes, no sync record. The byte-size difference is load-bearing:
+			// `planAction`'s no-history path treats matching-size both-present
+			// as a rebaseline (sync-review-followups item 17), so the conflict
+			// branch only fires when sizes differ. The earlier `'local version
+			// — ' / 'drive version — '` templates happened to be byte-identical
+			// (both 18 bytes UTF-8), which would now rebaseline-as-Synced and
+			// defeat the threshold scenario this test is checking.
 			for (const name of conflictFiles as string[]) {
 				if (!app.vault.getAbstractFileByPath(name))
 					await app.vault.create(name, `local version — ${name}`);
-				await plugin.api.writeFile(folderId, name, `drive version — ${name}`);
+				await plugin.api.writeFile(folderId, name, `drive-side variant with extra characters — ${name}`);
 			}
 
 			// deleteRemote — local file deleted; Drive copy + sync record remain.

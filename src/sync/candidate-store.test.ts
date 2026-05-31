@@ -109,6 +109,73 @@ describe('CandidateStore.reconcile: insertion', () => {
 
 		expect(cs.getAll()).toHaveLength(0);
 	});
+
+	it('creates a Synced candidate when both sides are present and sizes match (rebaseline)', async () => {
+		// The pluginReset and fresh-install-joining-vault scenarios:
+		// reconcile sees a file on both sides with no candidate record.
+		// Size equality is the rebaseline signal — record as Synced at the
+		// current mtime/size so future edits classify correctly, rather than
+		// forcing a conflict workflow that, under default settings, would
+		// also duplicate every binary attachment via Keep Both.
+		({ store } = await makeStore());
+		const cs = new CandidateStore(store.getIdb());
+		await cs.init();
+
+		await cs.reconcile([LOCAL_A], [REMOTE_A]);
+
+		const all = cs.getAll();
+		expect(all).toHaveLength(1);
+		expect(all[0]).toMatchObject({
+			path: 'a.md',
+			state: 'Synced',
+			actionType: 'noOp',
+			driveFileId: 'drive-a',
+			syncedLocalMtime: LOCAL_A.mtime,
+			syncedLocalSize: LOCAL_A.size,
+			syncedRemoteMtime: REMOTE_A.mtime,
+			syncedRemoteSize: REMOTE_A.size,
+		});
+		expect(all[0]?.syncedAt).toBeGreaterThan(0);
+	});
+
+	it('creates a Default conflict candidate when both sides are present and sizes differ', async () => {
+		// Size mismatch is the strong "content differs" signal — fall back to
+		// the conflict path so the user actually reviews / resolves.
+		({ store } = await makeStore());
+		const cs = new CandidateStore(store.getIdb());
+		await cs.init();
+
+		const remoteBiggerSize: DriveFileSide = { ...REMOTE_A, size: REMOTE_A.size + 1 };
+		await cs.reconcile([LOCAL_A], [remoteBiggerSize]);
+
+		const all = cs.getAll();
+		expect(all).toHaveLength(1);
+		expect(all[0]).toMatchObject({ path: 'a.md', state: 'Default', actionType: 'conflict' });
+	});
+
+	it('subsequent local edit after rebaseline classifies as push (not as a fresh-history conflict)', async () => {
+		// Regression: without recording the rebaseline as Synced, the next
+		// reconcile after a local edit would re-enter the no-history path
+		// (no candidate → wasSynced=false) and treat the now-only-local-edit
+		// state as `(local && !remote? push) | (both? conflict)` based on
+		// whether remote still happens to match. With the rebaseline Synced
+		// record in place, the second reconcile correctly classifies the
+		// local edit as `push`.
+		({ store } = await makeStore());
+		const cs = new CandidateStore(store.getIdb());
+		await cs.init();
+
+		await cs.reconcile([LOCAL_A], [REMOTE_A]);  // rebaseline → Synced
+
+		const editedLocal: FileSide = { ...LOCAL_A, mtime: LOCAL_A.mtime + 1, size: LOCAL_A.size + 5 };
+		await cs.reconcile([editedLocal], [REMOTE_A]);  // local edited, remote unchanged
+
+		expect(cs.getAll()[0]).toMatchObject({
+			path: 'a.md',
+			state: 'Default',
+			actionType: 'push',
+		});
+	});
 });
 
 // ---------------------------------------------------------------------------

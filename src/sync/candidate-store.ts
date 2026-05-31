@@ -136,7 +136,39 @@ export class CandidateStore {
 			if (!existing) {
 				// Brand-new path: only create a candidate if the file exists somewhere.
 				const newActionType = planAction(null, local, remote, vaultHasHistory);
-				if (newActionType === 'noOp') continue;
+				if (newActionType === 'noOp') {
+					// `noOp` here is either "neither side present" (truly nothing
+					// to track) or the no-history rebaseline case from
+					// {@link planAction} ("both sides present, sizes match — most
+					// likely already in sync, e.g. just after pluginReset").
+					// For the rebaseline case, record a Synced candidate at the
+					// current mtime/size so subsequent edits classify against
+					// known values; without this, the path stays uncovered until
+					// one side actually changes — and then planAction's
+					// no-history path would treat a one-sided change as a fresh
+					// push/pull, losing the other side's existing content.
+					if (local && remote) {
+						const candidate: Candidate = {
+							path,
+							state: 'Synced',
+							actionType: 'noOp',
+							driveFileId: remote.driveFileId,
+							syncedLocalMtime: local.mtime,
+							syncedRemoteMtime: remote.mtime,
+							syncedLocalSize: local.size,
+							syncedRemoteSize: remote.size,
+							syncedAt: Date.now(),
+							deferredAt: 0,
+							deferredLocalMtime: 0,
+							deferredRemoteMtime: 0,
+							local,
+							remote,
+						};
+						this.cache.set(path, candidate);
+						toWrite.push(toPersistent(candidate));
+					}
+					continue;
+				}
 
 				const candidate: Candidate = {
 					path,

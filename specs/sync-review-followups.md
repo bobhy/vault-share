@@ -133,6 +133,60 @@ addressed; add follow-up items as new ones are discovered.
         previously pinned the partial behaviour now assert the new outcome
         on both vaults *plus* a stability check (a second sync round on
         either side is a no-op — same content, no new placeholders).
+- [x] **(17) `pluginReset` (and fresh-install joining an established vault)
+    reclassified every dual-existence file as `conflict`.** Was: after
+    `pluginReset` cleared the candidate cache, the next reconcile's
+    no-history path classified every file present on both sides as
+    `'conflict'` (since the path uses presence alone). Under default
+    settings this meant text files got a no-op diff3 round-trip with empty
+    base, and binary attachments got duplicated via Keep Both — a small
+    vault (< `fileModificationConfirmationMin` files) with binary
+    attachments could silently double its image count just from clicking
+    "Reset plugin."
+    - Done: `planAction`'s no-history branch now treats `local && remote
+        && local.size === remote.size` as `'noOp'`, and `reconcile`'s
+        new-candidate branch creates a Synced candidate at the current
+        mtime/size for that case (instead of skipping). Future reconciles
+        compare against those values and classify subsequent edits
+        correctly, so a one-sided change after the rebaseline produces a
+        push/pull rather than a fresh-history conflict.
+    - **Signal trade-off:** size-only, not mtime-or-content. Drive's
+        `modifiedTime` is the upload time (not the file's original mtime),
+        so mtime equality almost never fires for genuinely-identical files
+        and would defeat the rebaseline. Content equality would be
+        definitive but requires reading every file. Size is a
+        low-false-positive proxy because edits virtually always change byte
+        count; the known false-positive window is "two unrelated files at
+        the same path that coincidentally have the same byte size,"
+        unusual in practice.
+    - **Follow-up upgrade path** — a fully-designed plan already exists at
+        [specs/timestamp-conflict-improvements.md § "Enhancement 1 —
+        Identical-content conflicts reconciled by hash comparison"](timestamp-conflict-improvements.md).
+        That doc threads Drive's pre-computed `sha256Checksum` through the
+        Drive API → DriveFsAdapter → DriveFileSide layers and short-circuits
+        identical-content conflicts at execution time. It's broader than
+        the rebaseline case (it would also cover *with-history* conflicts
+        where mtime drifted but content didn't), and reuses the same hash
+        infrastructure. **Recommended sequencing:** consider promoting that
+        Phase 2 plan ahead of items (7), (10), (11), (12), (15) on this
+        checklist — it directly upgrades the (17) trade-off AND fixes a
+        broader class of false-conflict scenarios. The size-only rebaseline
+        landed here is the contained interim fix; the sha256 plan is the
+        comprehensive one.
+    - Tests: two new tests in `decision-engine.test.ts` cover the size-match
+        rebaseline and the size-mismatch conflict cases (plus the
+        no-shared-history variants). Three new tests in
+        `candidate-store.test.ts` cover the reconcile-creates-Synced
+        rebaseline, the reconcile-creates-Default-conflict size-mismatch
+        case, and the regression "subsequent edit after rebaseline
+        correctly classifies as push." One single-vault e2e fixture
+        (`manual-sharing-control.e2e.ts`'s conflict setup) needed its
+        templates updated to use visibly-different sizes — the previous
+        `'local version — '` / `'drive version — '` templates were
+        coincidentally byte-identical (18 bytes UTF-8 each), which would
+        now rebaseline-as-Synced and skip the threshold scenario; comment
+        added inline explaining the load-bearing nature of the size
+        difference.
 - [x] **(16) Approved candidate referring to a now-missing file blocked the
     whole queue.** Was: `executeApproved`'s loop was wrapped in a single
     try/catch, so the first throw stranded every subsequent approved
@@ -300,6 +354,16 @@ Completed so far:
     in one sync round on each vault — the previous "next reconcile re-pushes
     the file" boomerang is gone. Two cross tests now assert the new outcome
     *and* a no-op stability round on both sides.
+- **`pluginReset` rebaseline** (item 17): `planAction`'s no-history path now
+    treats `(both sides present) && (sizes match)` as `noOp`, and `reconcile`
+    creates a Synced candidate at the current mtime/size for that case
+    instead of skipping. Fixes the documented "Reset plugin" UX where
+    binary attachments duplicated via Keep Both on small vaults. Trade-off
+    is size-only equality (Drive's `modifiedTime` is upload time so mtime
+    equality almost never fires); cross-references the existing Drive
+    `sha256Checksum` plan in
+    [specs/timestamp-conflict-improvements.md](timestamp-conflict-improvements.md)
+    as the comprehensive follow-up.
 - **Per-candidate failure isolation** (item 16): `BulkSync` no longer aborts
     its whole queue when one file's sync throws. A shared
     `syncAndApply()` helper wraps each candidate in its own try/catch;
