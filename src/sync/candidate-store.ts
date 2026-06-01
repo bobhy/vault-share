@@ -109,11 +109,17 @@ export class CandidateStore {
 	 *
 	 * Persists changed records to IDB.  Fires {@link onChanged} if any persistent
 	 * state changed.
+	 *
+	 * Returns the paths that were newly rebaselined as `Synced` via the
+	 * no-history size-equality heuristic.  Callers that have access to local file
+	 * I/O (e.g. {@link BulkSync}) should verify these with a SHA-256 comparison
+	 * and call {@link rebaselineAsConflict} for any that do not match, so the
+	 * size-only false-positive window is eliminated when Drive provides a hash.
 	 */
 	async reconcile(
 		localFiles: FileSide[],
 		remoteFiles: DriveFileSide[],
-	): Promise<void> {
+	): Promise<string[]> {
 		const localByPath = new Map<string, FileSide>(localFiles.map(f => [f.path, f]));
 		const remoteByPath = new Map<string, DriveFileSide>(remoteFiles.map(f => [f.path, f]));
 
@@ -127,6 +133,7 @@ export class CandidateStore {
 		const vaultHasHistory = this.hasSyncHistory();
 		const toWrite: PersistedCandidate[] = [];
 		const toRemove: string[] = [];
+		const rebaselinedPaths: string[] = [];
 
 		for (const path of allPaths) {
 			const local = localByPath.get(path);
@@ -166,6 +173,7 @@ export class CandidateStore {
 						};
 						this.cache.set(path, candidate);
 						toWrite.push(toPersistent(candidate));
+						rebaselinedPaths.push(path);
 					}
 					continue;
 				}
@@ -280,6 +288,8 @@ export class CandidateStore {
 			});
 			this.fireChanged();
 		}
+
+		return rebaselinedPaths;
 	}
 
 	// ── Read (all from in-memory cache; no IDB I/O) ────────────────────────────
@@ -485,6 +495,36 @@ export class CandidateStore {
 		this.cache.delete(path);
 		await this.idb.runTransaction(STORE_CANDIDATES, 'readwrite', (tx) => {
 			tx.objectStore(STORE_CANDIDATES).delete(path);
+			return () => undefined;
+		});
+		this.fireChanged();
+	}
+
+	/**
+	 * Revert a newly rebaselined `Synced` candidate back to `Default` with
+	 * `actionType = 'conflict'` when a SHA-256 check reveals the size-equality
+	 * heuristic produced a false positive (same byte count but different content).
+	 *
+	 * Resets all `synced*` fields to `0` because no actual sync has occurred.
+	 * Called by {@link BulkSync.doRun} after the post-reconcile hash verification
+	 * pass.  Fires {@link onChanged}.
+	 */
+	async rebaselineAsConflict(path: string): Promise<void> {
+		const existing = this.cache.get(path);
+		if (!existing) return;
+		const next: Candidate = {
+			...existing,
+			state: 'Default',
+			actionType: 'conflict',
+			syncedLocalMtime: 0,
+			syncedRemoteMtime: 0,
+			syncedLocalSize: 0,
+			syncedRemoteSize: 0,
+			syncedAt: 0,
+		};
+		this.cache.set(path, next);
+		await this.idb.runTransaction(STORE_CANDIDATES, 'readwrite', (tx) => {
+			tx.objectStore(STORE_CANDIDATES).put(toPersistent(next));
 			return () => undefined;
 		});
 		this.fireChanged();

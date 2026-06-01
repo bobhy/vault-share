@@ -1,5 +1,6 @@
 import type { Candidate, SyncContext, SyncFileResult } from './types';
 import { resolveConflict } from './conflict-resolver';
+import { sha256Hex } from './content-hash';
 
 /**
  * Execute one sync action end-to-end:
@@ -91,7 +92,45 @@ export async function syncOneFile(
 
 		case 'conflict': {
 			const { fileConflict, textFileConflict } = ctx.settings();
-			const conflictResult = await resolveConflict(candidate, fileConflict, textFileConflict, ctx);
+
+			// Site 3 — identical-content fast path.
+			// Only meaningful when both sides exist (delete-conflicts can't match by content).
+			// Three-level graceful degradation:
+			//   1. Sizes differ       → skip hash (content definitely different)
+			//   2. No sha256Checksum  → skip hash (pre-2022 file or edge case)
+			//   3. Hash matches       → reconcile SyncRecord only; no file writes
+			//   4. Hash differs       → fall through to resolveConflict with pre-read content
+			let prereadLocalContent: ArrayBuffer | undefined;
+			const localMeta = candidate.local;
+			const remoteMeta = candidate.remote;
+			if (localMeta && remoteMeta?.sha256Checksum && localMeta.size === remoteMeta.size) {
+				prereadLocalContent = await ctx.localFs.read(candidate.path);
+				const localHash = await sha256Hex(prereadLocalContent);
+				if (localHash === remoteMeta.sha256Checksum) {
+					// Identical content: update the sync record without touching files.
+					const localSide = ctx.localFs.stat(candidate.path);
+					const freshRemote = await ctx.driveFs.stat(rootFolderId, candidate.path);
+					await ctx.store.putContent(candidate.path, prereadLocalContent);
+					ctx.logger.info(`Timestamp reconciled (identical content): ${candidate.path}`);
+					return {
+						changed: true,
+						identicalContent: true,
+						merged: false,
+						hadConflictMarkers: false,
+						syncedState: {
+							driveFileId: freshRemote?.driveFileId ?? remoteMeta.driveFileId ?? candidate.driveFileId,
+							localMtime: localSide?.mtime ?? 0,
+							remoteMtime: freshRemote?.mtime ?? 0,
+							localSize: localSide?.size ?? 0,
+							remoteSize: freshRemote?.size ?? 0,
+							syncedAt: Date.now(),
+						},
+					};
+				}
+				// Hash differs — genuine conflict; pass prereadLocalContent to avoid re-reading.
+			}
+
+			const conflictResult = await resolveConflict(candidate, fileConflict, textFileConflict, ctx, prereadLocalContent);
 			// "In place" = the original path now has coherent content on both
 			// sides and the caller should build a `syncedState` for it.
 			//   - Merge: `merged` is true.

@@ -2,6 +2,7 @@ import type { Candidate, SyncActionType, SyncContext, SyncFileResult, SyncPassRe
 import type { ExcludeMatcher } from './exclude';
 import type { CandidateStore } from './candidate-store';
 import { syncOneFile } from './file-syncer';
+import { sha256Hex } from './content-hash';
 
 /**
  * Tally one file's sync result into a {@link SyncPassResult} counter set.
@@ -23,8 +24,12 @@ function tallyFileResult(
 		case 'pull': result.downloaded++; break;
 		case 'push': result.uploaded++; break;
 		case 'conflict':
-			result.conflicts++;
-			if (fileResult.merged) result.merges++;
+			if (fileResult.identicalContent) {
+				result.identicalTimestamps++;
+			} else {
+				result.conflicts++;
+				if (fileResult.merged) result.merges++;
+			}
 			break;
 	}
 }
@@ -127,6 +132,7 @@ export class BulkSync {
 			deleted: 0,
 			conflicts: 0,
 			merges: 0,
+			identicalTimestamps: 0,
 			failed: 0,
 			deferredByThreshold: false,
 		};
@@ -163,7 +169,26 @@ export class BulkSync {
 			]);
 			const { files: remoteFiles, duplicatePathsFound } = listAllResult;
 
-			await this.candidates.reconcile(localFiles, remoteFiles);
+			const rebaselinedPaths = await this.candidates.reconcile(localFiles, remoteFiles);
+
+			// Site 1 — sha256 rebaseline verification.
+			// reconcile() uses size equality as a heuristic to rebaseline
+			// both-present no-history files as Synced. Verify each with Drive's
+			// sha256Checksum to catch the rare false positive (different files at
+			// the same path, same byte count). When the hash mismatches, flip the
+			// candidate back to Default/conflict so the user sees it rather than
+			// silently accepting a wrong sync record.
+			for (const path of rebaselinedPaths) {
+				const candidate = this.candidates.get(path);
+				const remoteHash = candidate?.remote?.sha256Checksum;
+				if (!remoteHash) continue;  // hash absent — keep size-equality result
+				const localContent = await this.ctx.localFs.read(path);
+				const localHash = await sha256Hex(localContent);
+				if (localHash !== remoteHash) {
+					this.ctx.logger.info(`Rebaseline sha256 mismatch (corrected to conflict): ${path}`);
+					await this.candidates.rebaselineAsConflict(path);
+				}
+			}
 
 			if (duplicatePathsFound > 0) {
 				this.ctx.logger.warning(
@@ -256,6 +281,7 @@ export class BulkSync {
 			deleted: 0,
 			conflicts: 0,
 			merges: 0,
+			identicalTimestamps: 0,
 			failed: 0,
 			deferredByThreshold: false,
 		};
@@ -354,5 +380,8 @@ export class BulkSync {
 /** Build a one-line summary of pass results for the status bar / info log. */
 function summarize(r: SyncPassResult): string {
 	const base = `Shared: ${r.downloaded} downloaded, ${r.uploaded} uploaded, ${r.deleted} deleted`;
-	return r.failed > 0 ? `${base}, ${r.failed} failed` : base;
+	const extras: string[] = [];
+	if (r.identicalTimestamps > 0) extras.push(`${r.identicalTimestamps} timestamp-reconciled`);
+	if (r.failed > 0) extras.push(`${r.failed} failed`);
+	return extras.length > 0 ? `${base}, ${extras.join(', ')}` : base;
 }

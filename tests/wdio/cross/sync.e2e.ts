@@ -9,6 +9,7 @@
  * in one vault can be pulled by the other.
  */
 
+import { createHash } from "node:crypto";
 import { CROSS_VAULT_DRIVE_FOLDER, cleanupTestDriveFolder, injectAndConfigure, runBulkSync } from "../../../wdio.conf.mts";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -466,6 +467,80 @@ describe("Cross-vault sync", () => {
 		// Exactly one placeholder per side — no duplicates, no fresh ones from the no-op rounds above.
 		expect((await listVaultFiles(primary)).filter(p => placeholderPattern(path, "client").test(p))).toHaveLength(1);
 		expect((await listVaultFiles(peer)).filter(p => placeholderPattern(path, "client").test(p))).toHaveLength(1);
+	});
+});
+
+// ── SHA-256 identity comparison ──────────────────────────────────────────────
+
+describe("Cross-vault SHA-256 identity", () => {
+	/**
+	 * Two complementary tests for the sha256Checksum fast-path:
+	 *
+	 * (a) Drive returns a sha256Checksum on every pushed file — verify the field
+	 *     is a 64-char hex string in the candidate's remote side after a push.
+	 *
+	 * (b) Both vaults independently edit a file to the same content — the next
+	 *     bulk sync should reconcile as identicalTimestamps (not a conflict) and
+	 *     leave neither vault with conflict markers.
+	 */
+
+	it("Drive returns a sha256Checksum on pushed files", async () => {
+		const { primary } = vaults();
+		const path = `sha256-push-${Date.now()}.md`;
+		const content = `sha256 test content ${new Date().toISOString()}`;
+
+		// Compute the expected hash from the raw UTF-8 bytes that will be uploaded.
+		const expectedHash = createHash("sha256").update(content, "utf8").digest("hex");
+
+		await create(primary, path, content);
+		await runBulkSync(primary);
+
+		// Query the file's metadata directly from Drive — findFile includes
+		// sha256Checksum in its fields= parameter.
+		const remoteHash = await primary.executeObsidian(async ({ app }, p) => {
+			type DriveFileMeta = { id: string; sha256Checksum?: string };
+			type Plugin = {
+				driveFolderId: string;
+				api: { findFile: (folderId: string, name: string) => Promise<DriveFileMeta | null> };
+			};
+			const plugin = (app as unknown as { plugins: { plugins: Record<string, Plugin> } })
+				.plugins.plugins["vault-share"]!;
+			const meta = await plugin.api.findFile(plugin.driveFolderId, p as string);
+			return meta?.sha256Checksum ?? null;
+		}, path) as unknown as string | null;
+
+		expect(remoteHash).not.toBeNull();
+		expect(remoteHash).toBe(expectedHash);
+	});
+
+	it("identical independent edits resolve as identicalTimestamps, not conflicts", async () => {
+		const { primary, peer } = vaults();
+		const path = `sha256-identical-${Date.now()}.md`;
+		const baseContent = `base content ${Date.now()}`;
+		const identicalEdit = `identical edit ${Date.now()}`;
+
+		// Phase 1: establish synced baseline in both vaults.
+		await create(primary, path, baseContent);
+		await runBulkSync(primary);
+		await runBulkSync(peer);
+
+		// Phase 2: both vaults independently edit to the exact same new content
+		// without syncing — simulates two users typing the same change.
+		await modify(primary, path, identicalEdit);
+		await modify(peer,    path, identicalEdit);
+
+		// Phase 3: sync primary first (its version lands on Drive), then sync peer.
+		// Peer will see local=identicalEdit, remote=identicalEdit → same sha256 →
+		// identicalTimestamps path, not a conflict write.
+		await runBulkSync(primary);
+		const peerResult = await runBulkSync(peer);
+
+		expect(peerResult.identicalTimestamps).toBeGreaterThan(0);
+		expect(peerResult.conflicts).toBe(0);
+
+		// Both vaults should still have the identical edit — no conflict markers.
+		expect(await readVault(primary, path)).toBe(identicalEdit);
+		expect(await readVault(peer,    path)).toBe(identicalEdit);
 	});
 });
 

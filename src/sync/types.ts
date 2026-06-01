@@ -102,7 +102,7 @@ export interface Candidate {
 
 	// ── Ephemeral (populated by reconcile(); undefined between passes) ─────────
 	local?: FileSide;
-	remote?: FileSide & { driveFileId: string };
+	remote?: FileSide & { driveFileId: string; sha256Checksum?: string };
 }
 
 /** Post-sync file metadata shared by {@link SyncFileResult.syncedState} and {@link SyncFileResult.newSyncedFiles}. */
@@ -133,6 +133,13 @@ export interface SyncFileResult {
 	merged: boolean;
 	hadConflictMarkers: boolean;
 	/**
+	 * True when a `conflict`-typed candidate was short-circuited at execution
+	 * time because local and remote have identical SHA-256 content. No file
+	 * writes were performed; only the sync record was updated.
+	 * Counted separately as {@link SyncPassResult.identicalTimestamps}.
+	 */
+	identicalContent?: boolean;
+	/**
 	 * Set when `changed = true` for non-delete actions.
 	 * Used by the caller to update {@link CandidateStore} without
 	 * {@link syncOneFile} needing a store reference.
@@ -153,6 +160,8 @@ export interface SyncPassResult {
 	deleted: number;
 	conflicts: number;
 	merges: number;
+	/** Files where local and Drive had identical SHA-256 content; sync record updated, no file writes. */
+	identicalTimestamps: number;
 	/**
 	 * Per-candidate failures during execution.  An individual candidate may
 	 * fail (e.g. its local file was deleted between planning and execution);

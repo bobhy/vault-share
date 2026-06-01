@@ -5,6 +5,8 @@ import type { Logger } from '../logger';
 
 export interface DriveFileSide extends FileSide {
 	driveFileId: string;
+	/** SHA-256 hex digest from Drive API. Present for most files; absent for pre-2022 uploads or Google-native docs. */
+	sha256Checksum?: string;
 }
 
 /**
@@ -201,5 +203,6 @@ function driveFileToSide(path: string, file: DriveFile): DriveFileSide {
 		mtime: file.modifiedTime ? new Date(file.modifiedTime).getTime() : 0,
 		// Google Docs / Sheets / Slides have no byte size; treat as 0.
 		size: file.size ? Number(file.size) : 0,
+		sha256Checksum: file.sha256Checksum,
 	};
 }

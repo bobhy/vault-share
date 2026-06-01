@@ -210,20 +210,12 @@ addressed; add follow-up items as new ones are discovered.
         count; the known false-positive window is "two unrelated files at
         the same path that coincidentally have the same byte size,"
         unusual in practice.
-    - **Follow-up upgrade path** — a fully-designed plan already exists at
-        [specs/timestamp-conflict-improvements.md § "Enhancement 1 —
-        Identical-content conflicts reconciled by hash comparison"](timestamp-conflict-improvements.md).
-        That doc threads Drive's pre-computed `sha256Checksum` through the
-        Drive API → DriveFsAdapter → DriveFileSide layers and short-circuits
-        identical-content conflicts at execution time. It's broader than
-        the rebaseline case (it would also cover *with-history* conflicts
-        where mtime drifted but content didn't), and reuses the same hash
-        infrastructure. **Recommended sequencing:** consider promoting that
-        Phase 2 plan ahead of items (7), (10), (11), (12), (15) on this
-        checklist — it directly upgrades the (17) trade-off AND fixes a
-        broader class of false-conflict scenarios. The size-only rebaseline
-        landed here is the contained interim fix; the sha256 plan is the
-        comprehensive one.
+    - **Phase 2 (sha256 upgrade) is now complete** — see the Phase 2 entry in
+        the "Completed items" section below. The plan at
+        [specs/timestamp-conflict-improvements.md](timestamp-conflict-improvements.md)
+        is fully implemented. The size-only rebaseline remains as the initial
+        heuristic; sha256 verification runs as a post-reconcile correction pass
+        and also short-circuits with-history identical-content conflicts at Site 3.
     - Tests: two new tests in `decision-engine.test.ts` cover the size-match
         rebaseline and the size-mismatch conflict cases (plus the
         no-shared-history variants). Three new tests in
@@ -412,16 +404,34 @@ Completed so far:
     install or Drive-wipe); notice popup and status-bar wording unified to
     "global change(s)" (the popup previously said "conflicts" which was
     misleading — pulls and pushes were counted too).
-- **`pluginReset` rebaseline** (item 17): `planAction`'s no-history path now
-    treats `(both sides present) && (sizes match)` as `noOp`, and `reconcile`
-    creates a Synced candidate at the current mtime/size for that case
-    instead of skipping. Fixes the documented "Reset plugin" UX where
-    binary attachments duplicated via Keep Both on small vaults. Trade-off
-    is size-only equality (Drive's `modifiedTime` is upload time so mtime
-    equality almost never fires); cross-references the existing Drive
-    `sha256Checksum` plan in
-    [specs/timestamp-conflict-improvements.md](timestamp-conflict-improvements.md)
-    as the comprehensive follow-up.
+- **`pluginReset` rebaseline + sha256 identity comparison** (item 17 / Phase 2):
+    - Phase 1 (rebaseline): `planAction`'s no-history path treats `(both sides
+      present) && (sizes match)` as `noOp`, and `reconcile` creates a Synced
+      candidate for that case instead of skipping.
+    - Phase 2 (sha256 upgrade, now complete): Full sha256-based identity
+      comparison as designed in
+      [specs/timestamp-conflict-improvements.md](timestamp-conflict-improvements.md),
+      implemented at two sites:
+        - **Site 1** (no-history rebaseline verification): `BulkSync.doRun`
+          loops over the set of paths newly rebaselined by size-equality,
+          computes `sha256Hex` for each, and calls `CandidateStore.rebaselineAsConflict`
+          on any path where the local hash doesn't match `DriveFileSide.sha256Checksum`.
+          `reconcile` now returns `Promise<string[]>` (the rebaselined paths).
+        - **Site 3** (with-history identical-content conflict short-circuit):
+          `syncOneFile` computes local sha256 before calling `resolveConflict`
+          when sizes match and `sha256Checksum` is present on the remote side.
+          A match updates the sync record without any file writes and returns
+          `identicalContent: true`. `SyncPassResult` gained `identicalTimestamps`
+          counted separately from `conflicts`.
+      Graceful degradation: sha256 absent (pre-2022 Drive files) → falls back
+      to size-only behaviour with no error. New `src/sync/content-hash.ts` uses
+      `crypto.subtle` (mobile-safe, no Node dependency).
+    - New unit tests: `content-hash.test.ts` (5 tests), Site 1 in
+      `bulk-sync.test.ts` (3 tests), Site 3 in `file-syncer.test.ts` (4 tests),
+      sha256Checksum threading in `drive-fs.test.ts` (2 tests).
+    - New e2e tests in `tests/wdio/cross/sync.e2e.ts`: Drive returns 64-char
+      sha256 on pushed files; identical independent edits resolve as
+      `identicalTimestamps` with no conflict markers.
 - **Per-candidate failure isolation** (item 16): `BulkSync` no longer aborts
     its whole queue when one file's sync throws. A shared
     `syncAndApply()` helper wraps each candidate in its own try/catch;
@@ -450,8 +460,8 @@ Completed so far:
         Updated `makeCandidate` to take a `{ local: true }` opt; the test
         now constructs a real merge-shaped candidate.
 
-Test counts: 413/413 unit tests pass; 18/18 single-vault e2e in ~37 s;
-12/12 cross-vault e2e in ~75 s; lint clean.
+Test counts: 428/428 unit tests pass; 18/18 single-vault e2e in ~37 s;
+14/14 cross-vault e2e in ~75 s; lint clean.
 
 Open: item 8 (pull pre-pull mtime), 9 (drive walker ignores excludes),
 10 (`isPaused` dead async), 11 (lastPass invariant test), 12

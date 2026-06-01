@@ -203,6 +203,28 @@ describe('DriveFsAdapter.listAll', () => {
 		expect(duplicatePathsFound).toBe(1); // one path affected, not two
 	});
 
+	it('threads sha256Checksum from DriveFile into DriveFileSide', async () => {
+		const file: DriveFile = {
+			id: 'id1', name: 'note.md', mimeType: 'text/plain',
+			modifiedTime: new Date().toISOString(),
+			sha256Checksum: 'abc123',
+		};
+		const listChildren = vi.fn().mockResolvedValue([file]);
+		const adapter = new DriveFsAdapter({ listChildren } as unknown as GDriveApi);
+
+		const { files } = await adapter.listAll(ROOT_ID);
+		expect(files[0]?.sha256Checksum).toBe('abc123');
+	});
+
+	it('leaves sha256Checksum undefined when Drive omits it (pre-2022 file)', async () => {
+		const file: DriveFile = { id: 'id1', name: 'note.md', mimeType: 'text/plain' };
+		const listChildren = vi.fn().mockResolvedValue([file]);
+		const adapter = new DriveFsAdapter({ listChildren } as unknown as GDriveApi);
+
+		const { files } = await adapter.listAll(ROOT_ID);
+		expect(files[0]?.sha256Checksum).toBeUndefined();
+	});
+
 	it('reports zero duplicatePathsFound when all paths are unique', async () => {
 		const file1 = makeFile('id1', 'a.md');
 		const file2 = makeFile('id2', 'b.md');

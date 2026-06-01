@@ -379,6 +379,116 @@ describe('syncOneFile noOp and pull edge-cases', () => {
 // Delete action tests
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Site 3: sha256 identical-content fast path
+// ---------------------------------------------------------------------------
+
+describe('syncOneFile Site 3: sha256 identical-content fast path', () => {
+	let localFs: LocalFs;
+	let localFiles: Map<string, LocalFileEntry>;
+	let driveFs: DriveFsAdapter;
+	let driveFiles: Map<string, DriveFileEntry>;
+	let store: SyncStore;
+	let ctx: SyncContext;
+
+	const CONTENT = enc('shared identical content');
+	// SHA-256 of 'shared identical content' — computed reference value.
+	// Verify with: echo -n 'shared identical content' | sha256sum
+	const CONTENT_SHA256 = 'cfaf3fbeb587f56fdca0707122efe34bba356946c07f39e9584c22e43dc586da';
+
+	beforeEach(() => {
+		({ localFs, files: localFiles } = makeLocalFs());
+		({ driveFs, files: driveFiles } = makeDriveFs());
+		({ store } = makeSyncStore());
+		ctx = {
+			app: new App(),
+			localFs,
+			driveFs,
+			store,
+			statsTracker: stubStats,
+			settings: () => mockSettings({ fileConflict: 'Keep Both', textFileConflict: 'Merge' }),
+			clientId: 'abcd1234-0000-0000-0000-000000000000',
+			driveFolderId: () => 'root-folder-id',
+			logger: stubLogger,
+		};
+		localFiles.set('note.md', { content: CONTENT, mtime: 2000, size: CONTENT.byteLength });
+		driveFiles.set('note.md', { driveFileId: 'drive-1', content: CONTENT, mtime: 1000 });
+	});
+
+	it('returns identicalContent=true and no file writes when sha256 matches', async () => {
+		const candidate = makeCandidate({
+			path: 'note.md',
+			actionType: 'conflict',
+			local:  { path: 'note.md', mtime: 2000, size: CONTENT.byteLength },
+			remote: { path: 'note.md', mtime: 1000, size: CONTENT.byteLength,
+				driveFileId: 'drive-1', sha256Checksum: CONTENT_SHA256 },
+		});
+
+		const result = await syncOneFile(candidate, ctx, true);
+
+		expect(result.identicalContent).toBe(true);
+		expect(result.changed).toBe(true);
+		expect(result.merged).toBe(false);
+		expect(result.syncedState).toBeDefined();
+		// No conflict copies should have been created on Drive.
+		expect([...driveFiles.keys()].filter(k => k.includes('-conflict-'))).toHaveLength(0);
+	});
+
+	it('falls through to resolveConflict when sizes differ (size fast-path)', async () => {
+		// Different sizes → skip hash check entirely; resolveConflict runs.
+		const candidate = makeCandidate({
+			path: 'note.md',
+			actionType: 'conflict',
+			local:  { path: 'note.md', mtime: 2000, size: CONTENT.byteLength },
+			remote: { path: 'note.md', mtime: 1000, size: CONTENT.byteLength + 1,
+				driveFileId: 'drive-1', sha256Checksum: CONTENT_SHA256 },
+		});
+
+		const result = await syncOneFile(candidate, ctx, true);
+
+		expect(result.identicalContent).toBeUndefined();
+		expect(result.changed).toBe(true);
+	});
+
+	it('falls through to resolveConflict when sha256Checksum is absent', async () => {
+		// No sha256Checksum on remote → skip hash, fall through.
+		const candidate = makeCandidate({
+			path: 'note.md',
+			actionType: 'conflict',
+			local:  { path: 'note.md', mtime: 2000, size: CONTENT.byteLength },
+			remote: { path: 'note.md', mtime: 1000, size: CONTENT.byteLength,
+				driveFileId: 'drive-1' },  // no sha256Checksum
+		});
+
+		const result = await syncOneFile(candidate, ctx, true);
+
+		expect(result.identicalContent).toBeUndefined();
+		expect(result.changed).toBe(true);
+	});
+
+	it('falls through to resolveConflict and passes preread when hashes differ', async () => {
+		// Sizes match but content is actually different → resolveConflict called.
+		// The preread local content (read once for hash) is passed through to
+		// resolveConflict so the file is not read a second time.
+		const differentContent = enc('different content of same length!!'); // same byte count
+		localFiles.set('note.md', { content: differentContent, mtime: 2000, size: differentContent.byteLength });
+		driveFiles.set('note.md', { driveFileId: 'drive-1', content: enc('remote different !'), mtime: 1000 });
+
+		const candidate = makeCandidate({
+			path: 'note.md',
+			actionType: 'conflict',
+			local:  { path: 'note.md', mtime: 2000, size: differentContent.byteLength },
+			remote: { path: 'note.md', mtime: 1000, size: differentContent.byteLength,
+				driveFileId: 'drive-1', sha256Checksum: CONTENT_SHA256 },
+		});
+
+		const result = await syncOneFile(candidate, ctx, true);
+
+		expect(result.identicalContent).toBeUndefined();
+		expect(result.changed).toBe(true);
+	});
+});
+
 describe('syncOneFile delete actions', () => {
 	let localFs: LocalFs;
 	let localFiles: Map<string, { content: ArrayBuffer; mtime: number; size: number }>;

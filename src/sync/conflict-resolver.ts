@@ -72,6 +72,7 @@ export async function resolveConflict(
 	fileStrategy: FileConflictStrategy,
 	textStrategy: TextFileConflictStrategy,
 	ctx: SyncContext,
+	prereadLocalContent?: ArrayBuffer,
 ): Promise<ConflictResult> {
 	const { local, remote } = candidate;
 	const isDeleteConflict = !local || !remote;
@@ -83,12 +84,12 @@ export async function resolveConflict(
 	const strategy = isMergeEligible(candidate.path) ? textStrategy : fileStrategy;
 
 	if (strategy === 'Use Newer') {
-		return resolveUseNewer(candidate.path, local.mtime, remote.mtime, ctx);
+		return resolveUseNewer(candidate.path, local.mtime, remote.mtime, ctx, prereadLocalContent);
 	}
 	if (strategy === 'Merge') {
-		return resolveMerge(candidate, ctx);
+		return resolveMerge(candidate, ctx, prereadLocalContent);
 	}
-	return resolveKeepBoth(candidate, ctx);
+	return resolveKeepBoth(candidate, ctx, prereadLocalContent);
 }
 
 /** Use Newer: overwrite the older side with the newer side. */
@@ -97,6 +98,7 @@ async function resolveUseNewer(
 	localMtime: number,
 	remoteMtime: number,
 	ctx: SyncContext,
+	prereadLocalContent?: ArrayBuffer,
 ): Promise<ConflictResult> {
 	const { localFs, driveFs } = ctx;
 	const rootFolderId = ctx.driveFolderId();
@@ -104,7 +106,7 @@ async function resolveUseNewer(
 
 	if (localMtime >= remoteMtime) {
 		// Local is newer — push to Drive.
-		const content = await localFs.read(path);
+		const content = prereadLocalContent ?? await localFs.read(path);
 		await driveFs.write(rootFolderId, path, content, ctx.statsTracker, sampler);
 		ctx.statsTracker.recordPush();
 	} else {
@@ -124,6 +126,7 @@ async function resolveUseNewer(
 async function resolveKeepBoth(
 	candidate: Candidate,
 	ctx: SyncContext,
+	prereadLocalContent?: ArrayBuffer,
 ): Promise<ConflictResult> {
 	const { path } = candidate;
 	const now = new Date();
@@ -134,7 +137,7 @@ async function resolveKeepBoth(
 
 	// Read both sides before renaming.
 	const [localContent, remoteFileId] = await Promise.all([
-		ctx.localFs.read(path),
+		prereadLocalContent ? Promise.resolve(prereadLocalContent) : ctx.localFs.read(path),
 		Promise.resolve(ctx.driveFs).then(async driveFs => {
 			const s = await driveFs.stat(rootFolderId, path);
 			return s?.driveFileId ?? null;
@@ -198,6 +201,7 @@ async function resolveKeepBoth(
 async function resolveMerge(
 	candidate: Candidate,
 	ctx: SyncContext,
+	prereadLocalContent?: ArrayBuffer,
 ): Promise<ConflictResult> {
 	const { path } = candidate;
 	const rootFolderId = ctx.driveFolderId();
@@ -205,7 +209,7 @@ async function resolveMerge(
 	const dec = new TextDecoder();
 
 	const [localBytes, remoteFileSide] = await Promise.all([
-		ctx.localFs.read(path),
+		prereadLocalContent ? Promise.resolve(prereadLocalContent) : ctx.localFs.read(path),
 		ctx.driveFs.stat(rootFolderId, path),
 	]);
 

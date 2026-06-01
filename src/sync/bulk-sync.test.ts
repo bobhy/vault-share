@@ -78,6 +78,7 @@ interface BulkSyncHarness {
 		hasSyncHistory: ReturnType<typeof vi.fn>;
 		insertSynced: ReturnType<typeof vi.fn>;
 		getPendingCount: ReturnType<typeof vi.fn>;
+		rebaselineAsConflict: ReturnType<typeof vi.fn>;
 	};
 	setStatusBar: ReturnType<typeof vi.fn>;
 	onThresholdPause: ReturnType<typeof vi.fn>;
@@ -136,13 +137,14 @@ function makeBulkSync(
 		isPaused: vi.fn().mockResolvedValue(false),
 		getApproved: vi.fn().mockReturnValue(approvedCandidates),
 		getPending: vi.fn().mockReturnValue(pendingCandidates),
-		reconcile: vi.fn().mockResolvedValue(undefined),
+		reconcile: vi.fn().mockResolvedValue([]),
 		markSynced,
 		remove,
 		deferAllAndPause: vi.fn().mockResolvedValue(undefined),
 		hasSyncHistory: vi.fn().mockReturnValue(true),
 		insertSynced,
 		getPendingCount: vi.fn().mockReturnValue(pendingCandidates.length),
+		rebaselineAsConflict: vi.fn().mockResolvedValue(undefined),
 		// Mirror CandidateStore.applyFileResult so the existing markSynced /
 		// remove / insertSynced assertions still see the same calls.
 		applyFileResult: vi.fn(async (path: string, actionType: string, fileResult: { changed: boolean; syncedState?: unknown; newSyncedFiles?: Array<{ path: string } & Record<string, unknown>> }) => {
@@ -510,6 +512,115 @@ describe('BulkSync.run: threshold guard', () => {
 		expect(candidateStore.deferAllAndPause).not.toHaveBeenCalled();
 		expect(result.deferredByThreshold).toBe(false);
 		expect(mockSyncOneFile).toHaveBeenCalledTimes(10);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// doRun: Site 1 sha256 rebaseline verification
+// ---------------------------------------------------------------------------
+
+describe('BulkSync.run: Site 1 sha256 rebaseline verification', () => {
+	beforeEach(() => mockSyncOneFile.mockReset());
+
+	it('calls rebaselineAsConflict when sha256 mismatches a rebaselined path', async () => {
+		// reconcile() returns one rebaselined path. The local read returns content
+		// whose sha256 does NOT match the remote sha256Checksum → the rebaseline
+		// was a false positive. BulkSync should flip it to conflict.
+		const localContent = new TextEncoder().encode('local content').buffer;
+		const { bulk, candidateStore } = makeBulkSync(1, [], [], 1);
+
+		// Override reconcile to report a rebaselined path.
+		candidateStore.reconcile.mockResolvedValue(['file0.md']);
+
+		// Override get() so the candidate has a mismatching sha256Checksum.
+		// sha256 of 'local content' is a specific hex; we supply a different hex.
+		(candidateStore as unknown as { get: ReturnType<typeof vi.fn> }).get =
+			vi.fn().mockReturnValue({
+				path: 'file0.md',
+				remote: { sha256Checksum: 'deadbeef'.repeat(8), driveFileId: 'drive-0' },
+				local:  { path: 'file0.md', mtime: 1000, size: localContent.byteLength },
+			});
+
+		// localFs.read returns the local content.
+		const ctx = (bulk as unknown as { ctx: { localFs: { read: ReturnType<typeof vi.fn> } } }).ctx;
+		ctx.localFs.read = vi.fn().mockResolvedValue(localContent);
+
+		await bulk.run();
+
+		expect(candidateStore.rebaselineAsConflict).toHaveBeenCalledWith('file0.md');
+	});
+
+	it('does not call rebaselineAsConflict when sha256 matches', async () => {
+		// sha256 of 'hello' in hex (computed reference value).
+		const content = new TextEncoder().encode('hello').buffer;
+		const { bulk, candidateStore } = makeBulkSync(1, [], [], 1);
+
+		candidateStore.reconcile.mockResolvedValue(['file0.md']);
+		(candidateStore as unknown as { get: ReturnType<typeof vi.fn> }).get =
+			vi.fn().mockReturnValue({
+				path: 'file0.md',
+				// We use a sentinel that cannot match the real sha256 of 'hello'.
+				// Test passes when rebaselineAsConflict is NOT called.
+				// (Actual hash verified by content-hash.test.ts.)
+				remote: { sha256Checksum: '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824', driveFileId: 'd0' },
+				local: { path: 'file0.md', mtime: 1000, size: content.byteLength },
+			});
+
+		const ctx = (bulk as unknown as { ctx: { localFs: { read: ReturnType<typeof vi.fn> } } }).ctx;
+		ctx.localFs.read = vi.fn().mockResolvedValue(content);
+
+		await bulk.run();
+
+		expect(candidateStore.rebaselineAsConflict).not.toHaveBeenCalled();
+	});
+
+	it('skips verification when the rebaselined candidate has no sha256Checksum', async () => {
+		// No sha256Checksum on the remote side → keep size-equality result, no I/O.
+		const { bulk, candidateStore } = makeBulkSync(1, [], [], 1);
+		candidateStore.reconcile.mockResolvedValue(['file0.md']);
+		(candidateStore as unknown as { get: ReturnType<typeof vi.fn> }).get =
+			vi.fn().mockReturnValue({
+				path: 'file0.md',
+				remote: { driveFileId: 'd0' },  // no sha256Checksum
+				local: { path: 'file0.md', mtime: 1000, size: 5 },
+			});
+
+		const ctx = (bulk as unknown as { ctx: { localFs: { read: ReturnType<typeof vi.fn> } } }).ctx;
+		const readSpy = vi.fn();
+		ctx.localFs.read = readSpy;
+
+		await bulk.run();
+
+		expect(readSpy).not.toHaveBeenCalled();
+		expect(candidateStore.rebaselineAsConflict).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// doRun: identicalTimestamps tally
+// ---------------------------------------------------------------------------
+
+describe('BulkSync.run: identicalTimestamps tally', () => {
+	beforeEach(() => mockSyncOneFile.mockReset());
+
+	it('increments identicalTimestamps and not conflicts for an identicalContent result', async () => {
+		const pending = [makeCandidate('note.md', 'conflict')];
+		mockSyncOneFile.mockResolvedValue({
+			changed: true,
+			identicalContent: true,
+			merged: false,
+			hadConflictMarkers: false,
+			syncedState: {
+				driveFileId: 'drive-1', localMtime: 2000, remoteMtime: 2000,
+				localSize: 10, remoteSize: 10, syncedAt: Date.now(),
+			},
+		});
+
+		const { bulk } = makeBulkSync(1, pending, []);
+		const result = await bulk.run();
+
+		expect(result.identicalTimestamps).toBe(1);
+		expect(result.conflicts).toBe(0);
 	});
 });
 
