@@ -1,8 +1,22 @@
+/**
+ * Drive-side counterpart to `LocalFs`.
+ *
+ * Adapts `GDriveApi` into the abstraction the sync engine speaks —
+ * vault-relative paths instead of Drive file IDs, `(files, duplicatePathsFound)`
+ * pairs instead of paged listings, mtime/size/sha256 metadata bundled as
+ * {@link DriveFileSide}. Handles folder-hierarchy walking, intermediate folder
+ * creation on write, and deduplication when Drive holds multiple files at the
+ * same path. {@link DriveFsAdapter.repairDuplicates} cleans up duplicates
+ * surfaced by `listAll`.
+ *
+ * @packageDocumentation
+ */
 import type { GDriveApi, DriveFile } from '../gdrive/api';
 import type { FileSide } from './types';
 import type { StatsTracker } from './stats-tracker';
 import type { Logger } from '../logger';
 
+/** Drive-side file metadata; same shape as {@link FileSide} plus Drive-specific fields. */
 export interface DriveFileSide extends FileSide {
 	driveFileId: string;
 	/** SHA-256 hex digest from Drive API. Present for most files; absent for pre-2022 uploads or Google-native docs. */

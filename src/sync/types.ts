@@ -1,3 +1,14 @@
+/**
+ * Shared types for the sync pipeline.
+ *
+ * Houses the data shapes — {@link Candidate}, {@link SyncContext},
+ * {@link SyncFileResult}, {@link SyncPassResult} — that flow between the
+ * planning, execution, persistence, and UI layers. Keeping these in a leaf
+ * module prevents the cross-layer import cycles that would otherwise arise
+ * (e.g. `bulk-sync.ts` and `candidate-store.ts` both reference `Candidate`).
+ *
+ * @packageDocumentation
+ */
 import type { App } from 'obsidian';
 import type { VaultShareSettings } from '../settings';
 import type { Logger } from '../logger';
@@ -13,6 +24,7 @@ export interface FileSide {
 	size: number;
 }
 
+/** What the planning pass decided sharing should do with a particular path. */
 export type SyncActionType =
 	| 'push'          // local → remote
 	| 'pull'          // remote → local
@@ -38,7 +50,7 @@ export type CandidateState = 'Synced' | 'Default' | 'Deferred' | 'Approved';
  * Unified record for a single vault path that sharing tracks.
  *
  * Persistent fields are stored in the `candidates` IDB object store and survive
- * plugin restarts.  Ephemeral fields are populated by {@link CandidateStore.reconcile}
+ * plugin restarts.  Ephemeral fields are populated by `CandidateStore.reconcile`
  * and are `undefined` between planning passes.
  *
  * All four sharing layers — planning, UI, deferral, execution — work directly
@@ -55,7 +67,7 @@ export type CandidateState = 'Synced' | 'Default' | 'Deferred' | 'Approved';
  * the existing object in place. Held references therefore go *stale* after a
  * mutation (they still describe the candidate at the moment of fetch), but
  * they do not lie about their fields. Callers that need the current view must
- * re-fetch from the store; subscribe to {@link CandidateStore.onChange} for a
+ * re-fetch from the store; subscribe to `CandidateStore.onChange` for a
  * notification when re-fetching is worthwhile.
  *
  * Code that constructs a `Candidate` outside the store (e.g.
@@ -73,7 +85,7 @@ export interface Candidate {
 	/**
 	 * What sharing plans to do with this file.
 	 * `'noOp'` when `state === 'Synced'`.
-	 * Set / updated by {@link CandidateStore.reconcile} on every planning pass.
+	 * Set / updated by `CandidateStore.reconcile` on every planning pass.
 	 */
 	actionType: SyncActionType;
 
@@ -119,7 +131,7 @@ export interface SyncedFileState {
  * Result of a single file sync operation.
  *
  * When `changed` is true and the action was a push / pull / conflict resolution,
- * `syncedState` carries the post-sync metadata that {@link BulkSync} uses to call
+ * `syncedState` carries the post-sync metadata that `BulkSync` uses to call
  * `candidateStore.markSynced()`.  For delete actions and unchanged files,
  * `syncedState` is `undefined`.
  *
@@ -141,13 +153,13 @@ export interface SyncFileResult {
 	identicalContent?: boolean;
 	/**
 	 * Set when `changed = true` for non-delete actions.
-	 * Used by the caller to update {@link CandidateStore} without
-	 * {@link syncOneFile} needing a store reference.
+	 * Used by the caller to update `CandidateStore` without
+	 * `syncOneFile` needing a store reference.
 	 */
 	syncedState?: SyncedFileState;
 	/**
 	 * Newly created vault paths (conflict copies, placeholders) that should be
-	 * inserted into {@link CandidateStore} as `Synced` candidates so the next
+	 * inserted into `CandidateStore` as `Synced` candidates so the next
 	 * planning pass does not re-plan them as conflicts.
 	 */
 	newSyncedFiles?: Array<{ path: string } & SyncedFileState>;

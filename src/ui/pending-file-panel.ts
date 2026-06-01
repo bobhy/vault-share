@@ -1,17 +1,28 @@
+/**
+ * File-preview panel rendered inside each `PendingListModal` row.
+ *
+ * Lazily fetches the bytes the user needs to see (local-only for pushes,
+ * remote-only for pulls, both sides for conflicts) and renders the
+ * appropriate panel type (read-only, two-pane, or editable textarea for the
+ * merge case). Kept separate from the modal so the modal stays focused on
+ * row layout and action wiring.
+ *
+ * @packageDocumentation
+ */
 import type { Candidate, SyncContext } from '../sync/types';
 import { computeMerge } from '../sync/resolution-executor';
 import { isMergeEligible } from '../sync/merge';
 
 /**
  * Mutable reference to the editable textarea created for text-conflict candidates.
- * Held by {@link PendingListModal} so the **Merge** button can read the current value.
+ * Held by `PendingListModal` so the **Merge** button can read the current value.
  */
 export interface TextareaRef {
 	el: HTMLTextAreaElement | null;
 }
 
 /**
- * Async file-content panel renderer for {@link PendingListModal}.
+ * Async file-content panel renderer for `PendingListModal`.
  *
  * Shows a loading placeholder while content is being fetched, then replaces it
  * with the appropriate panel:

@@ -1,3 +1,14 @@
+/**
+ * In-memory accumulator for cumulative sync counters (pushes, pulls, merges,
+ * conflicts, …).
+ *
+ * Increment methods are synchronous so they can be called from any sync code
+ * path; {@link StatsTracker.flush} writes the accumulated counters to IDB.
+ * `BulkSync` calls flush at the end of every successful pass. Reset is wired
+ * to the plugin reset and "change Drive folder" flows.
+ *
+ * @packageDocumentation
+ */
 import type { SyncStats } from './types';
 import { EMPTY_STATS, SyncStore } from './store';
 
@@ -16,18 +27,26 @@ export class StatsTracker {
 		this.current = await this.store.getStats();
 	}
 
+	/** Snapshot of the current in-memory counters (a copy; safe to mutate). */
 	getCurrent(): SyncStats {
 		return { ...this.current };
 	}
 
+	/** Increment the lifetime push counter (a file went local → Drive). */
 	recordPush(): void { this.current.filesPushed++; }
+	/** Increment the lifetime pull counter (a file went Drive → local). */
 	recordPull(): void { this.current.filesPulled++; }
+	/** Increment the lifetime three-way merge counter. */
 	recordMerge(): void { this.current.filesMerged++; }
+	/** Increment the lifetime content-conflict counter (both sides edited). */
 	recordContentConflict(): void { this.current.contentConflicts++; }
+	/** Increment the lifetime modify/delete conflict counter. */
 	recordDeleteConflict(): void { this.current.deleteConflicts++; }
+	/** Increment the lifetime count of completed bulk-sync passes. */
 	recordBulkSyncPass(): void { this.current.bulkSyncPasses++; }
 	/** Increment the count of bulk passes that found at least one Drive duplicate. */
 	recordPassWithDuplicates(): void { this.current.bulkPassesWithDuplicates++; }
+	/** Increment the lifetime count of single-file (open-file) sync operations. */
 	recordSingleFileSync(): void { this.current.singleFileSyncCount++; }
 
 	/**
@@ -40,10 +59,12 @@ export class StatsTracker {
 		await this.store.putStats(this.current);
 	}
 
+	/** Record the most recent Drive API response time (ms); not aggregated. */
 	recordAPIResponseTime(ms: number): void {
 		this.current.APIResponseTime = ms;
 	}
 
+	/** Record the most recent observed local-vs-server clock skew (ms). */
 	recordClockSkew(ms: number): void {
 		this.current.serverClockSkew = ms;
 	}

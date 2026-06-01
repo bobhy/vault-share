@@ -46,7 +46,8 @@ Enhancement and feature design specs live in [specs/](specs/).
 
 - TypeScript strict mode
 - Clean modular structure - favor class-based design.
-- Document modules via [TypeDoc](https://typedoc.org/) -- update doc when documented interface changes
+- Document modules via [TypeDoc](https://typedoc.org/); update doc when documented interface changes; keep docstring links current
+- Document the module header and each public identifier.
 - `main.ts` handles lifecycle only; delegate logic to separate modules
 - Split files at ~200-300 lines
 - Register listeners via `this.register*` (prevent leaks)

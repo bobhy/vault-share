@@ -1,3 +1,14 @@
+/**
+ * Conflict-resolution strategies executed by `file-syncer.ts`.
+ *
+ * Routes each conflict candidate to the appropriate resolver based on the
+ * candidate's shape (delete-conflict vs content-conflict) and the user's
+ * configured strategy (Use Newer, Merge, Keep Both). Owns the conflict-copy
+ * filename convention and the modifier-wins semantics for modify/delete
+ * conflicts.
+ *
+ * @packageDocumentation
+ */
 import type { Candidate, SyncContext, SyncedFileState } from './types';
 import type { FileConflictStrategy, TextFileConflictStrategy } from '../settings';
 import { isMergeEligible, threeWayMerge } from './merge';
@@ -5,6 +16,7 @@ import { shortClientId } from './client-id';
 
 const PLACEHOLDER_TEXT = 'Placeholder for deleted file';
 
+/** Outcome reported by every conflict-resolver branch back to `syncOneFile`. */
 export interface ConflictResult {
 	localConflictPath?: string;
 	remoteConflictPath?: string;
@@ -12,7 +24,7 @@ export interface ConflictResult {
 	hadConflictMarkers: boolean;
 	/**
 	 * Newly created vault paths (conflict copies, placeholders) that should be
-	 * inserted into {@link CandidateStore} as `Synced` candidates.
+	 * inserted into `CandidateStore` as `Synced` candidates.
 	 */
 	newSyncedFiles?: Array<{ path: string } & SyncedFileState>;
 	/**
@@ -21,10 +33,10 @@ export interface ConflictResult {
 	 * the result as "in place" (read the original, build a syncedState for it)
 	 * even when `merged` is false.
 	 *
-	 * Set by {@link resolveDeleteConflict} under modifier-wins semantics:
+	 * Set by `resolveDeleteConflict` under modifier-wins semantics:
 	 * the surviving (modified) side is propagated to the side that had the
 	 * file deleted, and a placeholder is created at a side path to mark the
-	 * deletion intent. {@link resolveMerge} / {@link resolveUseNewer} already
+	 * deletion intent. `resolveMerge` / `resolveUseNewer` already
 	 * signal in-place via `merged: true` or by producing no `newSyncedFiles`,
 	 * so they leave this field unset.
 	 */
@@ -264,7 +276,7 @@ async function resolveMerge(
  * reconcile (the surviving side was treated as a brand-new no-history push
  * or pull, effectively reverting the user's delete without telling them).
  *
- * Returns `restoredOriginal: true` so {@link syncOneFile}'s conflict case
+ * Returns `restoredOriginal: true` so `syncOneFile`'s conflict case
  * builds a `syncedState` for the now-coherent original path, while still
  * inserting the placeholder via `newSyncedFiles`.
  */

@@ -1,3 +1,18 @@
+/**
+ * IndexedDB schema definition and direct accessors for vault-share's persisted
+ * state.
+ *
+ * Owns the database connection ({@link IDBHelper}) shared across all stores
+ * and the schema version number. Provides typed CRUD over the `sync-content`,
+ * `sync-stats`, and `device` object stores; `CandidateStore` owns the
+ * `candidates` and `sync-state` stores through the same IDB handle.
+ *
+ * Per project convention, schema bumps cold-start the database (drop and
+ * recreate all stores) — no incremental migration code until the project
+ * reaches 1.0.
+ *
+ * @packageDocumentation
+ */
 import { IDBHelper, idbRequest, sanitizeDbName } from './idb';
 import type { SyncStats } from './types';
 
@@ -19,6 +34,7 @@ const STORE_SYNC_STATE = 'sync-state';
 const STATS_KEY = 'stats';
 const CLIENT_ID_KEY = 'clientId';
 
+/** Zeroed {@link SyncStats} used as the initial state and the reset target. */
 export const EMPTY_STATS: SyncStats = {
 	APIResponseTime: 0,
 	serverClockSkew: 0,
@@ -44,7 +60,7 @@ function createStores(db: IDBDatabase): void {
 /**
  * Manages all IndexedDB object stores for vault-share.
  *
- * Schema is versioned via {@link DB_VERSION}.  The upgrade handler performs a
+ * Schema is versioned via `DB_VERSION`.  The upgrade handler performs a
  * cold-start on all pre-1.0 version bumps (drop everything, recreate).  Post-1.0
  * migrations should replace the cold-start with incremental `if (oldVersion < N)`
  * migration blocks.
@@ -78,16 +94,19 @@ export class SyncStore {
 		return this.idb;
 	}
 
+	/** Open (or upgrade) the database. Call once at plugin load. */
 	open(): Promise<void> {
 		return this.idb.open();
 	}
 
+	/** Close the database connection. Call on plugin unload. */
 	close(): void {
 		this.idb.close();
 	}
 
 	// --- sync-content ---
 
+	/** Read the cached merge-base content for `path`, or `undefined` if none. */
 	getContent(path: string): Promise<ArrayBuffer | undefined> {
 		return this.idb.runTransaction(STORE_CONTENT, 'readonly', (tx) => {
 			const req = tx.objectStore(STORE_CONTENT).get(path) as IDBRequest<{ path: string; content: ArrayBuffer } | undefined>;
@@ -95,6 +114,7 @@ export class SyncStore {
 		});
 	}
 
+	/** Cache the merge-base content for `path` for future three-way merges. */
 	putContent(path: string, content: ArrayBuffer): Promise<void> {
 		return this.idb.runTransaction(STORE_CONTENT, 'readwrite', (tx) => {
 			tx.objectStore(STORE_CONTENT).put({ path, content });
@@ -102,6 +122,7 @@ export class SyncStore {
 		});
 	}
 
+	/** Drop the cached merge-base content for `path`. */
 	deleteContent(path: string): Promise<void> {
 		return this.idb.runTransaction(STORE_CONTENT, 'readwrite', (tx) => {
 			tx.objectStore(STORE_CONTENT).delete(path);
@@ -111,6 +132,7 @@ export class SyncStore {
 
 	// --- sync-stats ---
 
+	/** Load persisted cumulative stats, or {@link EMPTY_STATS} on first run. */
 	getStats(): Promise<SyncStats> {
 		return this.idb.runTransaction(STORE_STATS, 'readonly', (tx) => {
 			const req = tx.objectStore(STORE_STATS).get(STATS_KEY) as IDBRequest<{ key: string } & SyncStats | undefined>;
@@ -123,6 +145,7 @@ export class SyncStore {
 		});
 	}
 
+	/** Persist the in-memory stats snapshot. */
 	putStats(stats: SyncStats): Promise<void> {
 		return this.idb.runTransaction(STORE_STATS, 'readwrite', (tx) => {
 			tx.objectStore(STORE_STATS).put({ key: STATS_KEY, ...stats });
@@ -132,6 +155,7 @@ export class SyncStore {
 
 	// --- device ---
 
+	/** Read the persisted per-vault client ID, or `undefined` if not yet generated. */
 	getClientId(): Promise<string | undefined> {
 		return this.idb.runTransaction(STORE_DEVICE, 'readonly', (tx) => {
 			const req = tx.objectStore(STORE_DEVICE).get(CLIENT_ID_KEY) as IDBRequest<{ key: string; value: string } | undefined>;
@@ -139,6 +163,7 @@ export class SyncStore {
 		});
 	}
 
+	/** Persist a freshly generated per-vault client ID. */
 	putClientId(id: string): Promise<void> {
 		return this.idb.runTransaction(STORE_DEVICE, 'readwrite', (tx) => {
 			tx.objectStore(STORE_DEVICE).put({ key: CLIENT_ID_KEY, value: id });

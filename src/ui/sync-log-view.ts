@@ -1,6 +1,16 @@
+/**
+ * Sidebar view that displays the {@link Logger}'s in-memory ring buffer.
+ *
+ * Renders newest-first and re-renders on each append via the callback
+ * registered with {@link Logger.setAppendCallback}. Opened automatically at
+ * startup when `VaultShareSettings.logToSidebar` is enabled.
+ *
+ * @packageDocumentation
+ */
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 import type { Logger, LogEntry } from '../logger';
 
+/** Workspace view-type identifier registered with Obsidian. */
 export const SYNC_LOG_VIEW_TYPE = 'vault-share-log';
 
 /**

@@ -1,7 +1,18 @@
+/**
+ * Plugin-wide logging facility.
+ *
+ * Provides a severity-filtered ring buffer that backs the optional sidebar log
+ * view, and mirrors every accepted entry to the JavaScript console. The
+ * sidebar view subscribes via {@link Logger.setAppendCallback} to re-render on
+ * each append.
+ *
+ * @packageDocumentation
+ */
 import type { LogSeverity } from './settings';
 
 export type { LogSeverity };
 
+/** One log record, kept both in memory and forwarded to the console. */
 export interface LogEntry {
 	timestamp: number;  // epoch ms
 	severity: LogSeverity;
@@ -35,18 +46,22 @@ export class Logger {
 		this.onAppend = cb;
 	}
 
+	/** Append a DEBUG-severity entry; filtered out when min severity is higher. */
 	debug(message: string, detail?: string): void {
 		this.log('DEBUG', message, detail);
 	}
 
+	/** Append an INFO-severity entry; filtered out when min severity is higher. */
 	info(message: string, detail?: string): void {
 		this.log('INFO', message, detail);
 	}
 
+	/** Append a WARNING-severity entry; filtered out when min severity is ERROR. */
 	warning(message: string, detail?: string): void {
 		this.log('WARNING', message, detail);
 	}
 
+	/** Append an ERROR-severity entry; always retained. */
 	error(message: string, detail?: string): void {
 		this.log('ERROR', message, detail);
 	}

@@ -8,6 +8,8 @@
  * Exported separately from auth.ts so test tooling (setup-wdio-token.ts,
  * wdio.conf.mts) can derive the correct key names without importing the
  * Obsidian-dependent auth module.
+ *
+ * @packageDocumentation
  */
 export function secretKeys(vaultName: string) {
 	const safe = vaultName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'default';

@@ -2,14 +2,24 @@
  * Minimal IndexedDB helper.
  * On schema version change the upgrade handler is expected to drop all stores
  * and recreate them (cold-start per project convention).
+ *
+ * @packageDocumentation
  */
 
+/** Inputs required to open an {@link IDBHelper}-managed database. */
 export interface IDBOpenConfig {
 	dbName: string;
 	version: number;
 	onUpgrade: (db: IDBDatabase, oldVersion: number) => void;
 }
 
+/**
+ * Promise-friendly wrapper over the raw `indexedDB.open` request-style API.
+ *
+ * Hands callers a {@link IDBHelper.runTransaction} primitive that takes a
+ * synchronous body plus a result extractor — keeping the IDB-request → Promise
+ * adaptation out of the rest of the codebase.
+ */
 export class IDBHelper {
 	private db: IDBDatabase | null = null;
 

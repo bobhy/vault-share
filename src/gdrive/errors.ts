@@ -1,3 +1,14 @@
+/**
+ * Typed error vocabulary for Drive API failures.
+ *
+ * All HTTP failures from `GDriveApi` surface as {@link GDriveError} with
+ * a {@link GDriveErrorCode} discriminant, so callers branch on the meaning of
+ * the failure rather than the raw HTTP status.
+ *
+ * @packageDocumentation
+ */
+
+/** Discriminant for {@link GDriveError}; surfaces the failure category. */
 export type GDriveErrorCode =
 	| 'not-found'
 	| 'auth-expired'

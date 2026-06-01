@@ -1,3 +1,16 @@
+/**
+ * Editor-side support for vault-share conflict markers.
+ *
+ * Exposes a CM6 extension ({@link conflictHighlightExtension}) and the
+ * {@link ConflictMarkerNavigator} class that backs the **Find next/previous
+ * conflict** commands. The navigator parses {@link MARKER_LOCAL} …
+ * {@link MARKER_GROUP} blocks, outlines the active block with a CM6 line
+ * decoration, and floats a CM6-managed panel above the editor with one-click
+ * resolution buttons (Keep local / Keep group / Revert to base / Keep all)
+ * plus next/previous navigation.
+ *
+ * @packageDocumentation
+ */
 import { Editor, MarkdownView, Notice, setIcon } from 'obsidian';
 import { type Extension, type Range, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, type Panel, showPanel } from '@codemirror/view';
@@ -7,7 +20,7 @@ import { MARKER_LOCAL, MARKER_BASE, MARKER_SEP, MARKER_GROUP } from '../sync/mer
  * A parsed conflict block found in the editor.
  * Corresponds to one {@link MARKER_LOCAL} … {@link MARKER_GROUP} region.
  */
-interface ConflictBlock {
+export interface ConflictBlock {
 	/** Line index of the {@link MARKER_LOCAL} marker. */
 	startLine: number;
 	/** Line index of the {@link MARKER_BASE} marker. */
@@ -76,7 +89,7 @@ const conflictPanelField = StateField.define<((view: EditorView) => Panel) | nul
  * highlight and the CM6-managed resolution panel used by {@link ConflictMarkerNavigator}.
  *
  * Register once via `Plugin.registerEditorExtension(conflictHighlightExtension)`
- * in {@link VaultSharePlugin.onload}.
+ * in `VaultSharePlugin.onload`.
  */
 export const conflictHighlightExtension: Extension = [conflictHighlightField, conflictPanelField];
 

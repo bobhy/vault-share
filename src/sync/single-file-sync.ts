@@ -1,3 +1,14 @@
+/**
+ * Reactive sync for the file the user is currently editing or viewing.
+ *
+ * `SyncScheduler` dispatches `singleFileSync` from its heartbeat after
+ * either the post-edit hold-down expires or a monitored-file poll deadline
+ * fires. The path-specific code that bulk sync does not need lives here:
+ * refreshing the open editor view after a pull, reopening the leaf on a
+ * conflict copy, and the "Syncing…" overlay shown while I/O is in flight.
+ *
+ * @packageDocumentation
+ */
 import type { Workspace } from 'obsidian';
 import { MarkdownView } from 'obsidian';
 import type { Candidate, SyncContext } from './types';

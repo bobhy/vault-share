@@ -1,3 +1,15 @@
+/**
+ * Thin TypeScript wrapper over the Google Drive v3 REST API.
+ *
+ * Limited to the operations this plugin actually performs (list, read, write,
+ * delete, find, resolve folder). Every request goes through {@link GDriveAuth}
+ * for token acquisition and converts non-2xx responses into typed
+ * {@link GDriveError} instances so callers can branch on `code` rather than
+ * HTTP status. The wrapper handles the multipart upload protocol so callers
+ * can pass plain strings or Uint8Arrays as content.
+ * 
+ * @packageDocumentation
+ */
 import { requestUrl } from 'obsidian';
 import { GDriveAuth } from './auth';
 import { GDriveError, codeFromStatus } from './errors';
@@ -6,6 +18,7 @@ const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 
+/** Subset of the Google Drive v3 file resource the plugin reads. */
 export interface DriveFile {
 	id: string;
 	name: string;
@@ -23,6 +36,7 @@ export interface DriveFile {
 	sha256Checksum?: string;
 }
 
+/** Page of Drive metadata as returned by the v3 files.list endpoint. */
 interface DriveFileList {
 	files: DriveFile[];
 	nextPageToken?: string;

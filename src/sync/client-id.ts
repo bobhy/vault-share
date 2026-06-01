@@ -1,3 +1,12 @@
+/**
+ * Per-vault client identity.
+ *
+ * Each Obsidian installation owns a stable UUID v4 persisted in IDB so that
+ * conflict-copy filenames, deferral records, and sync metadata can attribute
+ * actions to a specific device — even when two vaults run on the same machine.
+ *
+ * @packageDocumentation
+ */
 import type { SyncStore } from './store';
 
 /**
@@ -13,6 +22,11 @@ export function shortClientId(id: string): string {
 }
 
 
+/**
+ * Look up the persisted client ID; if none, generate a UUID v4, persist it,
+ * and return it. Call once at plugin load and pass the result through the
+ * `SyncContext`.
+ */
 export async function resolveClientId(store: SyncStore): Promise<string> {
 	const stored = await store.getClientId();
 	if (stored) return stored;

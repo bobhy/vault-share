@@ -5,6 +5,8 @@
  * re-included with a ! rule even when its parent directory is excluded.
  * This requires descending into excluded directories when a re-inclusion
  * rule could match something inside them.
+ *
+ * @packageDocumentation
  */
 export class ExcludeMatcher {
 	private readonly rules: Array<{ pattern: string; include: boolean }>;

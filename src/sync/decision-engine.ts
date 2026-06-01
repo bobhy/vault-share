@@ -1,3 +1,14 @@
+/**
+ * Pure decision logic for picking a {@link SyncActionType} from current local /
+ * remote file state and a candidate's last-sync record.
+ *
+ * Stateless and side-effect-free so `CandidateStore.reconcile` can call
+ * it once per path. Two code paths: a no-history path that decides on presence
+ * (with a size-equality rebaseline upgrade for both-present), and a
+ * with-history path that compares each side against the persisted record.
+ *
+ * @packageDocumentation
+ */
 import type { Candidate, FileSide, SyncActionType } from './types';
 
 /**
@@ -34,7 +45,7 @@ export function classifyStatus(
  * Determine the sharing action for a single candidate given the current
  * local and remote file state and the candidate's last-sync history.
  *
- * This is the pure decision function used by {@link CandidateStore.reconcile}.
+ * This is the pure decision function used by `CandidateStore.reconcile`.
  * It is exported primarily for unit testing; production callers should invoke
  * it only through `CandidateStore`.
  *

@@ -1,3 +1,17 @@
+/**
+ * Plugin entry point. Wires together all sync subsystems on `onload` and tears
+ * them down on `onunload`. Holds no business logic of its own — every
+ * non-trivial decision is delegated to a dedicated module under `src/sync/`,
+ * `src/gdrive/`, or `src/ui/`.
+ *
+ * Construction order in {@link VaultSharePlugin.onload} is load-bearing:
+ * settings → auth/API → logger → IDB store → client id → stats → fs adapters →
+ * status bar items → drive folder → SyncContext → CandidateStore → BulkSync →
+ * Scheduler → views → OAuth handler → settings tab → commands → context menus.
+ * Earlier steps construct what later steps depend on; reorder with care.
+ *
+ * @packageDocumentation
+ */
 import { MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf } from 'obsidian';
 import { DEFAULT_SETTINGS, VaultShareSettings } from './settings';
 import { GDriveAuth } from './gdrive/auth';

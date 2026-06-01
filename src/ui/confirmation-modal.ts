@@ -1,3 +1,13 @@
+/**
+ * Reusable yes/no modal.
+ *
+ * Used wherever the plugin needs explicit user confirmation before a
+ * destructive or visible action (Drive folder change, plugin reset, sync
+ * conflict notice). Always invoked via the static {@link ConfirmationModal.prompt}
+ * which returns a Promise resolving to the user's choice.
+ *
+ * @packageDocumentation
+ */
 import { App, Modal, sanitizeHTMLToDom } from 'obsidian';
 
 /**

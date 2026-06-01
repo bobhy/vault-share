@@ -1,3 +1,15 @@
+/**
+ * Bulk synchronization orchestrator.
+ *
+ * One {@link BulkSync.run} call enumerates both vaults, asks
+ * {@link CandidateStore} to reconcile the plan, applies the threshold guard,
+ * and executes each pending action via {@link syncOneFile}. Concurrent
+ * `run()` callers coalesce onto a single in-flight pass so the scheduler and
+ * UI triggers can never race each other into a double pass. Approved
+ * candidates bypass planning entirely via {@link BulkSync.executeApproved}.
+ *
+ * @packageDocumentation
+ */
 import type { Candidate, SyncActionType, SyncContext, SyncFileResult, SyncPassResult } from './types';
 import type { ExcludeMatcher } from './exclude';
 import type { CandidateStore } from './candidate-store';
@@ -43,7 +55,7 @@ function tallyFileResult(
  * `BulkSync` reads from it, executes actions, and writes back results.
  *
  * ### Approved candidates
- * When the user clicks Apply in {@link PendingListModal}, selected candidates are
+ * When the user clicks Apply in `PendingListModal`, selected candidates are
  * persisted to IDB as `Approved` via {@link CandidateStore.approve}.  On the
  * next {@link run} call, {@link doRun} checks for `Approved` candidates first
  * and routes to {@link executeApproved} instead of the normal planning path.
@@ -322,7 +334,7 @@ export class BulkSync {
 	 * of the queue.
 	 *
 	 * Two error policies:
-	 *   - `Local file not found: <path>` (from {@link LocalFs.getFileOrThrow}):
+	 *   - `Local file not found: <path>` (from `LocalFs#getFileOrThrow`):
 	 *     the user deleted the file between planning and execution. Cancel
 	 *     the candidate via {@link CandidateStore.remove} so we don't crash
 	 *     on the same file every pass. This is the bug-class that motivated

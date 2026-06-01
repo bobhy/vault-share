@@ -1,3 +1,16 @@
+/**
+ * OAuth 2.0 client for the vault-share Google Drive integration.
+ *
+ * The plugin never sees the user's Google password — authorization happens in
+ * the system browser via Google's standard consent flow, and the resulting
+ * refresh token is returned to Obsidian through the `obsidian://vault-share-auth`
+ * protocol handler (relayed by the project's Cloudflare Worker, see
+ * {@link RELAY_BASE_URL}). Tokens are persisted to {@link App.secretStorage}
+ * (OS keychain on desktop) so a fresh access token can be minted on each
+ * request without re-prompting the user.
+ *
+ * @packageDocumentation
+ */
 import { App, requestUrl } from 'obsidian';
 import { GDriveError } from './errors';
 import { GOOGLE_CLIENT_ID, RELAY_BASE_URL } from './constants';
@@ -45,6 +58,7 @@ export class GDriveAuth {
 
 	constructor(private readonly app: App) {}
 
+	/** True iff a refresh token is loaded; access tokens are minted on demand. */
 	get isAuthenticated(): boolean {
 		return this.refreshToken.length > 0;
 	}

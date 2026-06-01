@@ -1,7 +1,21 @@
+/**
+ * Plugin settings schema and defaults.
+ *
+ * Persistence: settings are loaded by `main.ts` via `loadData()` and merged
+ * over {@link DEFAULT_SETTINGS} so missing fields fall back gracefully across
+ * versions (per project convention — no migration code for added fields).
+ *
+ * @packageDocumentation
+ */
+
+/** Conflict-resolution strategy for non-text (binary / unknown) file types. */
 export type FileConflictStrategy = 'Use Newer' | 'Keep Both';
+/** Conflict-resolution strategy for text files (.md, .txt) — `Merge` runs diff3. */
 export type TextFileConflictStrategy = 'Use Newer' | 'Keep Both' | 'Merge';
+/** Minimum severity for accepted log entries; less-severe entries are dropped. */
 export type LogSeverity = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
 
+/** Persisted per-vault configuration; loaded by `main.ts` on plugin start. */
 export interface VaultShareSettings {
 	/** Slash-separated path to the shared Google Drive folder. Must begin with a separator. */
 	driveFolderPath: string;
@@ -58,6 +72,7 @@ export interface VaultShareSettings {
 	logHorizon: number;
 }
 
+/** Default values applied for any field absent from stored data. */
 export const DEFAULT_SETTINGS: VaultShareSettings = {
 	driveFolderPath: '',  // overridden at runtime with /vault-share/<vault-name>; never used as-is
 	// Defaults:

@@ -1,3 +1,14 @@
+/**
+ * Settings tab rendered under Settings → Community plugins → Vault share →
+ * Options.
+ *
+ * Holds no business logic of its own — every setting's `.onChange` writes
+ * through the plugin's `saveData` and, where the change affects running
+ * subsystems (drive folder path, exclude rules, log severity), invokes the
+ * appropriate handler on `VaultSharePlugin`.
+ *
+ * @packageDocumentation
+ */
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import type VaultSharePlugin from '../main';
 import { ConfirmationModal } from './confirmation-modal';

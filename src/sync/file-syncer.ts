@@ -1,3 +1,15 @@
+/**
+ * Per-candidate sync executor.
+ *
+ * Given a {@link Candidate} whose `actionType` has already been chosen by
+ * `planAction`, performs the corresponding I/O — push, pull, delete, or
+ * conflict resolution — and returns a {@link SyncFileResult} the caller hands
+ * back to `CandidateStore.applyFileResult`. Owns the SHA-256 fast-path
+ * that short-circuits identical-content conflicts before they reach
+ * `resolveConflict`.
+ *
+ * @packageDocumentation
+ */
 import type { Candidate, SyncContext, SyncFileResult } from './types';
 import { resolveConflict } from './conflict-resolver';
 import { sha256Hex } from './content-hash';

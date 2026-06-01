@@ -1,3 +1,13 @@
+/**
+ * Local file system adapter on top of Obsidian's `Vault` API.
+ *
+ * Provides the file operations the sync pipeline needs (list with excludes,
+ * stat, read, write, delete, rename) using only the Obsidian API — no Node.js
+ * or Electron APIs — so the plugin remains mobile-compatible. All paths are
+ * vault-relative with forward slashes and no leading slash.
+ *
+ * @packageDocumentation
+ */
 import type { App } from 'obsidian';
 import { TFile, TFolder } from 'obsidian';
 import type { FileSide } from './types';

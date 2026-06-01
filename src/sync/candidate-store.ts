@@ -1,3 +1,14 @@
+/**
+ * Persistent and in-memory state for every path the plugin tracks.
+ *
+ * {@link CandidateStore} owns the `candidates` and `sync-state` IDB object
+ * stores and the `Map<string, Candidate>` cache that all read paths consult.
+ * Reads are O(1) in memory; only mutations touch IDB. Planning, execution,
+ * deferral, and UI all read from this store rather than maintaining their own
+ * ephemeral state.
+ *
+ * @packageDocumentation
+ */
 import type { IDBHelper } from './idb';
 import type { Candidate, FileSide, SyncActionType, SyncFileResult, SyncedFileState } from './types';
 import type { DriveFileSide } from './drive-fs';
@@ -23,7 +34,7 @@ function toPersistent(c: Candidate): PersistedCandidate {
  * Single source of truth for all per-file sharing state.
  *
  * Owns the `candidates` and `sync-state` IDB object stores (accessed via the
- * shared {@link IDBHelper} provided by {@link SyncStore}).  Maintains a
+ * shared {@link IDBHelper} provided by `SyncStore`).  Maintains a
  * `Map<string, Candidate>` in-memory cache so all read operations are O(1)
  * with no IDB I/O.  Only write operations touch IDB.
  *
@@ -32,7 +43,7 @@ function toPersistent(c: Candidate): PersistedCandidate {
  *
  * ### Lifecycle
  * Call {@link init} once at startup (before the first scheduler tick) to warm
- * the cache from IDB.  The {@link onChanged} callback fires whenever any
+ * the cache from IDB.  The {@link onChange} callback fires whenever any
  * persistent state changes; wire it in `main.ts` to update the status bar and
  * refresh Sharing Status views.
  */
@@ -107,12 +118,12 @@ export class CandidateStore {
 	 * - Recomputes `actionType` using {@link planAction}.
 	 * - Applies state transitions per the spec state machine.
 	 *
-	 * Persists changed records to IDB.  Fires {@link onChanged} if any persistent
+	 * Persists changed records to IDB.  Fires {@link onChange} if any persistent
 	 * state changed.
 	 *
 	 * Returns the paths that were newly rebaselined as `Synced` via the
 	 * no-history size-equality heuristic.  Callers that have access to local file
-	 * I/O (e.g. {@link BulkSync}) should verify these with a SHA-256 comparison
+	 * I/O (e.g. `BulkSync`) should verify these with a SHA-256 comparison
 	 * and call {@link rebaselineAsConflict} for any that do not match, so the
 	 * size-only false-positive window is eliminated when Drive provides a hash.
 	 */
@@ -312,12 +323,12 @@ export class CandidateStore {
 		return Array.from(this.cache.values());
 	}
 
-	/** Candidates filtered by `actionType`; for {@link PendingListModal} rows. */
+	/** Candidates filtered by `actionType`; for `PendingListModal` rows. */
 	getByType(type: SyncActionType): Candidate[] {
 		return Array.from(this.cache.values()).filter(c => c.actionType === type);
 	}
 
-	/** `state === 'Approved'`; processed by {@link BulkSync.doRun} before any full planning pass. */
+	/** `state === 'Approved'`; processed by `BulkSync.run` before any full planning pass. */
 	getApproved(): Candidate[] {
 		return Array.from(this.cache.values()).filter(c => c.state === 'Approved');
 	}
@@ -360,7 +371,7 @@ export class CandidateStore {
 
 	/**
 	 * Transition `Deferred` or `Default` → `Approved` for the given paths.
-	 * Resets deferral sentinel fields to 0.  Fires {@link onChanged}.
+	 * Resets deferral sentinel fields to 0.  Fires {@link onChange}.
 	 */
 	async approve(paths: string[]): Promise<void> {
 		if (paths.length === 0) return;
@@ -390,7 +401,7 @@ export class CandidateStore {
 	/**
 	 * Transition `Default` or `Approved` → `Deferred` for the given paths.
 	 * Captures current ephemeral `local` / `remote` mtimes as deferral sentinels.
-	 * Fires {@link onChanged}.
+	 * Fires {@link onChange}.
 	 */
 	async defer(paths: string[], now = Date.now()): Promise<void> {
 		if (paths.length === 0) return;
@@ -421,8 +432,8 @@ export class CandidateStore {
 
 	/**
 	 * Transition all `Default` candidates → `Deferred`, and set the paused flag.
-	 * Called by {@link BulkSync} when the action count exceeds the threshold.
-	 * Fires {@link onChanged} once after all writes complete.
+	 * Called by `BulkSync` when the action count exceeds the threshold.
+	 * Fires {@link onChange} once after all writes complete.
 	 */
 	async deferAllAndPause(pending: Candidate[]): Promise<void> {
 		const now = Date.now();
@@ -458,7 +469,7 @@ export class CandidateStore {
 	/**
 	 * Transition `Approved` → `Synced` after a successful push / pull / conflict sync.
 	 * Updates all `synced*` fields from `state`.
-	 * Persists to IDB.  Fires {@link onChanged}.
+	 * Persists to IDB.  Fires {@link onChange}.
 	 */
 	async markSynced(path: string, state: NonNullable<SyncFileResult['syncedState']>): Promise<void> {
 		const existing = this.cache.get(path);
@@ -488,7 +499,7 @@ export class CandidateStore {
 	/**
 	 * Remove a candidate entirely.
 	 * Used after a successful delete action, or when a file disappears from both vaults.
-	 * Fires {@link onChanged}.
+	 * Fires {@link onChange}.
 	 */
 	async remove(path: string): Promise<void> {
 		if (!this.cache.has(path)) return;
@@ -506,8 +517,8 @@ export class CandidateStore {
 	 * heuristic produced a false positive (same byte count but different content).
 	 *
 	 * Resets all `synced*` fields to `0` because no actual sync has occurred.
-	 * Called by {@link BulkSync.doRun} after the post-reconcile hash verification
-	 * pass.  Fires {@link onChanged}.
+	 * Called by `BulkSync.run` after the post-reconcile hash verification
+	 * pass.  Fires {@link onChange}.
 	 */
 	async rebaselineAsConflict(path: string): Promise<void> {
 		const existing = this.cache.get(path);
@@ -535,7 +546,7 @@ export class CandidateStore {
 	 *
 	 * Used after a "Keep Both" or delete-conflict resolution creates new conflict-copy
 	 * files so the next planning pass does not re-plan them as conflicts.
-	 * Fires {@link onChanged}.
+	 * Fires {@link onChange}.
 	 */
 	async insertSynced(path: string, state: SyncedFileState): Promise<void> {
 		const candidate: Candidate = {
@@ -561,7 +572,7 @@ export class CandidateStore {
 	}
 
 	/**
-	 * Apply a {@link SyncFileResult} from {@link syncOneFile} to the store.
+	 * Apply a {@link SyncFileResult} from `syncOneFile` to the store.
 	 *
 	 * The single point that translates a file-syncer outcome into the
 	 * corresponding store mutations. Used by both the bulk-sync execute loops
@@ -585,7 +596,7 @@ export class CandidateStore {
 	 * `changed: true` today, but the early return keeps the contract clear).
 	 *
 	 * Callers are responsible for tallying their own counters
-	 * (e.g. {@link BulkSync} updates {@link SyncPassResult}).
+	 * (e.g. `BulkSync` updates `SyncPassResult`).
 	 */
 	async applyFileResult(
 		path: string,
@@ -623,7 +634,7 @@ export class CandidateStore {
 	/**
 	 * Clear all candidates from cache and IDB.
 	 * Used during plugin reset or group-vault switch.
-	 * Fires {@link onChanged}.
+	 * Fires {@link onChange}.
 	 */
 	async clear(): Promise<void> {
 		this.cache.clear();
@@ -655,7 +666,7 @@ export class CandidateStore {
 		return this.cachedPaused ?? false;
 	}
 
-	/** Pause or resume sharing on this device.  Updates the cache and fires {@link onChanged}. */
+	/** Pause or resume sharing on this device.  Updates the cache and fires {@link onChange}. */
 	async setPaused(paused: boolean): Promise<void> {
 		this.cachedPaused = paused;
 		await this.idb.runTransaction(STORE_SYNC_STATE, 'readwrite', (tx) => {

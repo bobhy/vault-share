@@ -1,3 +1,15 @@
+/**
+ * One-shot action handlers wired to the per-row buttons in the Sharing Status
+ * panel and the Pending List modal.
+ *
+ * Each `execute*` function performs exactly the action its button promises
+ * (Proceed, Back out, Merge, Keep local/group vault, Delete both) and updates
+ * the {@link CandidateStore} so the next planning pass observes the new
+ * state. None of these functions touch the threshold guard or coalesce with
+ * the scheduler — they are user-initiated overrides.
+ *
+ * @packageDocumentation
+ */
 import type { Candidate, SyncContext } from './types';
 import type { CandidateStore } from './candidate-store';
 import { syncOneFile } from './file-syncer';

@@ -1,10 +1,22 @@
+/**
+ * Heartbeat-driven scheduler that owns all sync timing.
+ *
+ * One 1-second `setInterval` drives both the periodic bulk-sync pass and the
+ * per-file single-file syncs (hold-down after edit, poll for monitored
+ * files). The bulk-sync deadline and per-file deadlines are evaluated on each
+ * tick; whichever is due fires immediately. See {@link SyncScheduler} for the
+ * deadline-precedence rules.
+ *
+ * @packageDocumentation
+ */
 import type { EventRef, Workspace, WorkspaceLeaf } from 'obsidian';
 import type { SyncContext } from './types';
 import type { BulkSync } from './bulk-sync';
 import type { CandidateStore } from './candidate-store';
 import { singleFileSync } from './single-file-sync';
 
-interface PerFileState {
+/** Two-deadline state tracked per open or recently-open file. */
+export interface PerFileState {
 	/** Epoch ms when a holdDown-triggered sync is due; Infinity = none pending. */
 	nextHoldDownAt: number;
 	/**
@@ -16,6 +28,7 @@ interface PerFileState {
 	monitored: boolean;
 }
 
+/** Dependencies passed to {@link SyncScheduler} at construction. */
 export interface SyncSchedulerDeps {
 	ctx: SyncContext;
 	bulkSync: BulkSync;
@@ -56,26 +69,10 @@ export interface SyncSchedulerDeps {
  *
  * Handles background/foreground catchup: past-due deadlines fire on the next tick
  * after the app is foregrounded.
- */
-/**
- * Drives all sync scheduling from a single 1-second heartbeat.
- *
- * Each file's sync deadline is tracked as two independent timestamps:
- * - nextHoldDownAt: set on edit, fires `openFileChangeHoldDown` seconds later
- * - nextPollAt: active only for monitored files, fires every `openFilePoll` seconds
- *
- * The tick fires whichever is due first (min of the two), then resets the holdDown
- * to Infinity (poll took precedence or holdDown ran) and advances the poll deadline
- * only for monitored files. This naturally implements the spec rule that
- * "openFilePoll has precedence over openFileChangeHoldDown and will cancel a
- * pending holdDown event."
- *
- * Handles background/foreground catchup: past-due deadlines fire on the next tick
- * after the app is foregrounded.
  *
  * Sharing-paused state is not tracked here — it is the sole responsibility of
- * {@link DeferralManager}. The {@link SyncSchedulerDeps.isSharingPaused} callback
- * reads the cached value from {@link DeferralManager.isPausedSync} on every tick.
+ * {@link CandidateStore}. The {@link SyncSchedulerDeps.isSharingPaused} callback
+ * reads the cached value from {@link CandidateStore.isPausedSync} on every tick.
  */
 export class SyncScheduler {
 	private bulkNextRunAt = 0; // 0 = run immediately
@@ -85,6 +82,10 @@ export class SyncScheduler {
 
 	constructor(private readonly deps: SyncSchedulerDeps) {}
 
+	/**
+	 * Begin the 1-second heartbeat and register Obsidian event listeners.
+	 * Call once during plugin load after {@link CandidateStore.init} resolves.
+	 */
 	start(): void {
 		const { workspace, registerEvent, registerInterval, ctx } = this.deps;
 
@@ -142,6 +143,7 @@ export class SyncScheduler {
 		}
 	}
 
+	/** Drop per-file timer state. Called from `onunload`. */
 	destroy(): void {
 		this.fileStates.clear();
 	}

@@ -1,5 +1,16 @@
+/**
+ * Three-way text merge with vault-share-specific conflict markers.
+ *
+ * Wraps node-diff3 so the rest of the codebase deals in `(base, local, remote)
+ * → MergeResult` instead of raw diff3 region arrays. Defines the marker
+ * vocabulary used by both the merger and the conflict navigation UI so any
+ * marker-format change happens in one place.
+ *
+ * @packageDocumentation
+ */
 import { diff3Merge } from 'node-diff3';
 
+/** Outcome of a three-way merge: the merged text plus a "had conflicts" flag. */
 export interface MergeResult {
 	content: string;
 	hasConflicts: boolean;

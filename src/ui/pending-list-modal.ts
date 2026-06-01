@@ -1,3 +1,15 @@
+/**
+ * Modal that lets the user review and act on every pending candidate of one
+ * {@link SyncActionType}.
+ *
+ * Reached from the Sharing Status panel by tapping a row in the count table.
+ * Renders one row per candidate with a preview panel ({@link loadFilePanels})
+ * and per-row action buttons routed to `resolution-executor`'s
+ * `execute*` functions. Approving a row marks the candidate as `Approved` in
+ * the store so the next bulk pass bypasses the threshold guard.
+ *
+ * @packageDocumentation
+ */
 import { App, Modal, Notice } from 'obsidian';
 import type { CandidateStore } from '../sync/candidate-store';
 import type { Candidate, SyncActionType, SyncContext } from '../sync/types';

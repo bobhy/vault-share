@@ -1,3 +1,14 @@
+/**
+ * Sidebar view that lets the user inspect and control the sharing process.
+ *
+ * Two display modes: while sharing is running the view shows only a status
+ * banner and a "Pause sharing" button; while paused, it shows a per-action-
+ * type count table whose rows open the `PendingListModal`. All
+ * candidate state is read directly from {@link CandidateStore} via subscribe-
+ * and-re-render — there is no separate snapshot in this view.
+ *
+ * @packageDocumentation
+ */
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 import type { Candidate, SyncActionType, SyncContext } from '../sync/types';
 import type { CandidateStore } from '../sync/candidate-store';
@@ -5,6 +16,7 @@ import type { BulkSync } from '../sync/bulk-sync';
 import { ConfirmationModal } from './confirmation-modal';
 import { PendingListModal } from './pending-list-modal';
 
+/** Workspace view-type identifier registered with Obsidian. */
 export const SHARING_STATUS_VIEW_TYPE = 'vault-share-sharing-status';
 
 interface StatusRow {
@@ -34,7 +46,7 @@ const STATUS_ROWS: StatusRow[] = [
  *
  * **While paused** the view shows the candidate count, a "Resume sharing"
  * button, a "Refresh" button, and a per-operation-type count table.  Tapping
- * a table row opens the {@link PendingListModal} for that type.
+ * a table row opens the `PendingListModal` for that type.
  *
  * The "Refresh" button triggers {@link BulkSync.planOnly} which calls
  * `CandidateStore.reconcile()` internally, then re-renders the view.
