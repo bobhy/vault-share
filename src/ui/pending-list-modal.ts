@@ -81,10 +81,12 @@ function candidateDescription(candidate: Candidate): string {
  * Modal that lists all candidates for a single operation type.
  *
  * Reads candidates directly from {@link CandidateStore} via `getByType()`.
- * Pending candidates (state `Default`) have their checkbox initially checked;
- * deferred candidates (state `Deferred`) are initially unchecked.
+ * A checkbox is checked when the file will be shared on resume — i.e. for
+ * `Default` (surfaced, pre-accepted) and `Approved` (already released)
+ * candidates; only `Deferred` (held back) candidates start unchecked.
  * The user reviews the list and taps **Apply** to approve or defer candidates —
  * changes are persisted via `candidateStore.approve()` / `candidateStore.defer()`.
+ * Un-checking an `Approved` file retracts it (Approved → Deferred).
  *
  * Resolution buttons in the expanded accordion execute operations immediately:
  * - Non-conflict: **Proceed** runs the planned action; **Back out** runs the reverse.
@@ -115,8 +117,10 @@ export class PendingListModal extends Modal {
 		// Read fresh candidates from the store on open.
 		this.candidates = candidateStore.getByType(actionType);
 		for (const c of this.candidates) {
-			// Pending (Default) candidates are pre-accepted; Deferred ones require explicit opt-in.
-			this.accepted.set(c.path, c.state === 'Default');
+			// Checked ⇔ "will be shared on resume": Default (pre-accepted) and
+			// Approved (already released) are checked; only Deferred (held back)
+			// starts unchecked and requires explicit opt-in.
+			this.accepted.set(c.path, c.state !== 'Deferred');
 		}
 	}
 
@@ -191,7 +195,7 @@ export class PendingListModal extends Modal {
 		// same default the constructor would have set.
 		for (const c of this.candidates) {
 			if (!this.accepted.has(c.path)) {
-				this.accepted.set(c.path, c.state === 'Default');
+				this.accepted.set(c.path, c.state !== 'Deferred');
 			}
 		}
 		// Collapse the expanded accordion if its candidate disappeared.
@@ -235,7 +239,7 @@ export class PendingListModal extends Modal {
 
 		const cb = row.createEl('input');
 		cb.type = 'checkbox';
-		cb.checked = this.accepted.get(candidate.path) ?? (candidate.state === 'Default');
+		cb.checked = this.accepted.get(candidate.path) ?? (candidate.state !== 'Deferred');
 		cb.addClass('vault-share-pending-checkbox');
 		cb.addEventListener('change', () => { this.accepted.set(candidate.path, cb.checked); });
 
@@ -366,9 +370,12 @@ export class PendingListModal extends Modal {
 			.filter(c => c.state === 'Deferred' && acceptedSet.has(c.path))
 			.map(c => c.path);
 
-		// Default candidates that the user unchecked → defer them.
+		// Default or Approved candidates that the user unchecked → defer them.
+		// Including Approved here is what lets the user retract a previously
+		// released file: un-checking it demotes Approved → Deferred so it will
+		// not be shared on resume.
 		const toDefer = this.candidates
-			.filter(c => c.state === 'Default' && rejectedSet.has(c.path))
+			.filter(c => (c.state === 'Default' || c.state === 'Approved') && rejectedSet.has(c.path))
 			.map(c => c.path);
 
 		// Default candidates that the user kept checked → approve them too (bypass threshold).

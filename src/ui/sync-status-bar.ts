@@ -4,6 +4,14 @@
  * Separated from `VaultSharePlugin` so the mapping from state to text
  * can be unit-tested without instantiating the plugin or touching the DOM.
  *
+ * TODO: terminology mismatch — this label says "N pending" but `count`
+ * (`getPendingCount`) is the grand total of non-`Synced` candidates, i.e.
+ * pending (Default + Approved) **plus** deferred. Under the convention used by
+ * the Sharing Status panel ("pending" = Default + Approved, "queued" = pending +
+ * deferred), this is the one place "pending" still includes deferred files.
+ * Revisit: either relabel this to "queued" to match the count, or switch the
+ * count to pending-only (Default + Approved) to match the "pending" label.
+ *
  * @param paused - Whether sharing is currently paused on this device.
  * @param count  - Total pending + deferred candidate count from the most recent
  *   planning pass, or `null` if no plan has run yet.

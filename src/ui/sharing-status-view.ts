@@ -44,9 +44,11 @@ const STATUS_ROWS: StatusRow[] = [
  * "Pause sharing" button, plus an informational banner.  Candidate counts are
  * intentionally hidden — they are a moving target while sync is active.
  *
- * **While paused** the view shows the candidate count, a "Resume sharing"
- * button, a "Refresh" button, and a per-operation-type count table.  Tapping
- * a table row opens the `PendingListModal` for that type.
+ * **While paused** the view shows the queued count (the grand total awaiting
+ * resume — pending + deferred), a "Resume sharing" button, a "Refresh" button,
+ * and a per-operation-type table with `Pending` (Default + Approved) and
+ * `Deferred` (held-back) counts.  Tapping a table row opens the
+ * `PendingListModal` for that type.
  *
  * The "Refresh" button triggers {@link BulkSync.planOnly} which calls
  * `CandidateStore.reconcile()` internally, then re-renders the view.
@@ -107,11 +109,14 @@ export class SharingStatusView extends ItemView {
 		// ── State header (always shown) ────────────────────────────────────
 		const header = container.createDiv({ cls: 'vault-share-sharing-status-header' });
 
+		// "Queued" is the grand total awaiting resume — pending (Default +
+		// Approved) plus deferred (held back). The per-type table below breaks
+		// this down into Pending and Deferred columns.
 		const totalCount = allCandidates.length;
 		header.createEl('p', {
 			cls: 'vault-share-sharing-status-state',
 			text: paused
-				? `Sharing is paused — ${totalCount} file${totalCount === 1 ? '' : 's'} pending`
+				? `Sharing is paused — ${totalCount} file${totalCount === 1 ? '' : 's'} queued`
 				: 'Sharing is running',
 		});
 
@@ -172,17 +177,26 @@ export class SharingStatusView extends ItemView {
 		const headerRow = table.createEl('thead').createEl('tr');
 		headerRow.createEl('th', { text: 'Vault affected' });
 		headerRow.createEl('th', { text: 'Planned operation' });
-		headerRow.createEl('th', { text: 'Files' });
+		headerRow.createEl('th', { text: 'Pending' });
+		headerRow.createEl('th', { text: 'Deferred' });
 
 		const tbody = table.createEl('tbody');
 		for (const row of STATUS_ROWS) {
 			const candidates = byType.get(row.type) ?? [];
 			if (candidates.length === 0) continue;
 
+			// Pending = will be shared on resume (Default + Approved);
+			// Deferred = held back. The row stays visible whenever the type has
+			// any non-Synced candidate, so a fully-deferred type is still
+			// reachable to release later.
+			const pending = candidates.filter(c => c.state !== 'Deferred').length;
+			const deferred = candidates.length - pending;
+
 			const tr = tbody.createEl('tr', { cls: 'vault-share-sharing-status-row is-clickable' });
 			tr.createEl('td', { text: row.vault });
 			tr.createEl('td', { text: row.description });
-			tr.createEl('td', { text: String(candidates.length) });
+			tr.createEl('td', { text: String(pending) });
+			tr.createEl('td', { text: String(deferred) });
 
 			tr.addEventListener('click', () => {
 				new PendingListModal(

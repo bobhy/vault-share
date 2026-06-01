@@ -314,7 +314,10 @@ describe('Threshold deferral — all action types deferred on threshold breach',
 			{ timeout: 15000, interval: 500, timeoutMsg: 'Sharing status table did not appear within 15 s' },
 		);
 
-		type Row = { operation: string; count: number };
+		// Table columns: [Vault affected, Planned operation, Pending, Deferred].
+		// Freshly planned candidates are all Default → fully counted under
+		// Pending; nothing is deferred yet.
+		type Row = { operation: string; pending: number; deferred: number };
 		const rows = await browser.executeObsidian(() =>
 			Array.from(
 				activeDocument.querySelectorAll<HTMLTableRowElement>(
@@ -322,16 +325,19 @@ describe('Threshold deferral — all action types deferred on threshold breach',
 				),
 			).map(tr => ({
 				operation: tr.cells[1]?.textContent?.trim() ?? '',
-				count:     Number(tr.cells[2]?.textContent?.trim()),
+				pending:   Number(tr.cells[2]?.textContent?.trim()),
+				deferred:  Number(tr.cells[3]?.textContent?.trim()),
 			})),
 		) as unknown as Row[];
 
 		const byOp = new Map(rows.map(r => [r.operation, r]));
-		expect(byOp.get('Push local changes to group vault')?.count).toBe(PUSH_FILES.length);
-		expect(byOp.get('Pull group vault changes to local')?.count).toBe(PULL_FILES.length);
-		expect(byOp.get('Resolve file conflicts')?.count).toBe(CONFLICT_FILES.length);
-		expect(byOp.get('Delete from group vault')?.count).toBe(DELETE_REMOTE_FILES.length);
-		expect(byOp.get('Delete from local vault')?.count).toBe(DELETE_LOCAL_FILES.length);
+		expect(byOp.get('Push local changes to group vault')?.pending).toBe(PUSH_FILES.length);
+		expect(byOp.get('Pull group vault changes to local')?.pending).toBe(PULL_FILES.length);
+		expect(byOp.get('Resolve file conflicts')?.pending).toBe(CONFLICT_FILES.length);
+		expect(byOp.get('Delete from group vault')?.pending).toBe(DELETE_REMOTE_FILES.length);
+		expect(byOp.get('Delete from local vault')?.pending).toBe(DELETE_LOCAL_FILES.length);
+		// No candidate has been deferred in this scenario.
+		for (const r of rows) expect(r.deferred).toBe(0);
 
 		await browser.executeObsidian(({ app }) => {
 			app.workspace.getLeavesOfType('vault-share-sharing-status')
