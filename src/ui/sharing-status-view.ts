@@ -50,10 +50,6 @@ const STATUS_ROWS: StatusRow[] = [
  *
  * The "Refresh" button triggers {@link BulkSync.planOnly} which calls
  * `CandidateStore.reconcile()` internally, then re-renders the view.
- *
- * TODO: add unit tests once the obsidian-mock package supports
- * `ItemView.containerEl.children[1]` (the content-pane child that ItemView
- * rendering depends on).
  */
 export class SharingStatusView extends ItemView {
 	private isRefreshing = false;

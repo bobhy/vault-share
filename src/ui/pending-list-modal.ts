@@ -8,6 +8,17 @@
  * `execute*` functions. Approving a row marks the candidate as `Approved` in
  * the store so the next bulk pass bypasses the threshold guard.
  *
+ * TODO: this and the other UI modules (`sharing-status-view.ts`,
+ * `pending-file-panel.ts`, `settings-tab.ts`, `single-file-sync.ts`, `main.ts`)
+ * sit at 0% in `npm run test:coverage` — wdio exercises them end-to-end but
+ * wdio's runs aren't piped into v8 coverage so they contribute nothing to the
+ * report. Two paths: (a) close the obsidian-mock gaps (see the
+ * `project_obsidian_mock_gaps` memory) so these modules can be unit-tested
+ * under vitest like the sync layer; (b) instrument the wdio Electron run with
+ * V8 coverage and merge the c8 output into vitest's `coverage-final.json`
+ * before report generation. (a) is the smaller scope per module but harder
+ * once; (b) is one-time plumbing that pays out across every UI file at once.
+ *
  * @packageDocumentation
  */
 import { App, Modal, Notice } from 'obsidian';
@@ -83,9 +94,6 @@ function candidateDescription(candidate: Candidate): string {
  *
  * After a successful resolution the candidate is removed from the modal list.
  * The `onResolved` callback notifies the parent view to refresh.
- *
- * TODO: add unit tests once the obsidian-mock package supports `Modal.open()` and allows
- * querying the rendered DOM.
  */
 export class PendingListModal extends Modal {
 	private candidates: Candidate[];

@@ -1,7 +1,6 @@
-// Test helpers for domain types. Implement as corresponding interfaces are defined.
-// See obsidian-air-sync/src/__mocks__/sync-test-helpers.ts for the reference implementation.
+// Test helpers for domain types.
 
-/** Create a FileEntity + ArrayBuffer pair from text content */
+/** Create a vault file descriptor + ArrayBuffer pair from text content. */
 export function makeFile(path: string, content: string, mtime = 1000): { entity: { path: string; isDirectory: boolean; size: number; mtime: number }; content: ArrayBuffer } {
 	const buf = new TextEncoder().encode(content).buffer;
 	return {
@@ -10,14 +9,11 @@ export function makeFile(path: string, content: string, mtime = 1000): { entity:
 	};
 }
 
-/** Decode an ArrayBuffer to a string (for use in test assertions) */
+/** Decode an ArrayBuffer to a string (for use in test assertions). */
 export function readBuffer(content: ArrayBuffer): string {
 	return new TextDecoder().decode(content);
 }
 
-// TODO: implement createMockFs() when IFileSystem is defined in src/fs/interface.ts
-// TODO: implement createMockStateStore() when SyncStateStore is defined in src/sync/state.ts
-// TODO: implement addFile() when FileEntity is defined
 import { DEFAULT_SETTINGS, VaultShareSettings } from '../settings';
 
 /** Return a complete VaultShareSettings object with optional overrides. */
