@@ -41,5 +41,6 @@ export default tseslint.config(
 		"vitest.playground.config.ts",
 		"deploy.mjs",
 		"new-credential.mjs",
+		"scripts/**",       // Node CLI helpers (e.g. obsidian-cdp.mjs), not plugin source
 	]),
 );

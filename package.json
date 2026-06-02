@@ -20,6 +20,8 @@
 		"docs": "typedoc && npm run docs --prefix google-auth-relay/worker",
 		"new-credential": "node new-credential.mjs",
 		"deploy": "node deploy.mjs",
+		"cdp:eval": "node scripts/obsidian-cdp.mjs eval",
+		"cdp:console": "node scripts/obsidian-cdp.mjs console",
 		"playground:googleDrive:read": "vitest run --config vitest.playground.config.ts tests/playground/gdrive-read.playground.ts",
 		"playground:googleDrive:write": "vitest run --config vitest.playground.config.ts tests/playground/gdrive-write.playground.ts"
 	},

@@ -7,6 +7,7 @@
 3. [Continuous integration](#3-continuous-integration)
 4. [Creating a Google OAuth credential](#4-creating-a-google-oauth-credential)
 5. [Bumping the version and cutting a release](#5-bumping-the-version-and-cutting-a-release)
+6. [Debugging](#6-debugging)
 
 ---
 
@@ -31,7 +32,8 @@ npm install
 
 ### Point the build at a vault
 
-The built plugin must be installed inside an Obsidian vault's plugin directory so you can test it live. Use `npm run deploy` to build and copy the plugin files into one or more vault directories:
+The built plugin must be installed inside an Obsidian vault's plugin directory so you can test it live. 
+Use `npm run deploy` to build and copy the plugin files into one or more vault directories:
 
 ```bash
 npm run deploy -- ~/Documents/my-vault
@@ -41,7 +43,7 @@ npm run deploy -- ~/Documents/vault-a ~/Documents/vault-b
 
 This creates (or updates) `<vault>/.obsidian/plugins/vault-share/` with `main.js`, `manifest.json`, and `styles.css`.  It also deletes `data.json`, clearing all settings and disconnecting
 
-For active development you will typically run the watcher instead (see [npm scripts](#2-npm-scripts-reference)) and reload the plugin manually inside Obsidian via **Settings → Community plugins → Vault share → Reload**.
+For active development you will typically run the watcher (`npm run dev`) instead, which auto-deploys into the vaults you list in `dev-vaults.local.json` on every save. Pair it with the Hot Reload plugin so the plugin reloads itself automatically — otherwise reload it manually via **Settings → Community plugins → Vault share → Reload**. See [Debugging](#6-debugging) for the full hot-reload, VSCode debug, and live-console setup.
 
 ### E2e test setup
 
@@ -75,7 +77,7 @@ The e2e test runner injects it into the sandboxed vault at startup.
 | Script | What it does |
 |--------|--------------|
 | `npm install` | Install all dependencies. |
-| `npm run dev` | Start esbuild in watch mode. Rebuilds `main.js` on every save. |
+| `npm run dev` | Start esbuild in watch mode. Rebuilds `main.js` on every save and auto-deploys it into the vaults listed in `dev-vaults.local.json` (see [Debugging](#6-debugging)). |
 | `npm run build` | Type-check with `tsc`, then produce a production `main.js`. |
 | `npm run deploy -- <vault>` | Build and install artifacts into an Obsidian vault directory. |
 | `npm run lint` | Run ESLint (including the `eslint-plugin-obsidianmd` rules). Always run before pushing. |
@@ -89,6 +91,8 @@ The e2e test runner injects it into the sandboxed vault at startup.
 | `npm run docs` | Generate TypeDoc API documentation into `docs/`. |
 | `npm run version` | Propagate the version in `package.json` into `manifest.json` and `versions.json` (see [version bump](#5-bumping-the-version-and-cutting-a-release)). |
 | `npm run new-credential` | Replace the Google OAuth credential (see [section 4](#4-creating-a-google-oauth-credential)). |
+| `npm run cdp:console` | Stream the running plugin's console over the DevTools port (see [Debugging](#6-debugging)). |
+| `npm run cdp:eval -- "<expr>"` | Evaluate a JS expression in the running Obsidian renderer and print the result (see [Debugging](#6-debugging)). |
 
 All PRs must pass `npm run lint && npm run build && npm test` before merging.
 
@@ -218,6 +222,125 @@ The version number lives in three files that must stay in sync: `package.json`, 
 | `package.json` | Source of truth for the version. Edit this first. |
 | `manifest.json` | Read by Obsidian to identify and load the plugin. Must match `package.json`. |
 | `versions.json` | Maps each released version to the minimum Obsidian app version it requires. Used by the plugin registry for compatibility checks. |
+
+## 6. Debugging
+
+### Setting up hot reload and a VSCode debug config
+
+The goal is a tight loop: save a `.ts` file → the plugin rebuilds, redeploys, and reloads itself in a running Obsidian → optionally pause at breakpoints in VSCode.
+
+**1. Tell the watcher which vaults to deploy into.** `npm run dev` reads `dev-vaults.local.json` (a gitignored, per-developer file) — a JSON array of vault roots. Create it in the project root:
+
+```json
+[
+  "~/obsidian-test/vault-a",
+  "~/obsidian-test/vault-b"
+]
+```
+
+Now `npm run dev` rebuilds on every save and copies `main.js`/`manifest.json`/`styles.css` into each `<vault>/.obsidian/plugins/vault-share/`. (Production `npm run build` never deploys.)
+
+**2. Install the Hot Reload plugin** so Obsidian reloads the plugin automatically when its `main.js` changes (otherwise you'd reload manually via **Settings → Community plugins → Vault share → Reload**). For each vault:
+
+```bash
+# From https://github.com/pjeby/hot-reload — install main.js + manifest.json into:
+#   <vault>/.obsidian/plugins/hot-reload/
+# enable it (add "hot-reload" to <vault>/.obsidian/community-plugins.json),
+# then mark vault-share for watching:
+touch <vault>/.obsidian/plugins/vault-share/.hotreload
+```
+
+The `.hotreload` signal file opts the vault-share plugin into hot reloading. With it in place, `npm run dev` + save = the plugin reloads in Obsidian with no clicks.
+
+**3. (Optional) VSCode breakpoints.** Obsidian's renderer is Chrome, so VSCode's built-in JS debugger attaches over a DevTools port and maps the dev build's inline sourcemaps back to `src/**`. `.vscode/` is gitignored, so create these yourself. `.vscode/launch.json`:
+
+```jsonc
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Obsidian + debug plugin",
+      "type": "chrome",
+      "request": "launch",
+      "runtimeExecutable": "/path/to/obsidian",   // your Obsidian binary
+      "userDataDir": false,                          // use the real profile (vaults + plugins)
+      "port": 9222,
+      "webRoot": "${workspaceFolder}",
+      "sourceMaps": true,
+      "preLaunchTask": "dev: watch + deploy",
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "/path/to/your/vaults/**",                   // main.js lives outside the workspace
+        "!**/node_modules/**"
+      ],
+      // Relative sources resolve against the deployed main.js dir; remap to the workspace.
+      "sourceMapPathOverrides": {
+        "/path/to/vault-a/.obsidian/plugins/vault-share/src/*": "${workspaceFolder}/src/*"
+      }
+    },
+    {
+      "name": "Attach to Obsidian (port 9222)",
+      "type": "chrome",
+      "request": "attach",
+      "port": 9222,
+      "webRoot": "${workspaceFolder}",
+      "sourceMaps": true
+    }
+  ]
+}
+```
+
+And `.vscode/tasks.json` (lets the launch config start the watcher and know when the first build is done):
+
+```jsonc
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "dev: watch + deploy",
+      "type": "shell",
+      "command": "npm run dev",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "esbuild",
+        "pattern": { "regexp": "^$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "\\[watch\\] build started",
+          "endsPattern": "watching for changes"
+        }
+      }
+    }
+  ]
+}
+```
+
+Press F5 on **Launch Obsidian + debug plugin** to start the watcher, launch Obsidian with the port, and attach. If launching the Electron binary through the debugger is flaky, start Obsidian yourself (`/path/to/obsidian --remote-debugging-port=9222`) and use **Attach to Obsidian** instead. Breakpoints bind once the plugin loads, so for `onload` set the breakpoint then reload the plugin.
+
+### Allowing the agent to monitor the console log
+
+Because the renderer speaks the Chrome DevTools Protocol, an AI coding agent (or you) can observe the live app while you drive the UI — read plugin state, dump candidate records, and tail the console — without screen sharing.
+
+Start Obsidian with the port (quit all instances first):
+
+```bash
+/path/to/obsidian --remote-debugging-port=9222
+```
+
+Then use the bundled, dependency-free helper (`scripts/obsidian-cdp.mjs`, Node 22+):
+
+```bash
+# Stream the [vault-share] console (reconnects across plugin/page reloads):
+npm run cdp:console
+
+# Evaluate any expression in the renderer and print the JSON result:
+npm run cdp:eval -- "app.plugins.plugins['vault-share'].candidateStore.getAll().length"
+npm run cdp:eval -- "({ paused: app.plugins.plugins['vault-share'].candidateStore.isPausedSync() })"
+```
+
+The port defaults to 9222 (override with `OBSIDIAN_CDP_PORT`). Useful renderer handles are documented in the script header. The external CDP scripts and the VSCode debugger can share port 9222, though if breakpoint debugging gets flaky, pause the snapshots.
+
+---
 
 ## Dependencies on hacked packages
 This plugin exercises a lot of wierd corners of the ecosystem.

@@ -39,6 +39,9 @@ docs
 # Claude Code local settings (personal overrides, not for team)
 .claude/settings.local.json
 
+# Per-developer list of test vaults for `npm run dev` auto-deploy
+dev-vaults.local.json
+
 coverage
 
 

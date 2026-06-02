@@ -1,6 +1,9 @@
 import esbuild from "esbuild";
 import process from "process";
 import { builtinModules } from 'node:module';
+import { copyFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 
 const banner =
 `/*
@@ -10,6 +13,57 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === "production");
+
+const PLUGIN_ID = 'vault-share';
+const PLUGIN_FILES = ['main.js', 'manifest.json', 'styles.css'];
+// Gitignored, per-developer: a JSON array of vault root paths to auto-deploy
+// into on every `npm run dev` rebuild. Absent ⇒ no auto-deploy (CI default).
+const DEV_VAULTS_CONFIG = 'dev-vaults.local.json';
+
+/** Read the optional list of vault roots to deploy into during `npm run dev`. */
+function readDevVaults() {
+	if (!existsSync(DEV_VAULTS_CONFIG)) return [];
+	try {
+		const parsed = JSON.parse(readFileSync(DEV_VAULTS_CONFIG, 'utf8'));
+		if (!Array.isArray(parsed)) {
+			console.warn(`[dev-deploy] ${DEV_VAULTS_CONFIG} must be a JSON array of vault paths; ignoring`);
+			return [];
+		}
+		// Expand a leading ~ to the home directory.
+		return parsed.map(p => p.replace(/^~(?=$|\/)/, homedir()));
+	} catch (err) {
+		console.warn(`[dev-deploy] failed to read ${DEV_VAULTS_CONFIG}: ${err.message}`);
+		return [];
+	}
+}
+
+/**
+ * esbuild plugin: after each successful (dev/watch) rebuild, copy the plugin
+ * files into each configured vault's plugin folder. Skipped entirely in
+ * production builds and when no `dev-vaults.local.json` is present.
+ */
+const devDeployPlugin = {
+	name: 'dev-deploy',
+	setup(build) {
+		const vaults = readDevVaults();
+		if (vaults.length > 0) {
+			console.log(`[dev-deploy] watching → ${vaults.join(', ')}`);
+		}
+		build.onEnd(result => {
+			if (result.errors.length > 0) return;  // never deploy a broken build
+			for (const vault of vaults) {
+				const dir = join(vault, '.obsidian', 'plugins', PLUGIN_ID);
+				try {
+					mkdirSync(dir, { recursive: true });
+					for (const file of PLUGIN_FILES) copyFileSync(file, join(dir, file));
+					console.log(`[dev-deploy] → ${dir}`);
+				} catch (err) {
+					console.warn(`[dev-deploy] could not deploy to ${dir}: ${err.message}`);
+				}
+			}
+		});
+	},
+};
 
 const context = await esbuild.context({
 	banner: {
@@ -39,6 +93,8 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: "main.js",
 	minify: prod,
+	// Auto-deploy into local test vaults only in dev/watch mode.
+	plugins: prod ? [] : [devDeployPlugin],
 });
 
 if (prod) {
