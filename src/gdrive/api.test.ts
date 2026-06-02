@@ -229,4 +229,48 @@ describe('GDriveApi', () => {
 			expect(internal.accessToken).toBe('fresh-token');
 		});
 	});
+
+	describe('getAppProperties', () => {
+		it('requests the appProperties field and returns the map', async () => {
+			const api = makeApi();
+			const spy = spyRequestUrl().mockResolvedValue(
+				makeMockResponse({ json: { appProperties: { vaultShareSchema: '1' } } }),
+			);
+			const props = await api.getAppProperties('folder1');
+			expect(props).toEqual({ vaultShareSchema: '1' });
+			const url = (spy.mock.calls[0]![0] as { url: string }).url;
+			expect(url).toContain('folder1');
+			expect(url).toContain('fields=appProperties');
+		});
+
+		it('returns an empty object when the folder has no appProperties', async () => {
+			const api = makeApi();
+			spyRequestUrl().mockResolvedValue(makeMockResponse({ json: {} }));
+			expect(await api.getAppProperties('folder1')).toEqual({});
+		});
+
+		it('throws GDriveError on error status', async () => {
+			const api = makeApi();
+			spyRequestUrl().mockResolvedValue(makeMockResponse({ status: 404, json: {} }));
+			await expect(api.getAppProperties('folder1')).rejects.toMatchObject({ code: 'not-found' });
+		});
+	});
+
+	describe('setAppProperties', () => {
+		it('PATCHes the appProperties payload to the file', async () => {
+			const api = makeApi();
+			const spy = spyRequestUrl().mockResolvedValue(makeMockResponse({ json: { id: 'folder1' } }));
+			await api.setAppProperties('folder1', { vaultShareSchema: '1' });
+			const opts = spy.mock.calls[0]![0] as { url: string; method: string; body: string };
+			expect(opts.method).toBe('PATCH');
+			expect(opts.url).toContain('folder1');
+			expect(JSON.parse(opts.body)).toEqual({ appProperties: { vaultShareSchema: '1' } });
+		});
+
+		it('throws GDriveError on error status', async () => {
+			const api = makeApi();
+			spyRequestUrl().mockResolvedValue(makeMockResponse({ status: 500, json: {} }));
+			await expect(api.setAppProperties('folder1', { a: 'b' })).rejects.toMatchObject({ code: 'network' });
+		});
+	});
 });

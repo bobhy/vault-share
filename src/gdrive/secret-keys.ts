@@ -9,6 +9,12 @@
  * wdio.conf.mts) can derive the correct key names without importing the
  * Obsidian-dependent auth module.
  *
+ * Versioning: these three flat string keys are stable enough not to carry a
+ * dedicated schema version. If the key-naming scheme or token shape ever
+ * changes, handle the re-mint/rename as a step in the settings migration ladder
+ * (gated on `schemaVersion`) rather than introducing a separate token version.
+ * See `specs/upgrade-path.md`.
+ *
  * @packageDocumentation
  */
 export function secretKeys(vaultName: string) {

@@ -15,8 +15,26 @@ export type TextFileConflictStrategy = 'Use Newer' | 'Keep Both' | 'Merge';
 /** Minimum severity for accepted log entries; less-severe entries are dropped. */
 export type LogSeverity = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
 
+/**
+ * Schema version for the persisted {@link VaultShareSettings} shape.
+ *
+ * Bump this and append an `if (fromVersion < N)` block to {@link migrateSettings}
+ * whenever a field is renamed, removed, or changes meaning. Added fields do not
+ * require a bump — they fall back to {@link DEFAULT_SETTINGS} automatically.
+ *
+ * See `specs/upgrade-path.md`.
+ */
+export const SETTINGS_SCHEMA_VERSION = 1;
+
 /** Persisted per-vault configuration; loaded by `main.ts` on plugin start. */
 export interface VaultShareSettings {
+	/**
+	 * Schema version of this stored object. Absent (treated as `0`) for any
+	 * pre-1.0 install; stamped to {@link SETTINGS_SCHEMA_VERSION} by
+	 * {@link migrateSettings}.
+	 */
+	schemaVersion: number;
+
 	/** Slash-separated path to the shared Google Drive folder. Must begin with a separator. */
 	driveFolderPath: string;
 
@@ -74,6 +92,7 @@ export interface VaultShareSettings {
 
 /** Default values applied for any field absent from stored data. */
 export const DEFAULT_SETTINGS: VaultShareSettings = {
+	schemaVersion: SETTINGS_SCHEMA_VERSION,
 	driveFolderPath: '',  // overridden at runtime with /vault-share/<vault-name>; never used as-is
 	// Defaults:
 	// - `.obsidian` — exclude the entire config directory. Per-vault state
@@ -96,3 +115,67 @@ export const DEFAULT_SETTINGS: VaultShareSettings = {
 	logToSidebar: false,
 	logHorizon: 1000,
 };
+
+/** Legacy field names migrated away by the {@link migrateSettings} ladder. */
+interface LegacySettingsShape {
+	/** Renamed to `globalChangeThreshold` in schema v1. */
+	fileModificationConfirmationThreshold?: number;
+	/** Renamed to `globalChangeMin` in schema v1. */
+	fileModificationConfirmationMin?: number;
+}
+
+/**
+ * Upgrade a raw `loadData()` result to the current settings schema.
+ *
+ * Reads `schemaVersion` from the stored object (absent ⇒ `0`, i.e. any pre-1.0
+ * install), runs each version-bump migration in order, then merges the result
+ * over {@link DEFAULT_SETTINGS} so any newly-added field falls back to its
+ * default. The returned settings are always stamped with
+ * {@link SETTINGS_SCHEMA_VERSION}.
+ *
+ * `runtimeDefaults` supplies values computed at load time (notably
+ * `driveFolderPath`, derived from the vault name); they sit between the static
+ * defaults and the stored values in precedence.
+ *
+ * `migrated` is `true` when stored data existed at an older schema version, so
+ * the caller can persist the upgraded shape exactly once. The operation is
+ * idempotent — a failed persist just retries the same migration next load.
+ *
+ * See `specs/upgrade-path.md`.
+ */
+export function migrateSettings(
+	raw: unknown,
+	runtimeDefaults: Partial<VaultShareSettings> = {},
+): { settings: VaultShareSettings; migrated: boolean } {
+	const hadStored = typeof raw === 'object' && raw !== null;
+	const stored = (hadStored ? raw : {}) as Partial<VaultShareSettings> & LegacySettingsShape;
+	const fromVersion = typeof stored.schemaVersion === 'number' ? stored.schemaVersion : 0;
+
+	// v0 → v1: rename fileModificationConfirmation* → globalChange*. The new
+	// names reflect that the threshold counts changes on either side of the
+	// sync, not just local modifications. The user's chosen values continue to
+	// express the same intent (their tolerance for sync noise), so carry them
+	// across verbatim.
+	if (fromVersion < 1) {
+		if (typeof stored.fileModificationConfirmationThreshold === 'number'
+			&& typeof stored.globalChangeThreshold !== 'number') {
+			stored.globalChangeThreshold = stored.fileModificationConfirmationThreshold;
+		}
+		if (typeof stored.fileModificationConfirmationMin === 'number'
+			&& typeof stored.globalChangeMin !== 'number') {
+			stored.globalChangeMin = stored.fileModificationConfirmationMin;
+		}
+		delete stored.fileModificationConfirmationThreshold;
+		delete stored.fileModificationConfirmationMin;
+	}
+
+	const settings: VaultShareSettings = Object.assign(
+		{},
+		DEFAULT_SETTINGS,
+		runtimeDefaults,
+		stored,
+	);
+	settings.schemaVersion = SETTINGS_SCHEMA_VERSION;
+
+	return { settings, migrated: hadStored && fromVersion < SETTINGS_SCHEMA_VERSION };
+}

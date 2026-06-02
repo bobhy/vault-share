@@ -13,9 +13,11 @@
  * @packageDocumentation
  */
 import { MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf } from 'obsidian';
-import { DEFAULT_SETTINGS, VaultShareSettings } from './settings';
+import { DEFAULT_SETTINGS, VaultShareSettings, migrateSettings } from './settings';
 import { GDriveAuth } from './gdrive/auth';
 import { GDriveApi } from './gdrive/api';
+import { GDriveError } from './gdrive/errors';
+import { checkDriveSchema, readDriveSchemaVersion, DRIVE_SCHEMA_VERSION } from './sync/drive-schema';
 import { Logger } from './logger';
 import { SyncStore } from './sync/store';
 import { StatsTracker } from './sync/stats-tracker';
@@ -61,51 +63,18 @@ export default class VaultSharePlugin extends Plugin {
 	private deferralNoticeShown = false;
 
 	async onload() {
-		// 1. Settings
-		const stored = await this.loadData() as unknown as (Partial<VaultShareSettings> & {
-			// One-shot migration shape: the old field names used before
-			// sync-review-followups item (7). See the migration block below.
-			fileModificationConfirmationThreshold?: number;
-			fileModificationConfirmationMin?: number;
-		}) | null;
-
-		// One-shot rename from `fileModificationConfirmation*` to `globalChange*`
-		// (item 7 — the new names reflect that the threshold counts changes on
-		// either side of the sync, not just local modifications). Carry the
-		// stored values across; the new numerator/denominator semantics are
-		// slightly different but the user's chosen threshold/min values
-		// continue to express the same intent (their tolerance for noise).
-		// Persist the cleaned-up shape so the migration only runs once per
-		// install.
-		let migrationApplied = false;
-		if (stored) {
-			if (typeof stored.fileModificationConfirmationThreshold === 'number'
-				&& typeof stored.globalChangeThreshold !== 'number') {
-				stored.globalChangeThreshold = stored.fileModificationConfirmationThreshold;
-				migrationApplied = true;
-			}
-			if (typeof stored.fileModificationConfirmationMin === 'number'
-				&& typeof stored.globalChangeMin !== 'number') {
-				stored.globalChangeMin = stored.fileModificationConfirmationMin;
-				migrationApplied = true;
-			}
-			if (migrationApplied) {
-				delete stored.fileModificationConfirmationThreshold;
-				delete stored.fileModificationConfirmationMin;
-			}
-		}
-
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
+		// 1. Settings — migrate the stored shape to the current schema, falling
+		// back to defaults for any absent field. See `specs/upgrade-path.md`.
+		const { settings, migrated } = migrateSettings(
+			await this.loadData(),
 			{ driveFolderPath: `/vault-share/${this.app.vault.getName()}` },
-			stored,
 		);
+		this.settings = settings;
 
-		// Persist the migrated shape so subsequent loads don't see the old
-		// keys. Fire-and-forget — failure to save here just means the
+		// Persist the migrated shape so subsequent loads start at the current
+		// schema version. Fire-and-forget — a failed save just means the
 		// migration is retried on next load, which is idempotent.
-		if (migrationApplied) {
+		if (migrated) {
 			void this.saveData(this.settings);
 		}
 
@@ -514,7 +483,74 @@ export default class VaultSharePlugin extends Plugin {
 	}
 
 	private async resolveDriveFolder(): Promise<string> {
-		return this.api.resolveFolder(this.settings.driveFolderPath);
+		const folderId = await this.api.resolveFolder(this.settings.driveFolderPath);
+		await this.verifyDriveSchema(folderId);
+		return folderId;
+	}
+
+	/**
+	 * Read the schema version stamped on the shared (group) Drive folder, for
+	 * display in the Statistics section. Returns `null` when not connected (no
+	 * auth or unresolved folder) or when the read fails — the settings tab shows
+	 * that as "Not connected" rather than a number. See `specs/upgrade-path.md`.
+	 */
+	async getGroupVaultSchemaVersion(): Promise<number | null> {
+		if (!this.auth.isAuthenticated || !this.driveFolderId) return null;
+		try {
+			return await readDriveSchemaVersion(this.api, this.driveFolderId);
+		} catch {
+			return null;
+		}
+	}
+
+	/**
+	 * Reconcile the shared folder's schema version with this plugin's
+	 * {@link DRIVE_SCHEMA_VERSION}. Claims/forward-migrates older folders; on a
+	 * folder written by a newer plugin this is a non-recoverable condition — it
+	 * shows an acknowledgement modal that disables the plugin on dismissal, and
+	 * throws so the caller leaves `driveFolderId` empty and no sync runs in the
+	 * interim. See `specs/upgrade-path.md`.
+	 */
+	private async verifyDriveSchema(folderId: string): Promise<void> {
+		const check = await checkDriveSchema(this.api, folderId);
+		switch (check.status) {
+			case 'ok':
+				break;
+			case 'stamped':
+				this.logger.info(`Stamped shared Drive folder with schema version ${DRIVE_SCHEMA_VERSION}`);
+				break;
+			case 'migrated':
+				this.logger.info(`Migrated shared Drive folder schema from version ${check.from} to ${DRIVE_SCHEMA_VERSION}`);
+				break;
+			case 'tooNew': {
+				const msg = `This shared vault was upgraded by a newer version of Vault Share `
+					+ `(folder schema version ${check.folderVersion}; this plugin supports ${DRIVE_SCHEMA_VERSION}). `
+					+ `Update the plugin to continue sharing this vault.`;
+				this.logger.error('Shared Drive folder schema is newer than supported', msg);
+				// Inform-and-disable. Not awaited: the throw below gates sync
+				// immediately, while the modal resolves seconds later — well
+				// after onload() has returned, so self-disable is safe.
+				void ConfirmationModal.alert(this.app, 'Vault Share needs an update', msg, 'OK')
+					.then(() => { this.disableSelf(); });
+				throw new GDriveError(
+					`Drive folder schema version ${check.folderVersion} is newer than supported ${DRIVE_SCHEMA_VERSION}`,
+					'unknown',
+				);
+			}
+		}
+	}
+
+	/**
+	 * Disable this plugin from within after a non-recoverable condition.
+	 * `app.plugins` is an internal API absent from the public typings; the cast
+	 * is narrowed to the single method used and guarded so a future API change
+	 * degrades to a no-op rather than throwing.
+	 */
+	private disableSelf(): void {
+		const plugins = (this.app as unknown as {
+			plugins?: { disablePlugin?: (id: string) => Promise<void> };
+		}).plugins;
+		void plugins?.disablePlugin?.(this.manifest.id);
 	}
 
 	/** Open (or reveal) the Sharing Status panel in the right sidebar. */

@@ -244,6 +244,16 @@ export class VaultShareSettingTab extends PluginSettingTab {
 					.setDesc(String(value));
 			}
 
+			// Schema version of the shared folder. Fetched asynchronously (it's a
+			// Drive metadata read) so the row renders immediately with a
+			// placeholder and fills in once the value arrives.
+			const schemaSetting = new Setting(containerEl)
+				.setName('Group vault schema')
+				.setDesc('Checking…');
+			void this.plugin.getGroupVaultSchemaVersion().then(version => {
+				schemaSetting.setDesc(version === null ? 'Not connected' : String(version));
+			});
+
 			new Setting(containerEl)
 				.setName('Reset statistics')
 				.setDesc('Reset all counters to zero.')
