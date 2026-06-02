@@ -227,14 +227,43 @@ The version number lives in three files that must stay in sync: `package.json`, 
 
 ### Setting up hot reload and a VSCode debug config
 
-The goal is a tight loop: save a `.ts` file → the plugin rebuilds, redeploys, and reloads itself in a running Obsidian → optionally pause at breakpoints in VSCode.
+The goal is a tight loop: save a `.ts` file → the plugin rebuilds, redeploys, and reloads itself in a running Obsidian → optionally pause at breakpoints in VSCode.  
+To make the config tractable, we use test vaults in gitignored folders *within* the project, currently under `${workspaceFolder}/test-resources`.
 
-**1. Tell the watcher which vaults to deploy into.** `npm run dev` reads `dev-vaults.local.json` (a gitignored, per-developer file) — a JSON array of vault roots. Create it in the project root:
+
+```json
+{
+      "name": "Launch Obsidian + debug plugin (vault vs1)",
+      "type": "chrome",
+      "request": "launch",
+      "runtimeExecutable": "/opt/Obsidian/obsidian",
+      "runtimeArgs": ["obsidian://open?vault=vs1"],
+      // vscode-js-debug adds --remote-debugging-port=${port} itself; keep the
+      // real user profile (vaults + installed plugins) instead of a temp one.
+      "userDataDir": false,
+      "port": 9222,
+      "webRoot": "${workspaceFolder}",
+      "sourceMaps": true,
+      "preLaunchTask": "dev: watch + deploy",
+      // Vaults under ${workspaceFolder}/test-resources are covered by ${workspaceFolder}/**.
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**"
+      ],
+      // Relative sources (src/main.ts) resolve against the deployed main.js
+      // dir; remap that back to the workspace so breakpoints bind to source.
+      "sourceMapPathOverrides": {
+        "${workspaceFolder}/test-resources/vs1/.obsidian/plugins/vault-share/src/*": "${workspaceFolder}/src/*"
+      }
+    },
+```
+
+**1. Tell the watcher which vaults to deploy into.** `npm run dev` reads `dev-vaults.local.json` (a gitignored, per-developer file) — a JSON array of vault roots (absolute, `~`-prefixed, or relative to the project root). The convention is to keep the test vaults inside the project under the gitignored `test-resources/` directory. Create `dev-vaults.local.json` in the project root:
 
 ```json
 [
-  "~/obsidian-test/vault-a",
-  "~/obsidian-test/vault-b"
+  "test-resources/vs1",
+  "test-resources/vs2"
 ]
 ```
 
@@ -263,19 +292,22 @@ The `.hotreload` signal file opts the vault-share plugin into hot reloading. Wit
       "type": "chrome",
       "request": "launch",
       "runtimeExecutable": "/path/to/obsidian",   // your Obsidian binary
+      "runtimeArgs": ["obsidian://open?vault=yourVault"],
+
       "userDataDir": false,                          // use the real profile (vaults + plugins)
       "port": 9222,
       "webRoot": "${workspaceFolder}",
       "sourceMaps": true,
       "preLaunchTask": "dev: watch + deploy",
+      // Vaults under ${workspaceFolder}/test-resources are covered by ${workspaceFolder}/**.
       "resolveSourceMapLocations": [
         "${workspaceFolder}/**",
-        "/path/to/your/vaults/**",                   // main.js lives outside the workspace
         "!**/node_modules/**"
       ],
       // Relative sources resolve against the deployed main.js dir; remap to the workspace.
       "sourceMapPathOverrides": {
-        "/path/to/vault-a/.obsidian/plugins/vault-share/src/*": "${workspaceFolder}/src/*"
+        "${workspaceFolder}/test-resources/vs1/.obsidian/plugins/vault-share/src/*": "${workspaceFolder}/src/*",
+        "${workspaceFolder}/test-resources/vs2/.obsidian/plugins/vault-share/src/*": "${workspaceFolder}/src/*"
       }
     },
     {
