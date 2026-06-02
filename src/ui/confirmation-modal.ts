@@ -1,21 +1,26 @@
 /**
- * Reusable yes/no modal.
+ * Reusable confirmation / acknowledgement modal.
  *
- * Used wherever the plugin needs explicit user confirmation before a
- * destructive or visible action (Drive folder change, plugin reset, sync
- * conflict notice). Always invoked via the static {@link ConfirmationModal.prompt}
- * which returns a Promise resolving to the user's choice.
+ * Two-button form ({@link ConfirmationModal.prompt}) is used wherever the
+ * plugin needs explicit user confirmation before a destructive or visible
+ * action (Drive folder change, plugin reset, sync conflict notice) and resolves
+ * to the user's choice. Single-button form ({@link ConfirmationModal.alert})
+ * is used to report a non-recoverable condition the user can only acknowledge
+ * (e.g. the shared Drive folder was written by a newer plugin version).
  *
  * @packageDocumentation
  */
 import { App, Modal, sanitizeHTMLToDom } from 'obsidian';
 
 /**
- * Generic two-button confirmation modal used throughout the plugin.
- * Resolves true when the user clicks the confirm button, false on dismiss.
+ * Generic confirmation / acknowledgement modal used throughout the plugin.
  *
- * Button labels default to "Continue" / "Quit" but can be overridden via
- * the optional {@link prompt} parameters for context-specific copy.
+ * In two-button mode it resolves `true` when the user clicks the confirm button
+ * and `false` on dismiss. In single-button mode (see {@link alert}) the cancel
+ * button is suppressed and the modal resolves once acknowledged or dismissed.
+ *
+ * Button labels default to "Continue" / "Quit" but can be overridden via the
+ * static factory parameters for context-specific copy.
  */
 export class ConfirmationModal extends Modal {
 	private resolve!: (value: boolean) => void;
@@ -26,6 +31,7 @@ export class ConfirmationModal extends Modal {
 		private readonly bodyHtml: string,
 		private readonly confirmLabel: string = 'Continue',
 		private readonly cancelLabel: string = 'Quit',
+		private readonly singleButton = false,
 	) {
 		super(app);
 	}
@@ -49,6 +55,25 @@ export class ConfirmationModal extends Modal {
 		});
 	}
 
+	/**
+	 * Show a single-button acknowledgement modal for a non-recoverable
+	 * condition. Resolves once the user clicks the button or otherwise dismisses
+	 * the modal — there is no "cancel" outcome to distinguish.
+	 * @param buttonLabel - Label for the sole button. Defaults to "OK".
+	 */
+	static alert(
+		app: App,
+		title: string,
+		bodyHtml: string,
+		buttonLabel = 'OK',
+	): Promise<void> {
+		return new Promise(resolve => {
+			const modal = new ConfirmationModal(app, title, bodyHtml, buttonLabel, buttonLabel, true);
+			modal.resolve = () => resolve();
+			modal.open();
+		});
+	}
+
 	onOpen(): void {
 		const { contentEl } = this;
 		contentEl.empty();
@@ -66,11 +91,13 @@ export class ConfirmationModal extends Modal {
 			this.close();
 		});
 
-		const quitBtn = buttonRow.createEl('button', { text: this.cancelLabel });
-		quitBtn.addEventListener('click', () => {
-			this.resolve(false);
-			this.close();
-		});
+		if (!this.singleButton) {
+			const quitBtn = buttonRow.createEl('button', { text: this.cancelLabel });
+			quitBtn.addEventListener('click', () => {
+				this.resolve(false);
+				this.close();
+			});
+		}
 	}
 
 	onClose(): void {

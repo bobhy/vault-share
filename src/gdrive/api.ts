@@ -106,6 +106,46 @@ export class GDriveApi {
 		return json;
 	}
 
+	/**
+	 * Read the custom `appProperties` map attached to a file or folder.
+	 * Returns an empty object when none are set. Used to read the Drive-folder
+	 * schema version (see `specs/upgrade-path.md`).
+	 */
+	async getAppProperties(fileId: string): Promise<Record<string, string>> {
+		const token = await this.auth.getAccessToken();
+		const fields = encodeURIComponent('appProperties');
+		const response = await requestUrl({
+			url: `${DRIVE_API}/files/${fileId}?fields=${fields}`,
+			headers: { Authorization: `Bearer ${token}` },
+			throw: false,
+		});
+		this.throwOnError(response.status);
+		const json = response.json as { appProperties?: Record<string, string> } | null;
+		return json?.appProperties ?? {};
+	}
+
+	/**
+	 * Merge the given keys into a file or folder's `appProperties`.
+	 * Drive merges these into any existing properties (setting a value to an
+	 * empty string does not delete the key — pass `null` via the REST API for
+	 * that, which this plugin does not need). Used to stamp the Drive-folder
+	 * schema version (see `specs/upgrade-path.md`).
+	 */
+	async setAppProperties(fileId: string, props: Record<string, string>): Promise<void> {
+		const token = await this.auth.getAccessToken();
+		const response = await requestUrl({
+			url: `${DRIVE_API}/files/${fileId}?fields=id`,
+			method: 'PATCH',
+			headers: {
+				Authorization: `Bearer ${token}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({ appProperties: props }),
+			throw: false,
+		});
+		this.throwOnError(response.status);
+	}
+
 	/** Read a file's raw content. Returns string for text, Uint8Array for binary. */
 	async readFile(fileId: string): Promise<string> {
 		const token = await this.auth.getAccessToken();

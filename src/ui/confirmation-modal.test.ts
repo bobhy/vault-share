@@ -79,4 +79,31 @@ describe('ConfirmationModal', () => {
 			expect(spy).toHaveBeenCalledWith('<b>important</b>');
 		});
 	});
+
+	describe('alert()', () => {
+		it('renders a single button with the given label and no cancel button', () => {
+			void ConfirmationModal.alert(app, 'Heads up', '<p>Body</p>', 'OK');
+
+			const buttons = activeDocument.querySelectorAll<HTMLButtonElement>('.modal-button-container button');
+			expect(buttons).toHaveLength(1);
+			expect(buttons[0]!.textContent).toBe('OK');
+		});
+
+		it('defaults the button label to "OK"', () => {
+			void ConfirmationModal.alert(app, 'Heads up', '<p>Body</p>');
+
+			const btn = activeDocument.querySelector<HTMLButtonElement>('.modal-button-container button');
+			expect(btn?.textContent).toBe('OK');
+		});
+
+		it('resolves and removes the modal when the button is clicked', async () => {
+			const promise = ConfirmationModal.alert(app, 'Heads up', '<p>Body</p>');
+			expect(activeDocument.querySelector('.modal-container')).not.toBeNull();
+
+			activeDocument.querySelector<HTMLButtonElement>('.modal-button-container button')!.click();
+
+			await expect(promise).resolves.toBeUndefined();
+			expect(activeDocument.querySelector('.modal-container')).toBeNull();
+		});
+	});
 });

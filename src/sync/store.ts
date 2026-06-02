@@ -58,6 +58,22 @@ function createStores(db: IDBDatabase): void {
 }
 
 /**
+ * Drop every object store and recreate the version-3 baseline schema.
+ *
+ * The pre-1.0 reset policy, retained only to bring pre-1.0 installs (DB version
+ * 1 or 2) up to the 1.0 baseline. The `candidates` and `sync-content` stores
+ * are a rebuildable cache (they re-derive from a planning pass), so this is
+ * lossless in practice apart from accumulated `sync-stats` and the `device`
+ * client id. See `specs/upgrade-path.md`.
+ */
+function coldStart(db: IDBDatabase): void {
+	for (const name of Array.from(db.objectStoreNames)) {
+		db.deleteObjectStore(name);
+	}
+	createStores(db);
+}
+
+/**
  * Manages all IndexedDB object stores for vault-share.
  *
  * Schema is versioned via `DB_VERSION`.  The upgrade handler performs a
@@ -73,14 +89,14 @@ export class SyncStore {
 			dbName: `vault-share-${sanitizeDbName(vaultName)}`,
 			version: DB_VERSION,
 			onUpgrade: (db, oldVersion) => {
+				// Version 3 is the frozen 1.0 baseline. Pre-1.0 installs (DB
+				// version 1 or 2) are cold-started one final time to reach it.
+				// From 1.0 onward, every bump adds an incremental block that
+				// preserves user data, e.g.:
+				//   if (oldVersion < 4) migrate_3_to_4(db);
+				// See `specs/upgrade-path.md`.
 				if (oldVersion < 3) {
-					// Pre-1.0 policy: cold-start on any schema change.
-					// Post-1.0: replace this block with per-step migration logic, e.g.:
-					//   if (oldVersion < 3) { migrate_2_to_3(db); }
-					for (const name of Array.from(db.objectStoreNames)) {
-						db.deleteObjectStore(name);
-					}
-					createStores(db);
+					coldStart(db);
 				}
 			},
 		});

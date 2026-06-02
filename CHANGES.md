@@ -9,10 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `npm run dev` auto rebuild plugin after source change and autodeploy to designated test vaults; see CONTRIBUTING.md/#debugging for details.
+- schema version added to `data.json` and to group vault google drive folder (as app attribute of the folder, not a hidden file).  
+Now we can do definitive migrations on all persistent plugin data in upgrade scenarios.
 
 ### Changes
-- Make Sharing status panel into a filter between planning a bulk sharing run and executing the plan 
-as modified by user decisions on sharing candidates made case-by-case.  This fixes a bug that basically ignored user decisions and resulted in the next bulk sharing run again finding too many changes and pausing again.
+- Sharing Status panel now allows user to review all pending sharing operations and, case-by-case, decide to defer, allow or roll back the planned operation.
 - Exclude syncing vault trash folder (`.trash`) by default.
 - Stop syncing plugin config dir (`.obsidian/plugins/vault-sync`) by default.
 - Internal refactor of sync engine (a lot of work, hopefully preempts bug reports)
