@@ -37,6 +37,7 @@ export default tseslint.config(
 		"wdio.multiremote.conf.mts",
 		"tests/wdio/**",
 		"tests/playground/**",
+		"test-resources/**",  // wdio sandbox vaults + plugin build artifacts, not plugin source
 		"google-auth-relay/**",
 		"vitest.playground.config.ts",
 		"deploy.mjs",

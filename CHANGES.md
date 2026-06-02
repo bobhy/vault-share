@@ -25,6 +25,7 @@ Now we can do definitive migrations on all persistent plugin data in upgrade sce
   Also in no-sync-history case, avoid declaring conflict when local and group files are actually content-identical.
 - Improved reliability of e2e testing in headless mode.  Should be usable in CI now.
 - Do an immediate bulk sharing pass when resuming from paused state (rather than wainting for next regularly scheduled pass).
+- Corrected stale e2e:single test (code is right, test was wrong)
 
 ## [0.9.0]
 Close to v1.0 release!
