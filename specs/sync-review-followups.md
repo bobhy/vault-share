@@ -358,6 +358,25 @@ addressed; add follow-up items as new ones are discovered.
     fileResult)`. The actionType-mutation bug class is impossible from this
     helper since each caller snapshots `actionType` before delegating.
 
+## Documentation follow-ups
+
+- [ ] **(D1) Audit and tag every spec as Living / Historical / Future, and add a
+    doc map.** [specs/sync-model.md](sync-model.md) was added (June 2026) as the
+    first *Living* reference, carrying a `> Status: Living` banner. The remaining
+    specs in [specs/](.) are organised as feature-history narratives and are
+    *unmarked*, so a cold reader cannot tell which describe the current design
+    versus a since-superseded proposal. Do this later:
+    1. Add a one-line `> Status: Living | Historical (as of <date>) | Future`
+       banner to the top of every spec. (`future-directions.md` already
+       self-identifies as a scratchpad — make it `Future` and keep the
+       "agents ignore" note.)
+    2. Add a short **reading-order doc map** — likely a "Where to start reading"
+       block in [CLAUDE.md](../CLAUDE.md) and/or an index table in
+       [ARCHITECTURE.md](ARCHITECTURE.md) — that points new readers at the Living
+       docs first (sync-model.md for the engine) and labels the rest.
+    3. Keep `ARCHITECTURE.md` vision-level; route conceptual sync detail to
+       `sync-model.md` rather than growing ARCHITECTURE.
+
 ## Status
 
 Started: 2026-05-29. Issues identified during review of [src/sync/](../src/sync/)
