@@ -79,6 +79,12 @@ export class SyncScheduler {
 	private readonly fileStates = new Map<string, PerFileState>();
 	private bulkRunning = false;
 	private intervalId: number | null = null;
+	/**
+	 * Tracks whether the previous tick saw sharing paused, so the tick can
+	 * detect the paused → resumed edge and fire a bulk pass immediately rather
+	 * than waiting for {@link bulkNextRunAt}.
+	 */
+	private wasPaused = false;
 
 	constructor(private readonly deps: SyncSchedulerDeps) {}
 
@@ -201,7 +207,20 @@ export class SyncScheduler {
 	}
 
 	private tick(): void {
-		if (this.deps.isSharingPaused()) return;
+		if (this.deps.isSharingPaused()) {
+			this.wasPaused = true;
+			return;
+		}
+
+		// Sharing was just resumed (paused → not paused). Run a bulk pass on
+		// this tick instead of waiting up to bulkSyncPoll (default 1 h) for the
+		// timer — otherwise Approved actions can sit unexecuted long after the
+		// user resumes. Covers every resume path (panel button, close prompt,
+		// command) because it keys off the persisted paused flag, not the UI.
+		if (this.wasPaused) {
+			this.wasPaused = false;
+			this.bulkNextRunAt = 0;
+		}
 
 		const now = Date.now();
 		const { ctx, bulkSync, workspace, setStatusBar } = this.deps;

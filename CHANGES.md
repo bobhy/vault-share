@@ -7,12 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Added
+- `npm run dev` auto rebuild plugin after source change and autodeploy to designated test vaults; see CONTRIBUTING.md/#debugging for details.
+
 ### Changes
-Make Sharing status panel into a filter between planning a bulk sharing run and executing the plan 
+- Make Sharing status panel into a filter between planning a bulk sharing run and executing the plan 
 as modified by user decisions on sharing candidates made case-by-case.  This fixes a bug that basically ignored user decisions and resulted in the next bulk sharing run again finding too many changes and pausing again.
+- Exclude syncing vault trash folder (`.trash`) by default.
+- Stop syncing plugin config dir (`.obsidian/plugins/vault-sync`) by default.
+- Internal refactor of sync engine (a lot of work, hopefully preempts bug reports)
+- Improved coverage in e2e tests
+- Updated doc strings for all modules and public identifiers
 
 ### Fixed
 - Display a notice that sharing was paused (and a link to the Sharing status panel) when bulk sharing finds "too many" pending changes.
+- Avoid marking pairs of files as a conflict when they are content-identical (even if mtimes are different).  
+  Use sha256 hash, which Google Drive provides "for free".
+  Also in no-sync-history case, avoid declaring conflict when local and group files are actually content-identical.
+- Improved reliability of e2e testing in headless mode.  Should be usable in CI now.
+- In Sharing Status panel, show separate counts of deferred and pending files queued for sharing.  In file list for a particular sharing op, checkbox means pending (checked) or deferred.
+- Do an immediate bulk sharing pass when resuming from paused state (rather than wainting for next regularly scheduled pass).
 
 ## [0.9.0]
 Close to v1.0 release!

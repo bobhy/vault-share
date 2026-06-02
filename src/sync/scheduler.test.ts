@@ -536,6 +536,26 @@ describe('SyncScheduler', () => {
 		expect(bulkSyncRunSpy).toHaveBeenCalledTimes(1);
 	});
 
+	it('runs a bulk pass immediately on resume even when the poll interval has not elapsed', async () => {
+		// Regression: with a long bulkSyncPoll, resuming used to wait for the
+		// next scheduled poll, so Approved actions sat unexecuted for up to an
+		// hour after the user resumed. The resume edge must force a pass.
+		let paused = false;
+		const { scheduler, bulkSyncRunSpy } = makeScheduler({ bulkSyncPoll: 3600 }, () => paused);
+		scheduler.start();
+
+		await tick(1000); // initial bulk pass; next poll now ~1 h out
+		expect(bulkSyncRunSpy).toHaveBeenCalledTimes(1);
+
+		paused = true;
+		await tick(60_000); // a minute passes while paused — no pass
+		expect(bulkSyncRunSpy).toHaveBeenCalledTimes(1);
+
+		paused = false; // resume well before the 1 h poll would be due
+		await tick(1000);
+		expect(bulkSyncRunSpy).toHaveBeenCalledTimes(2);
+	});
+
 	// -------------------------------------------------------------------------
 	// Deferred path — isDeferredPath skips single-file sync for that path
 	// -------------------------------------------------------------------------
