@@ -5,20 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [unreleased]
+## [1.0.0]
+RTM! Support available through github.
 
 ### Added
 - `npm run dev` auto rebuild plugin after source change and autodeploy to designated test vaults; see CONTRIBUTING.md/#debugging for details.
 - schema version added to `data.json` and to group vault google drive folder (as app attribute of the folder, not a hidden file).  
 Now we can do definitive migrations on all persistent plugin data in upgrade scenarios.
 
-### Changes
+### Changed
 - Sharing Status panel now allows user to review all pending sharing operations and, case-by-case, decide to defer, allow or roll back the planned operation.
-- Exclude syncing vault trash folder (`.trash`) by default.
-- Stop syncing plugin config dir (`.obsidian/plugins/vault-sync`) by default.
-- Internal refactor of sync engine (a lot of work, hopefully preempts bug reports)
-- Improved coverage in e2e tests
-- Updated doc strings for all modules and public identifiers
+- Sharing Status panel now shows separate counts of deferred and pending files queued for sharing.
+- Stop syncing vault trash folder (`.trash`) and plugin config dir (`.obsidian/plugins/vault-sync`) by default.
 
 ### Fixed
 - Display a notice that sharing was paused (and a link to the Sharing status panel) when bulk sharing finds "too many" pending changes.
@@ -26,7 +24,6 @@ Now we can do definitive migrations on all persistent plugin data in upgrade sce
   Use sha256 hash, which Google Drive provides "for free".
   Also in no-sync-history case, avoid declaring conflict when local and group files are actually content-identical.
 - Improved reliability of e2e testing in headless mode.  Should be usable in CI now.
-- In Sharing Status panel, show separate counts of deferred and pending files queued for sharing.  In file list for a particular sharing op, checkbox means pending (checked) or deferred.
 - Do an immediate bulk sharing pass when resuming from paused state (rather than wainting for next regularly scheduled pass).
 
 ## [0.9.0]
