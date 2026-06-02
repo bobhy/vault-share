@@ -59,6 +59,7 @@
 	},
 	"overrides": {
 		"webdriver": "9.27.1",
-		"webdriverio": "9.27.1"
+		"webdriverio": "9.27.1",
+		"serialize-javascript": "^7.0.5"
 	}
 }
