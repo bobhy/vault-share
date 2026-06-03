@@ -52,6 +52,13 @@ export interface SyncSchedulerDeps {
 	 * otherwise running (e.g. after the user has partially released candidates).
 	 */
 	isDeferredPath: (path: string) => boolean;
+	/**
+	 * Returns true once the vault's file index is fully loaded (Obsidian's
+	 * `onLayoutReady`). Bulk sync is gated on this so a not-yet-loaded vault — a
+	 * transiently-empty/incomplete `localFs.list()` — cannot be misread as mass
+	 * local deletions during the startup window.
+	 */
+	isVaultReady: () => boolean;
 }
 
 /**
@@ -228,7 +235,7 @@ export class SyncScheduler {
 		// Dispatch bulk sync if due and not already running.
 		// containerEl.doc is Obsidian's per-element Document reference, used for popout window compat.
 		const doc: Document = this.deps.workspace.containerEl.doc ?? window.document;
-		if (!this.bulkRunning && now >= this.bulkNextRunAt && doc.visibilityState === 'visible') {
+		if (!this.bulkRunning && now >= this.bulkNextRunAt && doc.visibilityState === 'visible' && this.deps.isVaultReady()) {
 			this.bulkRunning = true;
 			const intervalMs = ctx.settings().bulkSyncPoll * 1000;
 			this.bulkNextRunAt = now + intervalMs;

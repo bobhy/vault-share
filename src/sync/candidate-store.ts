@@ -227,6 +227,14 @@ export class CandidateStore {
 			let next: Candidate = { ...existing, local, remote, actionType: newActionType };
 			let persistedChanged = newActionType !== prevActionType;
 
+			// A reappeared local file invalidates any prior deletion marker: the
+			// file is present again, so an `deleteRemote` must not be trusted on a
+			// stale signal.
+			if (local && (existing.locallyDeletedAt ?? 0) > 0) {
+				next = { ...next, locallyDeletedAt: 0 };
+				persistedChanged = true;
+			}
+
 			if (newActionType === 'noOp') {
 				if (existing.state !== 'Synced') {
 					// Files agree — promote to Synced.
@@ -487,7 +495,35 @@ export class CandidateStore {
 			deferredAt: 0,
 			deferredLocalMtime: 0,
 			deferredRemoteMtime: 0,
+			// File is present and in sync again — any stale deletion marker is void.
+			locallyDeletedAt: 0,
 		};
+		this.cache.set(path, next);
+		await this.idb.runTransaction(STORE_CANDIDATES, 'readwrite', (tx) => {
+			tx.objectStore(STORE_CANDIDATES).put(toPersistent(next));
+			return () => undefined;
+		});
+		this.fireChanged();
+	}
+
+	/**
+	 * Record that a local file was explicitly deleted, observed via Obsidian's
+	 * `vault.on('delete')` event. Sets {@link Candidate.locallyDeletedAt} so the
+	 * next planning pass *trusts* the resulting `deleteRemote` instead of deferring
+	 * it as a suspect (possibly-truncated-enumeration) deletion.
+	 *
+	 * No-op unless the path has a candidate **with sync history** (`syncedAt > 0`):
+	 * a never-synced file has nothing to delete from the group vault. Also a no-op
+	 * while the candidate is mid-`deleteLocal` — that deletion is the plugin
+	 * propagating a *remote* delete to the local vault, not a user delete, and must
+	 * not be mistaken for a `deleteRemote` signal.
+	 */
+	async markLocallyDeleted(path: string, now = Date.now()): Promise<void> {
+		const existing = this.cache.get(path);
+		if (!existing || existing.syncedAt === 0) return;
+		if (existing.actionType === 'deleteLocal') return;
+		if ((existing.locallyDeletedAt ?? 0) > 0) return;  // already flagged
+		const next: Candidate = { ...existing, locallyDeletedAt: now };
 		this.cache.set(path, next);
 		await this.idb.runTransaction(STORE_CANDIDATES, 'readwrite', (tx) => {
 			tx.objectStore(STORE_CANDIDATES).put(toPersistent(next));

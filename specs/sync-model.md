@@ -91,9 +91,11 @@ successful delete, or when a conflict resolution moves the original path aside.
 
 One bulk sync pass, in order ([`bulk-sync.ts`](../src/sync/bulk-sync.ts)):
 
-1. **Guard rails.** Bail if not logged in, if paused. If any `Approved`
-   candidates exist, execute *those only* and return (bypasses everything
-   below).
+1. **Guard rails.** Bail if not logged in, if paused, or if the vault is not yet
+   ready (the scheduler gates its first bulk dispatch on `onLayoutReady` so a
+   still-loading vault index can't be misread as mass local deletions). If any
+   `Approved` candidates exist, execute *those only* and return (bypasses
+   everything below).
 2. **Enumerate** both sides: list the local vault and the whole Drive folder.
 3. **Reconcile** ([`candidate-store.ts`](../src/sync/candidate-store.ts)): for
    the union of (local paths ∪ remote paths ∪ existing candidates), refresh the
@@ -102,9 +104,12 @@ One bulk sync pass, in order ([`bulk-sync.ts`](../src/sync/bulk-sync.ts)):
 4. **sha256 rebaseline verification.** For each path reconcile just rebaselined
    as `Synced` by the size-equality heuristic (see below), verify with Drive's
    `sha256Checksum`; on mismatch, flip it back to a `Default` conflict.
-5. **Threshold guard.** If the pending-action ratio is too high, defer all
+5. **Suspect-delete guard.** Any `deleteRemote` whose candidate was *not* flagged
+   by an observed local delete (`locallyDeletedAt === 0`) is deferred and pauses
+   sharing — regardless of the threshold, even for one file (see below).
+6. **Threshold guard.** If the pending-action ratio is too high, defer all
    pending candidates and pause instead of executing (see below).
-6. **Execute** each pending candidate one at a time via the file syncer, writing
+7. **Execute** each pending candidate one at a time via the file syncer, writing
    the result back to the store (`markSynced` / `remove`). Yields between files.
 
 `planAction` ([`decision-engine.ts`](../src/sync/decision-engine.ts)) is the
@@ -139,6 +144,38 @@ passes classify subsequent edits correctly.
 History: [item (17) in sync-review-followups.md](sync-review-followups.md) and
 [timestamp-conflict-improvements.md](timestamp-conflict-improvements.md).
 
+## The local-delete signal and the suspect-delete guard
+
+A `deleteRemote` removes a file from the *group* vault on the strength of the
+local file being **absent**. But "absent from the enumeration" is not the same as
+"deleted": a not-yet-loaded vault index, a truncated listing, a broadened exclude
+rule, or an offline/adapter-level deletion all make a file absent without anyone
+deleting it. Trusting that inference is what let a single mis-enumerating device
+silently wipe the group vault (then re-push on the next pass).
+
+So deletion is treated as a **positive signal**, not an inference:
+
+- `main.ts` registers `vault.on('delete')` and calls
+  `CandidateStore.markLocallyDeleted`, stamping `Candidate.locallyDeletedAt` on
+  the tracked path (folder deletes flag every path beneath them). The marker is
+  **persisted**, so a delete-then-quit is still honored on next launch; it is
+  cleared by `reconcile` if the local file reappears. It is *not* set for
+  never-synced paths, nor while a candidate is mid-`deleteLocal` (the plugin
+  propagating a *remote* delete, not a user delete).
+- The **suspect-delete guard** (bulk-sync step 5) executes a `deleteRemote` only
+  when its candidate is flagged (`locallyDeletedAt > 0`). Any **unflagged**
+  `deleteRemote` is deferred and **pauses sharing** for review — *not* subject to
+  the threshold, and triggered by **even one** file. A distinct notice explains
+  that the files are merely missing, not confirmed-deleted.
+
+**Coverage and limits.** This is a local-side mechanism: Obsidian has no event
+for *remote* deletions, and deletions performed outside the Vault API (raw
+`adapter.*`, external tools, or while Obsidian is closed) fire no event. Those
+unflagged `deleteRemote`s defer-and-pause rather than executing — the safe
+direction (keep data; the user re-confirms) — but it means some legitimate
+local deletes won't auto-propagate. The threshold guard remains the backstop for
+the remote side (`deleteLocal`), which has no signal.
+
 ## The threshold guard
 
 A safety brake against mass, unintended change. If the fraction of paths with a
@@ -159,9 +196,9 @@ new-vault-alignment surface where bugs hide:
 ## Invariants
 
 These are the contracts the engine must uphold. Each is directly testable; the
-e2e suite should assert them. The ones marked **(bug watch)** are the
-new-vault-alignment cases under active investigation (June 2026) where bulk sync
-was observed deleting then re-pushing files.
+e2e suite asserts them. (The June 2026 "deletes then re-pushes" investigation is
+resolved: invariants 8–10 below are now enforced by the suspect-delete guard, the
+local-delete signal, and the vault-ready gate.)
 
 1. **No-history never deletes.** With no sync history, a planning pass emits only
    `push` / `pull` / `noOp` / `conflict` — never `deleteLocal` / `deleteRemote`.
@@ -185,8 +222,17 @@ was observed deleting then re-pushing files.
    the next pass without re-planning and without re-tripping the threshold.
 8. **Switching/clearing the group vault must not silently mass-delete.** When the
    remote is empty but history exists, the threshold guard fires rather than
-   issuing `deleteRemote`/`deleteLocal` for the whole vault. **(bug watch — the
-   stale-history-vs-new-remote alignment is the prime suspect.)**
+   issuing `deleteLocal` for the whole vault.
+9. **`deleteRemote` requires a delete signal.** A `deleteRemote` executes only
+   when an observed local delete flagged it (`locallyDeletedAt > 0`). An
+   unflagged `deleteRemote` (local file merely absent from the enumeration)
+   defers and pauses sharing — not subject to the threshold, triggered by even a
+   single file. A still-loading vault never deletes (vault-ready gate + no
+   delete signal).
+10. **A flagged local delete propagates.** Deleting a synced file via the Vault
+    API (`vault.on('delete')` fires) is flagged and the resulting `deleteRemote`
+    executes on the next pass without pausing — the marker is set before the
+    pass reconciles (no race), and it survives a restart.
 
 ## Where this maps in code
 

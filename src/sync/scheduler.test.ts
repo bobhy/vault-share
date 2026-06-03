@@ -113,6 +113,7 @@ function makeScheduler(
 		registerInterval: vi.fn(),
 		isSharingPaused,
 		isDeferredPath,
+		isVaultReady: () => true,
 	};
 
 	const scheduler = new SyncScheduler(deps);

@@ -112,6 +112,26 @@ export interface Candidate {
 	/** Remote mtime at deferral time; 0 = file was absent. */
 	deferredRemoteMtime: number;
 
+	/**
+	 * Epoch ms when an explicit local deletion was observed via Obsidian's
+	 * `vault.on('delete')` event; 0 = no observed deletion.
+	 *
+	 * This is the *positive* deletion signal that distinguishes "the user (or
+	 * another plugin via the Vault API) deleted this file" from "this file is
+	 * merely absent from the current enumeration" (a not-yet-loaded vault index,
+	 * a truncated listing, a broadened exclude rule, an offline/adapter-level
+	 * deletion). A `deleteRemote` action is only *trusted* — executed without
+	 * pausing for review — when this marker is set; an unflagged `deleteRemote`
+	 * is deferred and pauses sharing so the user can confirm before the file is
+	 * removed from the group vault. Cleared by {@link CandidateStore.reconcile}
+	 * if the local file reappears.
+	 *
+	 * Optional: absent (or 0) means "no deletion observed" — the safe default
+	 * that makes an inferred `deleteRemote` suspect until a real delete event
+	 * flags it.
+	 */
+	locallyDeletedAt?: number;
+
 	// ── Ephemeral (populated by reconcile(); undefined between passes) ─────────
 	local?: FileSide;
 	remote?: FileSide & { driveFileId: string; sha256Checksum?: string };
@@ -185,6 +205,14 @@ export interface SyncPassResult {
 	failed: number;
 	/** True if the pass was halted because the action count exceeded the deferral threshold. */
 	deferredByThreshold: boolean;
+	/**
+	 * True if the pass was halted because one or more `deleteRemote` actions were
+	 * *suspect* — the local file is absent but no `vault.on('delete')` event ever
+	 * flagged it (a possibly-truncated enumeration). Those deletes are deferred and
+	 * sharing is paused for review, regardless of the threshold. See
+	 * {@link Candidate.locallyDeletedAt}.
+	 */
+	deferredBySuspectDelete: boolean;
 	error?: Error;
 }
 

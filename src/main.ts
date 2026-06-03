@@ -12,7 +12,7 @@
  *
  * @packageDocumentation
  */
-import { MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf } from 'obsidian';
+import { MarkdownView, Notice, Plugin, TFile, TFolder, WorkspaceLeaf } from 'obsidian';
 import { DEFAULT_SETTINGS, VaultShareSettings, migrateSettings } from './settings';
 import { GDriveAuth } from './gdrive/auth';
 import { GDriveApi } from './gdrive/api';
@@ -53,6 +53,9 @@ export default class VaultSharePlugin extends Plugin {
 
 	private clientId = '';
 	private driveFolderId = '';
+	/** Set true on `onLayoutReady`; the scheduler skips bulk sync until then so a
+	 * not-yet-loaded vault index can't be misread as mass local deletions. */
+	private vaultReady = false;
 	private excludeMatcher!: ExcludeMatcher;
 	private localFs!: LocalFs;
 	private driveFs!: DriveFsAdapter;
@@ -158,6 +161,7 @@ export default class VaultSharePlugin extends Plugin {
 		// 12. Bulk sync + scheduler
 		this.bulkSync = new BulkSync(ctx, this.excludeMatcher, setStatusBar, candidateStore,
 			(count) => { this.showThresholdPauseNotice(count); },
+			(count) => { this.showSuspectDeletePauseNotice(count); },
 		);
 		const bulkSync = this.bulkSync;
 
@@ -171,6 +175,7 @@ export default class VaultSharePlugin extends Plugin {
 			registerInterval: id => this.registerInterval(id),
 			isSharingPaused: () => candidateStore.isPausedSync(),
 			isDeferredPath: path => candidateStore.isDeferred(path),
+			isVaultReady: () => this.vaultReady,
 		});
 
 		// 13. Sidebar log view
@@ -352,7 +357,27 @@ export default class VaultSharePlugin extends Plugin {
 			this.updateMonitoringStatusBar();
 		}));
 
-		// 19. Start scheduler (triggers initial bulk sync)
+		// 18b. Record explicit local deletions so the next bulk sync can trust the
+		// resulting deleteRemote instead of deferring it as a suspect (possibly
+		// truncated-enumeration) deletion. Folder deletes flag every tracked path
+		// beneath them. markLocallyDeleted no-ops for untracked / never-synced
+		// paths and for files mid-deleteLocal (plugin-propagated remote deletes).
+		this.registerEvent(this.app.vault.on('delete', file => {
+			const paths = file instanceof TFolder
+				? candidateStore.getAll()
+					.filter(c => c.path.startsWith(`${file.path}/`))
+					.map(c => c.path)
+				: [file.path];
+			for (const p of paths) void candidateStore.markLocallyDeleted(p);
+		}));
+
+		// 18c. Defer the first bulk sync until the vault is fully loaded. Until then
+		// localFs.list() can return an incomplete file set, which would be
+		// misread as mass local deletions. The scheduler's heartbeat checks this
+		// flag before dispatching any bulk pass.
+		this.app.workspace.onLayoutReady(() => { this.vaultReady = true; });
+
+		// 19. Start scheduler (triggers initial bulk sync once the vault is ready)
 		this.scheduler.start();
 		this.scheduler.triggerBulkSync();
 
@@ -477,6 +502,18 @@ export default class VaultSharePlugin extends Plugin {
 	private showThresholdPauseNotice(count: number): void {
 		const frag = createFragment();
 		frag.appendText(`Sharing paused — ${count} global change${count === 1 ? '' : 's'} deferred for review — `);
+		const link = frag.createEl('a', { text: 'Tap to review' });
+		link.addEventListener('click', () => { void this.activateSharingStatusView(); });
+		new Notice(frag);
+	}
+
+	private showSuspectDeletePauseNotice(count: number): void {
+		const frag = createFragment();
+		frag.appendText(
+			`Sharing paused — ${count} file${count === 1 ? '' : 's'} missing locally without a delete signal. ` +
+			`This can mean the vault was still loading or a listing was incomplete, not that you deleted them. ` +
+			`Review before they are removed from the group vault — `,
+		);
 		const link = frag.createEl('a', { text: 'Tap to review' });
 		link.addEventListener('click', () => { void this.activateSharingStatusView(); });
 		new Notice(frag);

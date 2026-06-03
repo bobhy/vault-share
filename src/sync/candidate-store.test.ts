@@ -388,6 +388,78 @@ describe('CandidateStore.deferAllAndPause', () => {
 });
 
 // ---------------------------------------------------------------------------
+// markLocallyDeleted
+// ---------------------------------------------------------------------------
+
+describe('CandidateStore.markLocallyDeleted', () => {
+	let store: SyncStore;
+
+	afterEach(() => { store.close(); });
+
+	it('sets locallyDeletedAt for a synced candidate', async () => {
+		({ store } = await makeStore());
+		const cs = new CandidateStore(store.getIdb());
+		await cs.init();
+		await cs.insertSynced('a.md', syncedState());
+
+		await cs.markLocallyDeleted('a.md', 4242);
+
+		expect(cs.get('a.md')?.locallyDeletedAt).toBe(4242);
+	});
+
+	it('is a no-op when no candidate exists for the path', async () => {
+		({ store } = await makeStore());
+		const cs = new CandidateStore(store.getIdb());
+		await cs.init();
+
+		await cs.markLocallyDeleted('missing.md');
+
+		expect(cs.get('missing.md')).toBeUndefined();
+	});
+
+	it('is a no-op for a candidate with no sync history (syncedAt === 0)', async () => {
+		({ store } = await makeStore());
+		const cs = new CandidateStore(store.getIdb());
+		await cs.init();
+		// A local-only, never-synced file → Default candidate with syncedAt 0.
+		await cs.reconcile([LOCAL_A], []);
+		expect(cs.get('a.md')?.syncedAt).toBe(0);
+
+		await cs.markLocallyDeleted('a.md');
+
+		expect(cs.get('a.md')?.locallyDeletedAt ?? 0).toBe(0);
+	});
+
+	it('is a no-op while the candidate is mid-deleteLocal (plugin-propagated remote delete)', async () => {
+		({ store } = await makeStore());
+		const cs = new CandidateStore(store.getIdb());
+		await cs.init();
+		await cs.insertSynced('a.md', syncedState());
+		// Remote vanished → reconcile plans deleteLocal (local present, remote absent).
+		await cs.reconcile([LOCAL_A], []);
+		expect(cs.get('a.md')?.actionType).toBe('deleteLocal');
+
+		await cs.markLocallyDeleted('a.md');
+
+		expect(cs.get('a.md')?.locallyDeletedAt ?? 0).toBe(0);
+	});
+
+	it('is cleared by reconcile when the local file reappears', async () => {
+		({ store } = await makeStore());
+		const cs = new CandidateStore(store.getIdb());
+		await cs.init();
+		await cs.insertSynced('a.md', syncedState());
+		await cs.markLocallyDeleted('a.md', 4242);
+		expect(cs.get('a.md')?.locallyDeletedAt).toBe(4242);
+
+		// Both sides present and matching the record → file is back in sync.
+		await cs.reconcile([LOCAL_A], [REMOTE_A]);
+
+		expect(cs.get('a.md')?.locallyDeletedAt ?? 0).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // markSynced
 // ---------------------------------------------------------------------------
 

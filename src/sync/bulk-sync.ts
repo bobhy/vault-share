@@ -86,6 +86,7 @@ export class BulkSync {
 		private readonly setStatusBar: (text: string) => void,
 		private readonly candidates: CandidateStore,
 		private readonly onThresholdPause: (count: number) => void,
+		private readonly onSuspectDeletePause: (count: number) => void,
 	) {}
 
 	/**
@@ -147,6 +148,7 @@ export class BulkSync {
 			identicalTimestamps: 0,
 			failed: 0,
 			deferredByThreshold: false,
+			deferredBySuspectDelete: false,
 		};
 
 		const rootFolderId = this.ctx.driveFolderId();
@@ -209,6 +211,32 @@ export class BulkSync {
 					`Run "Repair Drive duplicates" to remove stale copies.`,
 				);
 				this.ctx.statsTracker.recordPassWithDuplicates();
+			}
+
+			// Suspect-delete guard (stricter than, and prior to, the threshold
+			// guard). A `deleteRemote` removes a file from the *group* vault on the
+			// strength of the local file being absent. But "absent" can mean the
+			// enumeration was incomplete (a not-yet-loaded vault index, a truncated
+			// listing, a broadened exclude rule, an offline/adapter-level delete) —
+			// not that anyone deleted anything. We only *trust* a `deleteRemote`
+			// when an explicit `vault.on('delete')` event flagged the path
+			// (`locallyDeletedAt > 0`). Any unflagged `deleteRemote` is deferred and
+			// pauses sharing for review — regardless of the threshold, and even for
+			// a single file: silently removing a user's notes from the group vault
+			// is exactly the failure we are guarding against.
+			const allPending = this.candidates.getPending();
+			const suspectDeletes = allPending.filter(
+				c => c.actionType === 'deleteRemote' && (c.locallyDeletedAt ?? 0) === 0,
+			);
+			if (suspectDeletes.length > 0) {
+				await this.candidates.deferAllAndPause(suspectDeletes);
+				result.deferredBySuspectDelete = true;
+				const msg = `Sharing paused: ${suspectDeletes.length} file${suspectDeletes.length === 1 ? '' : 's'} ` +
+					`missing locally without a delete signal — confirm before removing from the group vault`;
+				this.setStatusBar(msg);
+				this.ctx.logger.info(msg);
+				this.onSuspectDeletePause(suspectDeletes.length);
+				return result;
 			}
 
 			// Threshold guard: too many global changes → defer all and pause
@@ -296,6 +324,7 @@ export class BulkSync {
 			identicalTimestamps: 0,
 			failed: 0,
 			deferredByThreshold: false,
+			deferredBySuspectDelete: false,
 		};
 
 		this.setStatusBar('Sharing');

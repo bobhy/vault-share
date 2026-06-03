@@ -82,6 +82,7 @@ interface BulkSyncHarness {
 	};
 	setStatusBar: ReturnType<typeof vi.fn>;
 	onThresholdPause: ReturnType<typeof vi.fn>;
+	onSuspectDeletePause: ReturnType<typeof vi.fn>;
 }
 
 function makeBulkSync(
@@ -167,10 +168,11 @@ function makeBulkSync(
 	const excludeMatcher = { isExcluded: () => false } as unknown as ExcludeMatcher;
 	const setStatusBar = vi.fn<(text: string) => void>();
 	const onThresholdPause = vi.fn<(count: number) => void>();
+	const onSuspectDeletePause = vi.fn<(count: number) => void>();
 
-	const bulk = new BulkSync(ctx, excludeMatcher, setStatusBar, candidateStore, onThresholdPause);
+	const bulk = new BulkSync(ctx, excludeMatcher, setStatusBar, candidateStore, onThresholdPause, onSuspectDeletePause);
 
-	return { bulk, candidateStore, setStatusBar, onThresholdPause };
+	return { bulk, candidateStore, setStatusBar, onThresholdPause, onSuspectDeletePause };
 }
 
 // ---------------------------------------------------------------------------
@@ -512,6 +514,59 @@ describe('BulkSync.run: threshold guard', () => {
 		expect(candidateStore.deferAllAndPause).not.toHaveBeenCalled();
 		expect(result.deferredByThreshold).toBe(false);
 		expect(mockSyncOneFile).toHaveBeenCalledTimes(10);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// doRun: suspect-delete guard (deleteRemote without an onDelete signal)
+// ---------------------------------------------------------------------------
+
+describe('BulkSync.run: suspect-delete guard', () => {
+	beforeEach(() => mockSyncOneFile.mockReset());
+
+	it('defers + pauses an unflagged deleteRemote (no locallyDeletedAt) instead of executing it', async () => {
+		// Local file absent, remote present, history exists → planAction yields
+		// deleteRemote. But no vault.on('delete') ever flagged it, so it is a
+		// suspect (possibly-truncated-enumeration) deletion and must not run.
+		const pending = [makeCandidate('note.md', 'deleteRemote')]; // locallyDeletedAt undefined
+		const { bulk, candidateStore, onSuspectDeletePause, onThresholdPause } = makeBulkSync(0, pending, [], 1);
+
+		const result = await bulk.run();
+
+		expect(candidateStore.deferAllAndPause).toHaveBeenCalledWith(pending);
+		expect(onSuspectDeletePause).toHaveBeenCalledWith(1);
+		expect(result.deferredBySuspectDelete).toBe(true);
+		expect(result.deferredByThreshold).toBe(false);
+		expect(mockSyncOneFile).not.toHaveBeenCalled();
+		// Not subject to the threshold guard's notice.
+		expect(onThresholdPause).not.toHaveBeenCalled();
+	});
+
+	it('executes a flagged deleteRemote (locallyDeletedAt set) without pausing', async () => {
+		const pending = [makeCandidate('note.md', 'deleteRemote', { locallyDeletedAt: 1234 })];
+		mockSyncOneFile.mockResolvedValueOnce(makeSuccessResult('deleteRemote'));
+		const { bulk, candidateStore, onSuspectDeletePause } = makeBulkSync(0, pending, [], 1);
+
+		const result = await bulk.run();
+
+		expect(onSuspectDeletePause).not.toHaveBeenCalled();
+		expect(result.deferredBySuspectDelete).toBe(false);
+		expect(mockSyncOneFile).toHaveBeenCalledTimes(1);
+		expect(candidateStore.remove).toHaveBeenCalledWith('note.md');
+	});
+
+	it('pauses the whole pass when even one of several deleteRemotes is unflagged', async () => {
+		const flagged = makeCandidate('flagged.md', 'deleteRemote', { locallyDeletedAt: 99 });
+		const suspect = makeCandidate('suspect.md', 'deleteRemote'); // unflagged
+		const { bulk, candidateStore, onSuspectDeletePause } = makeBulkSync(0, [flagged, suspect], [], 2);
+
+		const result = await bulk.run();
+
+		// Only the unflagged candidate is deferred; sharing pauses; nothing executes.
+		expect(candidateStore.deferAllAndPause).toHaveBeenCalledWith([suspect]);
+		expect(onSuspectDeletePause).toHaveBeenCalledWith(1);
+		expect(result.deferredBySuspectDelete).toBe(true);
+		expect(mockSyncOneFile).not.toHaveBeenCalled();
 	});
 });
 

@@ -7,13 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Added
+- `npm run test:e2e:scale` to verify correct operation with tens to hundreds of files.  Run it, but sparingly.
+
 ### Changed
 - Handle Google Drive rate limiting (429 status) by backing off and retrying.  Core fix for several flaky sync bugs.
+- Use Obsidian `onDelete()` event to distinguish explicit delete from mysteriously vanished from local vault; 
+defer remote delete of just vanished local file; 
+Pause sharing if there are any such deferred deletes, user can manage in Sharing Status panel under Remote Deletes.
 
 ### Fixed
 - fix dependabot nags - manual override version `serialize-javascript`
 - fix problem of bulk sync sometimes deleting local files because it thought the corresponding drive files were gone.
 But real problem what that Google Drive 429 response truncated a (paged) drive file enumeration.
+- on startup, wait till Obsidian finishes indexing vault before first bulk sync.
+Ensures sharing doesn't think local files vanished since previous run.
 
 ## [1.0.0]
 RTM! Support available through github.
