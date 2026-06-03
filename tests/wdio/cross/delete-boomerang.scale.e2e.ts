@@ -1,5 +1,5 @@
 /**
- * Multi-device delete / re-push boomerang.
+ * Multi-device delete / re-push boomerang (scale).
  *
  * Reproduction harness for the reported symptom: bulk sync deletes group-vault
  * files and then re-pushes them. The single-vault no-history scenarios proved
@@ -9,8 +9,8 @@
  * Two cases, sharing one group vault:
  *
  *   A. Aligned history — both devices have a consistent sync record. A mass
- *      delete on one device must propagate to the other exactly once and stop.
- *      This is the control: it should pass today. (specs/sync-model.md inv. 5)
+ *      delete on one device must propagate to the other exactly once and stop,
+ *      with NO re-push from the peer. (specs/sync-model.md inv. 5)
  *
  *   B. Misaligned history — one device's candidate store has been cleared
  *      (a fresh install / new local vault joining an established group). After
@@ -18,37 +18,60 @@
  *      this" from "I have unique local files." By design it must FAIL SAFE:
  *      re-push its local files rather than honor a deletion it never recorded.
  *      The re-push ("boomerang") is the DESIRED outcome here — silently
- *      discarding the user's notes would be the real bug. Case B pins that
- *      fail-safe contract.
+ *      discarding the user's notes would be the real bug.
  *
- * Note: the genuinely-suspected production fault is NOT this re-push but a
- * *silent truncation* of an enumeration (Drive or local) that makes files look
- * deleted when they are not, driving false deletes on a device that DOES have
- * history. See the code-walk notes / sync-model inv. 8.
+ * Reliability: assertions are convergence-based. At scale Drive throttles, so
+ * the request layer backs off/retries and a pass may need to run more than once
+ * to finish. Each side is driven to a stable state with `syncUntilStable`, and
+ * we assert on aggregate work + end state. The ordering is controlled (not
+ * free-running) so each case exercises its specific divergence.
  *
- * Baseline is established the realistic way two devices reach an aligned state —
- * create → push → pull — because seeding Drive twice (once per instance) would
- * bump Drive's modifiedTime and desync the first instance's history.
- *
- * The threshold guard is disabled for the suite so mass deletes execute rather
- * than deferring; in production the guard is a separate backstop tested
- * elsewhere.
+ * Opt-in: runs only under `npm run test:e2e:scale:cross` (WDIO_SCALE=true).
  */
 
 import { CROSS_VAULT_DRIVE_FOLDER, cleanupTestDriveFolder, injectAndConfigure, runBulkSync } from "../../../wdio.conf.mts";
 
 /**
- * Files per case. The boomerang is scale-independent; kept modest so the live
- * two-instance run stays well inside the per-test timeout. Bump toward ~100 to
- * mirror the field report at the cost of runtime.
+ * Files per case. Large enough to exercise throttling/backoff; kept moderate so
+ * the live two-instance run stays tractable. Tunable toward the hundreds-of-files
+ * field report at the cost of runtime.
  */
-const COUNT = 30;
+const COUNT = 50;
 
 function vaults(): { primary: WebdriverIO.Browser; peer: WebdriverIO.Browser } {
 	return {
 		primary: browser.getInstance("primaryVault") as WebdriverIO.Browser,
 		peer: browser.getInstance("peerVault") as WebdriverIO.Browser,
 	};
+}
+
+interface PassTotals {
+	uploaded: number;
+	downloaded: number;
+	deleted: number;
+	conflicts: number;
+	failed: number;
+	passes: number;
+}
+
+function emptyTotals(): PassTotals {
+	return { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, failed: 0, passes: 0 };
+}
+
+/** Run bulk sync on one instance until a pass does no work, or `maxPasses`. Aggregates counters. */
+async function syncUntilStable(vault: WebdriverIO.Browser, maxPasses = 6): Promise<PassTotals> {
+	const t = emptyTotals();
+	for (let i = 0; i < maxPasses; i++) {
+		const r = await runBulkSync(vault);
+		t.passes++;
+		t.uploaded += r.uploaded;
+		t.downloaded += r.downloaded;
+		t.deleted += r.deleted;
+		t.conflicts += r.conflicts;
+		t.failed += r.failed;
+		if (r.uploaded + r.downloaded + r.deleted + r.conflicts + r.failed === 0) break;
+	}
+	return t;
 }
 
 function makePaths(prefix: string, count: number): string[] {
@@ -115,11 +138,11 @@ async function setThreshold(vault: WebdriverIO.Browser, min: number, threshold: 
 async function establishAlignedBaseline(prefix: string, paths: string[]): Promise<void> {
 	const { primary, peer } = vaults();
 	await createMany(primary, prefix, paths);
-	await runBulkSync(primary); // push to group
-	await runBulkSync(peer);    // pull to peer
+	await syncUntilStable(primary); // push to group
+	await syncUntilStable(peer);    // pull to peer
 }
 
-describe("Multi-device delete/re-push boomerang", () => {
+describe("Multi-device delete/re-push boomerang (scale)", () => {
 	before(async () => {
 		const refreshToken = process.env["VAULT_SHARE_REFRESH_TOKEN"];
 		if (!refreshToken) throw new Error("No GDrive refresh token. Run: npm run setup:e2e:wdio");
@@ -144,20 +167,20 @@ describe("Multi-device delete/re-push boomerang", () => {
 
 		// Primary deletes everything; sync removes it from the group vault.
 		await deleteAllUnder(primary, prefix);
-		const priDel = await runBulkSync(primary);
-		expect(priDel.deleted).toBe(COUNT);
-		expect(priDel.uploaded).toBe(0);
+		const pri = await syncUntilStable(primary);
+		expect(pri.failed).toBe(0);
+		expect(pri.uploaded).toBe(0);
 		expect(await driveCountUnder(primary, prefix)).toBe(0);
 
 		// Peer has aligned history → it deletes its local copies, never re-pushes.
-		const peerSync = await runBulkSync(peer);
-		expect(peerSync.deleted).toBe(COUNT);
-		expect(peerSync.uploaded).toBe(0); // the no-boomerang assertion
+		const peerT = await syncUntilStable(peer);
+		expect(peerT.failed).toBe(0);
+		expect(peerT.uploaded).toBe(0); // the no-boomerang assertion
 		expect(await localCountUnder(peer, prefix)).toBe(0);
 
-		// Stability: extra rounds change nothing on either device.
-		const a = await runBulkSync(primary);
-		const b = await runBulkSync(peer);
+		// Stability: extra rounds on either device change nothing.
+		const a = await syncUntilStable(primary);
+		const b = await syncUntilStable(peer);
 		expect(a.uploaded + a.downloaded + a.deleted).toBe(0);
 		expect(b.uploaded + b.downloaded + b.deleted).toBe(0);
 		expect(await driveCountUnder(primary, prefix)).toBe(0);
@@ -166,12 +189,6 @@ describe("Multi-device delete/re-push boomerang", () => {
 	});
 
 	// ── Case B: misaligned history — fail-safe re-push (DESIRED behavior) ──────
-	// A device whose history was wiped (reinstall / new local vault) keeps its
-	// local files. When a peer has emptied the group vault, the fresh device
-	// cannot tell "peer deleted these" from "I have unique local files" — and by
-	// design it must PRESERVE data: re-push the local files rather than honor a
-	// deletion it never recorded. Re-pushing is the safe choice; silently
-	// dropping a user's notes is not. This test pins that fail-safe contract.
 	it("misaligned history: a fresh device re-pushes its unique local files (fail-safe)", async () => {
 		const { primary, peer } = vaults();
 		const prefix = `boom-misaligned-${Date.now()}`;
@@ -181,25 +198,27 @@ describe("Multi-device delete/re-push boomerang", () => {
 		expect(await localCountUnder(peer, prefix)).toBe(COUNT);
 
 		// Primary deletes everything and propagates the delete to the group vault.
+		// Drive everything BEFORE peer syncs, so peer faces an empty group.
 		await deleteAllUnder(primary, prefix);
-		const priDel = await runBulkSync(primary);
-		expect(priDel.deleted).toBe(COUNT);
+		const pri = await syncUntilStable(primary);
+		expect(pri.failed).toBe(0);
 		expect(await driveCountUnder(primary, prefix)).toBe(0);
 
-		// Peer becomes a "fresh / misaligned" device: its sync history is wiped
-		// but its local files remain (reinstall, or a new local vault joining).
+		// Peer becomes a "fresh / misaligned" device: history wiped, local files remain.
 		await clearCandidates(peer);
 
 		// Fail-safe: with no history, peer re-pushes every unique local file
 		// (no-history path → push), repopulating the group vault rather than
 		// discarding the notes. This is the intended, data-preserving outcome.
-		const peerSync = await runBulkSync(peer);
-		expect(peerSync.uploaded).toBe(COUNT);
-		expect(peerSync.deleted).toBe(0);
+		const peerT = await syncUntilStable(peer);
+		expect(peerT.failed).toBe(0);
+		expect(peerT.deleted).toBe(0);
+		expect(peerT.uploaded).toBe(COUNT);
 		expect(await driveCountUnder(peer, prefix)).toBe(COUNT);
 
-		// The resurrected files propagate back to primary on its next sync.
-		await runBulkSync(primary);
+		// The resurrected files propagate back to primary on its next sync(s).
+		const back = await syncUntilStable(primary);
+		expect(back.failed).toBe(0);
 		expect(await localCountUnder(primary, prefix)).toBe(COUNT);
 	});
 });

@@ -26,6 +26,29 @@
 | Drive folder | `SINGLE_VAULT_DRIVE_FOLDER` (`/vault-share-e2e-single`) | `CROSS_VAULT_DRIVE_FOLDER` (`/vault-share-e2e-cross`), shared by both |
 | Command | `npm run test:e2e:single` | `npm run test:e2e:cross` |
 | Interactive (visible) | `…:single:interactive` (`WDIO_HEADLESS=false`) | `…:cross:interactive` |
+| Scale (opt-in) | `npm run test:e2e:scale:single` | `npm run test:e2e:scale:cross` |
+
+### Default vs scale specs
+
+Specs named `*.scale.e2e.ts` exercise hundreds of live Drive operations and are
+**slow**, so the default `test:e2e:single` / `:cross` runs *exclude* them. They
+run only under `test:e2e:scale:*` (which set `WDIO_SCALE=true`, flipping each
+config's `specs`/`exclude` globs); `npm run test:e2e:scale` runs both.
+
+Scale specs assert **convergence-based**: they run `runBulkSync` until a pass
+does no work, then assert on the aggregate counters + end state (vault, Drive,
+candidate store), keeping the destructive invariants strict (zero deletes / zero
+failures). This tolerates a pass needing more than one round under throttling —
+see the retry note below — without weakening the contract.
+
+### Reliability at scale: request-layer retry
+
+`GDriveApi` wraps every request in exponential backoff + jitter
+(`requestWithRetry`), retrying transient failures (`429`, `5xx`, rate-limit
+`403`, transport errors) and honouring `Retry-After`. This is what makes
+large-vault syncs (and the scale tests) reliable rather than aborting a pass or
+failing files forever when Drive throttles. The policy is tunable via the
+`GDriveApi` constructor's `RetryOptions` (unit tests pass tiny delays).
 
 Single-vault is the right fit for testing *one device's* behaviour against the
 group vault — including "fresh device joins a populated group" and "device

@@ -12,8 +12,9 @@ npm test                # vitest (unit tests)
 npm run test:watch      # vitest watch
 npm run lint            # eslint .
 npm run setup:e2e:wdio  # One-time: save GDrive token for e2e tests
-npm run test:e2e:single # wdio e2e tests, single vault
-npm run test:e2e:cross  # wdio e2e tests, two vaults (multiremote)
+npm run test:e2e:single # wdio e2e tests, single vault (excludes *.scale.e2e.ts)
+npm run test:e2e:cross  # wdio e2e tests, two vaults (multiremote; excludes *.scale.e2e.ts)
+npm run test:e2e:scale  # opt-in large-scale (100s of files) single + cross e2e; slow, live Drive
 ```
 
 ## Architecture

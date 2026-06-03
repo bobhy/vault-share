@@ -23,6 +23,14 @@ export const CROSS_VAULT_DRIVE_FOLDER = "/vault-share-e2e-cross";
  */
 const HEADLESS = process.env["WDIO_HEADLESS"] !== "false";
 
+/**
+ * When true, run ONLY the large-scale specs (`*.scale.e2e.ts`); otherwise run
+ * the default specs and exclude the scale ones. Scale tests hit Drive with
+ * hundreds of operations and are slow, so they are opt-in via
+ * `npm run test:e2e:scale:single` (sets WDIO_SCALE=true).
+ */
+const SCALE = process.env["WDIO_SCALE"] === "true";
+
 // Processes started for the virtual display; killed in onComplete.
 let xvfbProc: ChildProcess | null = null;
 let wmProc: ChildProcess | null = null;
@@ -46,7 +54,8 @@ export const config: WebdriverIO.Config = {
 	runner: "local",
 	logLevel: "warn",
 	framework: "mocha",
-	specs: ["./tests/wdio/single/**/*.e2e.ts"],
+	specs: [SCALE ? "./tests/wdio/single/**/*.scale.e2e.ts" : "./tests/wdio/single/**/*.e2e.ts"],
+	exclude: SCALE ? [] : ["./tests/wdio/single/**/*.scale.e2e.ts"],
 	maxInstances: 1,
 
 	// Keep downloaded Obsidian binaries on local disk — avoids EBUSY on NFS.

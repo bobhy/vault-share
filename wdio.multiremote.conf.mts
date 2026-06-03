@@ -18,6 +18,13 @@ import ObsidianLauncher from "obsidian-launcher";
  */
 const HEADLESS = process.env["WDIO_HEADLESS"] !== "false";
 
+/**
+ * When true, run ONLY the large-scale cross specs (`*.scale.e2e.ts`); otherwise
+ * run the default cross specs and exclude the scale ones. Opt-in via
+ * `npm run test:e2e:scale:cross` (sets WDIO_SCALE=true).
+ */
+const SCALE = process.env["WDIO_SCALE"] === "true";
+
 // Processes started for the virtual display; killed in onComplete.
 let xvfbProc: ChildProcess | null = null;
 let wmProc: ChildProcess | null = null;
@@ -29,7 +36,8 @@ export const config: WebdriverIO.MultiremoteConfig = {
 	runner: "local",
 	logLevel: "warn",
 	framework: "mocha",
-	specs: ["./tests/wdio/cross/**/*.e2e.ts"],
+	specs: [SCALE ? "./tests/wdio/cross/**/*.scale.e2e.ts" : "./tests/wdio/cross/**/*.e2e.ts"],
+	exclude: SCALE ? [] : ["./tests/wdio/cross/**/*.scale.e2e.ts"],
 	maxInstances: 1,
 
 	// Keep downloaded Obsidian binaries on local disk — avoids EBUSY on NFS.

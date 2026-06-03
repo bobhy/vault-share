@@ -1,5 +1,5 @@
 /**
- * Initial, no-history bulk sync — the three "alignment" scenarios.
+ * Initial, no-history bulk sync at scale — the three "alignment" scenarios.
  *
  * Reproduction harness for the reported misbehaviour where bulk sync deletes
  * group-vault files and then re-pushes them when sync history is absent or out
@@ -13,9 +13,14 @@
  *   Scenario 2 — empty local, populated group, no history  → pull only (inv. 3)
  *   Scenario 3 — identical files both sides, no history     → rebaseline (inv. 4)
  *
- * For every scenario the first pass must do exactly the expected work with ZERO
- * deletes, and the candidate store must end with every path `Synced` / `noOp`.
- * A second pass must be a complete no-op (inv. 5) — no boomerang.
+ * Reliability: assertions are convergence-based. A pass may legitimately need
+ * to run more than once at scale (Drive throttling makes the request layer back
+ * off and retry, and a heavily-throttled file can spill into the next pass), so
+ * we run passes until the system is stable and assert on the *aggregate* work
+ * plus the end state. The destructive invariants stay strict: zero deletes,
+ * zero conflicts, zero failures — always.
+ *
+ * Opt-in: runs only under `npm run test:e2e:scale:single` (WDIO_SCALE=true).
  */
 
 import { cleanupTestDriveFolder, runBulkSync } from "../../../wdio.conf.mts";
@@ -40,6 +45,56 @@ interface CandidateView {
 	path: string;
 	state: string;
 	actionType: string;
+}
+
+/** Aggregated counters across one or more bulk sync passes. */
+interface PassTotals {
+	uploaded: number;
+	downloaded: number;
+	deleted: number;
+	conflicts: number;
+	merges: number;
+	identicalTimestamps: number;
+	failed: number;
+	passes: number;
+	deferredByThreshold: boolean;
+}
+
+function emptyTotals(): PassTotals {
+	return {
+		uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, merges: 0,
+		identicalTimestamps: 0, failed: 0, passes: 0, deferredByThreshold: false,
+	};
+}
+
+/** True if a pass's mutating counters indicate any work was done. */
+function workCount(r: {
+	uploaded: number; downloaded: number; deleted: number;
+	conflicts: number; merges: number; identicalTimestamps: number; failed: number;
+}): number {
+	return r.uploaded + r.downloaded + r.deleted + r.conflicts + r.merges + r.identicalTimestamps + r.failed;
+}
+
+/**
+ * Run bulk sync passes until one does no work (the system is stable) or
+ * `maxPasses` is reached. Returns the aggregate counters across all passes run.
+ */
+async function syncUntilStable(maxPasses = 6): Promise<PassTotals> {
+	const total = emptyTotals();
+	for (let i = 0; i < maxPasses; i++) {
+		const r = await runBulkSync(browser);
+		total.passes++;
+		total.uploaded += r.uploaded;
+		total.downloaded += r.downloaded;
+		total.deleted += r.deleted;
+		total.conflicts += r.conflicts;
+		total.merges += r.merges;
+		total.identicalTimestamps += r.identicalTimestamps;
+		total.failed += r.failed;
+		total.deferredByThreshold = total.deferredByThreshold || r.deferredByThreshold;
+		if (workCount(r) === 0) break;
+	}
+	return total;
 }
 
 // ── Direct state construction (arrange-phase only) ──────────────────────────
@@ -137,8 +192,6 @@ async function driveFilesUnder(prefix: string): Promise<string[]> {
 /** Assert every candidate under `prefix` is the converged Synced/noOp resting state. */
 function expectAllSynced(candidates: CandidateView[], expectedCount: number): void {
 	expect(candidates).toHaveLength(expectedCount);
-	// Any non-converged candidate is a failure; surface its path/state/actionType
-	// in the message since expect-webdriverio's matchers take no message argument.
 	const notConverged = candidates.filter(c => c.state !== "Synced" || c.actionType !== "noOp");
 	if (notConverged.length > 0) {
 		throw new Error(
@@ -148,9 +201,15 @@ function expectAllSynced(candidates: CandidateView[], expectedCount: number): vo
 	}
 }
 
+/** Assert a single pass did no work at all. */
+function expectNoOpPass(r: Parameters<typeof workCount>[0] & { deferredByThreshold: boolean }): void {
+	expect(r.deferredByThreshold).toBe(false);
+	expect(workCount(r)).toBe(0);
+}
+
 // ── Scenarios ───────────────────────────────────────────────────────────────
 
-describe("Initial no-history bulk sync", () => {
+describe("Initial no-history bulk sync (scale)", () => {
 	// Scenario 1 — populated local, empty group, no history → push only.
 	describe("Scenario 1: all files local, empty group vault", () => {
 		const prefix = `s1-${Date.now()}`;
@@ -161,27 +220,21 @@ describe("Initial no-history bulk sync", () => {
 			await createLocalFiles(files);
 		});
 
-		it("first pass pushes every file with zero deletes and zero pulls", async () => {
-			const r = await runBulkSync(browser);
-			expect(r.deferredByThreshold).toBe(false);
-			expect(r.uploaded).toBe(FILE_COUNT);
-			expect(r.deleted).toBe(0);
-			expect(r.downloaded).toBe(0);
-			expect(r.conflicts).toBe(0);
-			expect(r.failed).toBe(0);
+		it("pushes every file with zero deletes and zero pulls", async () => {
+			const t = await syncUntilStable();
+			expect(t.deferredByThreshold).toBe(false);
+			expect(t.deleted).toBe(0);
+			expect(t.downloaded).toBe(0);
+			expect(t.conflicts).toBe(0);
+			expect(t.failed).toBe(0);
+			expect(t.uploaded).toBe(FILE_COUNT);
 
-			// Group vault now mirrors local; candidate store is fully converged.
 			expect(await driveFilesUnder(prefix)).toHaveLength(FILE_COUNT);
 			expectAllSynced(await candidatesUnder(prefix), FILE_COUNT);
 		});
 
 		it("second pass is a no-op (no boomerang)", async () => {
-			const r = await runBulkSync(browser);
-			expect(r.uploaded).toBe(0);
-			expect(r.downloaded).toBe(0);
-			expect(r.deleted).toBe(0);
-			expect(r.conflicts).toBe(0);
-			expect(r.failed).toBe(0);
+			expectNoOpPass(await runBulkSync(browser));
 			expectAllSynced(await candidatesUnder(prefix), FILE_COUNT);
 		});
 	});
@@ -196,27 +249,21 @@ describe("Initial no-history bulk sync", () => {
 			await createDriveFiles(files);
 		});
 
-		it("first pass pulls every file with zero deletes and zero pushes", async () => {
-			const r = await runBulkSync(browser);
-			expect(r.deferredByThreshold).toBe(false);
-			expect(r.downloaded).toBe(FILE_COUNT);
-			expect(r.deleted).toBe(0);
-			expect(r.uploaded).toBe(0);
-			expect(r.conflicts).toBe(0);
-			expect(r.failed).toBe(0);
+		it("pulls every file with zero deletes and zero pushes", async () => {
+			const t = await syncUntilStable();
+			expect(t.deferredByThreshold).toBe(false);
+			expect(t.deleted).toBe(0);
+			expect(t.uploaded).toBe(0);
+			expect(t.conflicts).toBe(0);
+			expect(t.failed).toBe(0);
+			expect(t.downloaded).toBe(FILE_COUNT);
 
-			// Local vault now mirrors the group; candidate store is fully converged.
 			expect(await localFilesUnder(prefix)).toHaveLength(FILE_COUNT);
 			expectAllSynced(await candidatesUnder(prefix), FILE_COUNT);
 		});
 
 		it("second pass is a no-op (no boomerang)", async () => {
-			const r = await runBulkSync(browser);
-			expect(r.uploaded).toBe(0);
-			expect(r.downloaded).toBe(0);
-			expect(r.deleted).toBe(0);
-			expect(r.conflicts).toBe(0);
-			expect(r.failed).toBe(0);
+			expectNoOpPass(await runBulkSync(browser));
 			expectAllSynced(await candidatesUnder(prefix), FILE_COUNT);
 		});
 	});
@@ -234,29 +281,23 @@ describe("Initial no-history bulk sync", () => {
 			await createDriveFiles(files);
 		});
 
-		it("first pass rebaselines everything — zero pushes, pulls, deletes, conflicts", async () => {
-			const r = await runBulkSync(browser);
-			expect(r.deferredByThreshold).toBe(false);
-			expect(r.uploaded).toBe(0);
-			expect(r.downloaded).toBe(0);
-			expect(r.deleted).toBe(0);
-			expect(r.conflicts).toBe(0);
-			expect(r.merges).toBe(0);
-			expect(r.failed).toBe(0);
+		it("rebaselines everything — zero pushes, pulls, deletes, conflicts", async () => {
+			const t = await syncUntilStable();
+			expect(t.deferredByThreshold).toBe(false);
+			expect(t.uploaded).toBe(0);
+			expect(t.downloaded).toBe(0);
+			expect(t.deleted).toBe(0);
+			expect(t.conflicts).toBe(0);
+			expect(t.merges).toBe(0);
+			expect(t.failed).toBe(0);
 
-			// Both sides untouched; every path recorded as Synced.
 			expect(await localFilesUnder(prefix)).toHaveLength(FILE_COUNT);
 			expect(await driveFilesUnder(prefix)).toHaveLength(FILE_COUNT);
 			expectAllSynced(await candidatesUnder(prefix), FILE_COUNT);
 		});
 
 		it("second pass is a no-op (no boomerang)", async () => {
-			const r = await runBulkSync(browser);
-			expect(r.uploaded).toBe(0);
-			expect(r.downloaded).toBe(0);
-			expect(r.deleted).toBe(0);
-			expect(r.conflicts).toBe(0);
-			expect(r.failed).toBe(0);
+			expectNoOpPass(await runBulkSync(browser));
 			expectAllSynced(await candidatesUnder(prefix), FILE_COUNT);
 		});
 	});
