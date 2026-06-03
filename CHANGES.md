@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+### Changed
+- Handle Google Drive rate limiting (429 status) by backing off and retrying.  Core fix for several flaky sync bugs.
+
+### Fixed
 - fix dependabot nags - manual override version `serialize-javascript`
+- fix problem of bulk sync sometimes deleting local files because it thought the corresponding drive files were gone.
+But real problem what that Google Drive 429 response truncated a (paged) drive file enumeration.
 
 ## [1.0.0]
 RTM! Support available through github.

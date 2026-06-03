@@ -10,13 +10,38 @@
  * 
  * @packageDocumentation
  */
-import { requestUrl } from 'obsidian';
+import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from 'obsidian';
 import { GDriveAuth } from './auth';
 import { GDriveError, codeFromStatus } from './errors';
 
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
+
+/**
+ * Tunable retry/backoff policy for transient Drive failures.
+ *
+ * Drive throttles bursty clients with `429` and rate-limit `403`s, and
+ * occasionally returns `5xx`s under load. Without backoff a large-vault sync
+ * (100s of files) would see `listChildren` abort the whole pass, or pushes /
+ * deletes fail every pass and never converge. The wrapper retries transient
+ * failures with exponential backoff + jitter, honouring a `Retry-After` header
+ * when present, so operation is reliable (if slower) at scale.
+ */
+export interface RetryOptions {
+	/** Total attempts including the first try. */
+	maxAttempts: number;
+	/** First backoff delay in ms; doubles each retry. */
+	baseDelayMs: number;
+	/** Upper bound on any single backoff delay in ms. */
+	maxDelayMs: number;
+}
+
+/** Production retry policy: ~0.5s, 1s, 2s, 4s, 8s between 6 attempts, capped at 30s. */
+export const DEFAULT_RETRY: RetryOptions = { maxAttempts: 6, baseDelayMs: 500, maxDelayMs: 30_000 };
+
+/** HTTP statuses that are always safe to retry (transient throttling / server faults). */
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 
 /** Subset of the Google Drive v3 file resource the plugin reads. */
 export interface DriveFile {
@@ -61,7 +86,69 @@ function assertDriveFileList(v: unknown): asserts v is DriveFileList {
  * All methods obtain a fresh access token via GDriveAuth before each request.
  */
 export class GDriveApi {
-	constructor(private readonly auth: GDriveAuth) {}
+	constructor(
+		private readonly auth: GDriveAuth,
+		private readonly retry: RetryOptions = DEFAULT_RETRY,
+	) {}
+
+	/**
+	 * Issue a Drive request with retry/backoff for transient failures.
+	 *
+	 * All HTTP methods route through here. Always sets `throw: false` so HTTP
+	 * error *statuses* are inspected (not thrown) — a retryable status (`429`,
+	 * `5xx`, or a rate-limit `403`) triggers an exponential backoff and another
+	 * attempt; any other status is returned for the caller's `throwOnError` to
+	 * surface as before. Genuine transport failures (the request promise itself
+	 * rejecting — DNS, timeout, connection reset) are also retried. When retries
+	 * are exhausted the last response (or transport error) is returned/rethrown,
+	 * so behaviour degrades to the pre-retry contract rather than masking faults.
+	 *
+	 * A `Retry-After` response header, when present, overrides the computed
+	 * backoff (Drive sends it on some throttle responses).
+	 */
+	private async requestWithRetry(options: RequestUrlParam): Promise<RequestUrlResponse> {
+		let lastError: unknown;
+		for (let attempt = 1; attempt <= this.retry.maxAttempts; attempt++) {
+			let response: RequestUrlResponse | null = null;
+			try {
+				response = await this.httpRequest(options);
+			} catch (err) {
+				// Transport-level failure (no HTTP response at all). Retry it.
+				lastError = err;
+			}
+
+			if (response) {
+				if (!isRetryableResponse(response)) return response;
+				lastError = new GDriveError(
+					`Drive API transient error (${response.status})`,
+					codeFromStatus(response.status),
+					response.status,
+				);
+				// Exhausted: hand the response back so throwOnError surfaces the status.
+				if (attempt >= this.retry.maxAttempts) return response;
+				await sleep(backoffMs(this.retry, attempt, response));
+			} else {
+				if (attempt >= this.retry.maxAttempts) break;
+				await sleep(backoffMs(this.retry, attempt, null));
+			}
+		}
+		throw lastError instanceof Error
+			? lastError
+			: new GDriveError('Drive request failed after retries', 'network');
+	}
+
+	/**
+	 * Perform the actual HTTP round-trip. Always non-throwing (`throw: false`) so
+	 * {@link requestWithRetry} can inspect error statuses rather than catch them.
+	 *
+	 * Isolated as the single network seam: retry/backoff wraps exactly this call,
+	 * and resilience tests can override it on a live instance to inject transient
+	 * faults (Obsidian freezes the `requestUrl` export, so it cannot be stubbed
+	 * directly).
+	 */
+	private httpRequest(options: RequestUrlParam): Promise<RequestUrlResponse> {
+		return requestUrl({ ...options, throw: false });
+	}
 
 	/** List files (and folders) that are direct children of parentId, handling pagination. */
 	async listChildren(parentId: string): Promise<DriveFile[]> {
@@ -76,7 +163,7 @@ export class GDriveApi {
 		do {
 			const token = await this.auth.getAccessToken();
 			const url = pageToken ? `${base}&pageToken=${encodeURIComponent(pageToken)}` : base;
-			const response = await requestUrl({
+			const response = await this.requestWithRetry({
 				url,
 				headers: { Authorization: `Bearer ${token}` },
 				throw: false,
@@ -95,7 +182,7 @@ export class GDriveApi {
 	async getFile(fileId: string): Promise<DriveFile> {
 		const token = await this.auth.getAccessToken();
 		const fields = encodeURIComponent('id,name,mimeType,modifiedTime,size,sha256Checksum');
-		const response = await requestUrl({
+		const response = await this.requestWithRetry({
 			url: `${DRIVE_API}/files/${fileId}?fields=${fields}`,
 			headers: { Authorization: `Bearer ${token}` },
 			throw: false,
@@ -114,7 +201,7 @@ export class GDriveApi {
 	async getAppProperties(fileId: string): Promise<Record<string, string>> {
 		const token = await this.auth.getAccessToken();
 		const fields = encodeURIComponent('appProperties');
-		const response = await requestUrl({
+		const response = await this.requestWithRetry({
 			url: `${DRIVE_API}/files/${fileId}?fields=${fields}`,
 			headers: { Authorization: `Bearer ${token}` },
 			throw: false,
@@ -133,7 +220,7 @@ export class GDriveApi {
 	 */
 	async setAppProperties(fileId: string, props: Record<string, string>): Promise<void> {
 		const token = await this.auth.getAccessToken();
-		const response = await requestUrl({
+		const response = await this.requestWithRetry({
 			url: `${DRIVE_API}/files/${fileId}?fields=id`,
 			method: 'PATCH',
 			headers: {
@@ -149,7 +236,7 @@ export class GDriveApi {
 	/** Read a file's raw content. Returns string for text, Uint8Array for binary. */
 	async readFile(fileId: string): Promise<string> {
 		const token = await this.auth.getAccessToken();
-		const response = await requestUrl({
+		const response = await this.requestWithRetry({
 			url: `${DRIVE_API}/files/${fileId}?alt=media`,
 			headers: { Authorization: `Bearer ${token}` },
 			throw: false,
@@ -161,7 +248,7 @@ export class GDriveApi {
 	/** Read a file's raw content as binary. */
 	async readFileBinary(fileId: string): Promise<Uint8Array> {
 		const token = await this.auth.getAccessToken();
-		const response = await requestUrl({
+		const response = await this.requestWithRetry({
 			url: `${DRIVE_API}/files/${fileId}?alt=media`,
 			headers: { Authorization: `Bearer ${token}` },
 			throw: false,
@@ -187,7 +274,7 @@ export class GDriveApi {
 	/** Delete a file or folder by ID. */
 	async deleteFile(fileId: string): Promise<void> {
 		const token = await this.auth.getAccessToken();
-		const response = await requestUrl({
+		const response = await this.requestWithRetry({
 			url: `${DRIVE_API}/files/${fileId}`,
 			method: 'DELETE',
 			headers: { Authorization: `Bearer ${token}` },
@@ -201,7 +288,7 @@ export class GDriveApi {
 	/** Create a folder under parentId. */
 	async createFolder(parentId: string, name: string): Promise<DriveFile> {
 		const token = await this.auth.getAccessToken();
-		const response = await requestUrl({
+		const response = await this.requestWithRetry({
 			url: `${DRIVE_API}/files`,
 			method: 'POST',
 			headers: {
@@ -252,7 +339,7 @@ export class GDriveApi {
 		);
 		const fields = encodeURIComponent('files(id,name,mimeType,modifiedTime,size,sha256Checksum)');
 		const order = encodeURIComponent('modifiedTime desc');
-		const response = await requestUrl({
+		const response = await this.requestWithRetry({
 			url: `${DRIVE_API}/files?q=${q}&fields=${fields}&pageSize=2&orderBy=${order}`,
 			headers: { Authorization: `Bearer ${token}` },
 			throw: false,
@@ -271,7 +358,7 @@ export class GDriveApi {
 	): Promise<DriveFile> {
 		const token = await this.auth.getAccessToken();
 		const { body, boundary } = buildMultipartBody({ name, parents: [parentId] }, content, mimeType);
-		const response = await requestUrl({
+		const response = await this.requestWithRetry({
 			url: `${DRIVE_UPLOAD_API}/files?uploadType=multipart&fields=id,name,mimeType,modifiedTime,size,sha256Checksum`,
 			method: 'POST',
 			headers: {
@@ -294,7 +381,7 @@ export class GDriveApi {
 	): Promise<DriveFile> {
 		const token = await this.auth.getAccessToken();
 		const { body, boundary } = buildMultipartBody({}, content, mimeType);
-		const response = await requestUrl({
+		const response = await this.requestWithRetry({
 			url: `${DRIVE_UPLOAD_API}/files/${fileId}?uploadType=multipart&fields=id,name,mimeType,modifiedTime,size`,
 			method: 'PATCH',
 			headers: {
@@ -318,6 +405,68 @@ export class GDriveApi {
 		if (status === 401) this.auth.invalidateAccessToken();
 		throw new GDriveError(`Drive API error (${status})`, codeFromStatus(status), status);
 	}
+}
+
+/** Resolve after `ms` milliseconds. Uses `activeWindow.setTimeout` for popout-window compatibility (no Node timers). */
+function sleep(ms: number): Promise<void> {
+	return new Promise(resolve => activeWindow.setTimeout(resolve, ms));
+}
+
+/** True when an HTTP response should be retried: transient status, or a rate-limit `403`. */
+function isRetryableResponse(r: RequestUrlResponse): boolean {
+	if (RETRYABLE_STATUS.has(r.status)) return true;
+	if (r.status === 403) return is403RateLimit(r);
+	return false;
+}
+
+/**
+ * Distinguish a *throttling* `403` (retryable) from an *authorization* `403`
+ * (not retryable) by inspecting the Drive error body's reason codes.
+ */
+function is403RateLimit(r: RequestUrlResponse): boolean {
+	let body: unknown;
+	try {
+		body = r.json;
+	} catch {
+		// Non-JSON body — cannot confirm a rate-limit reason; treat as non-retryable.
+		return false;
+	}
+	return extractErrorReasons(body).some(
+		reason => reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded',
+	);
+}
+
+/** Pull `error.errors[].reason` strings out of a Drive error JSON body. */
+function extractErrorReasons(body: unknown): string[] {
+	const errs = (body as { error?: { errors?: Array<{ reason?: unknown }> } } | null | undefined)
+		?.error?.errors;
+	if (!Array.isArray(errs)) return [];
+	return errs
+		.map(e => (typeof e.reason === 'string' ? e.reason : ''))
+		.filter(reason => reason.length > 0);
+}
+
+/** Backoff delay for the given attempt: `Retry-After` header if present, else exponential + jitter, capped. */
+function backoffMs(retry: RetryOptions, attempt: number, response: RequestUrlResponse | null): number {
+	const retryAfter = response ? parseRetryAfter(response.headers) : null;
+	if (retryAfter !== null) return Math.min(retryAfter, retry.maxDelayMs);
+	const exp = retry.baseDelayMs * 2 ** (attempt - 1);
+	const jitter = Math.random() * retry.baseDelayMs;
+	return Math.min(exp + jitter, retry.maxDelayMs);
+}
+
+/** Parse a `Retry-After` header (delta-seconds or HTTP-date) into ms, or null if absent/unparseable. */
+function parseRetryAfter(headers: Record<string, string>): number | null {
+	let raw: string | undefined;
+	for (const key of Object.keys(headers)) {
+		if (key.toLowerCase() === 'retry-after') { raw = headers[key]; break; }
+	}
+	if (!raw) return null;
+	const seconds = Number(raw);
+	if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+	const when = Date.parse(raw);
+	if (!Number.isNaN(when)) return Math.max(0, when - Date.now());
+	return null;
 }
 
 /** Build a multipart/related body safe for both text and binary content. */

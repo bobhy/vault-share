@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { App } from 'obsidian';
 import { GDriveAuth } from './auth';
-import { GDriveApi, DriveFile } from './api';
+import { GDriveApi, DriveFile, type RetryOptions } from './api';
 import { spyRequestUrl, makeMockResponse } from './test-helpers';
 
 function makeFile(overrides: Partial<DriveFile> = {}): DriveFile {
 	return { id: 'file1', name: 'test.md', mimeType: 'text/plain', ...overrides };
 }
 
-function makeApi() {
+function makeApi(retry: Partial<RetryOptions> = {}) {
 	const app = new App();
 	const auth = new GDriveAuth(app);
 	// Give the auth instance a refresh token so getAccessToken won't fail.
@@ -16,7 +16,9 @@ function makeApi() {
 	internal.refreshToken = 'ref';
 	internal.accessToken = 'acc';
 	internal.accessTokenExpiry = Date.now() + 3_600_000;
-	return new GDriveApi(auth);
+	// Tiny delays keep retry-exercising tests fast; 4 attempts is enough to assert
+	// give-up behaviour without long real-time waits.
+	return new GDriveApi(auth, { maxAttempts: 4, baseDelayMs: 1, maxDelayMs: 4, ...retry });
 }
 
 describe('GDriveApi', () => {
@@ -271,6 +273,99 @@ describe('GDriveApi', () => {
 			const api = makeApi();
 			spyRequestUrl().mockResolvedValue(makeMockResponse({ status: 500, json: {} }));
 			await expect(api.setAppProperties('folder1', { a: 'b' })).rejects.toMatchObject({ code: 'network' });
+		});
+	});
+
+	describe('retry / backoff', () => {
+		const filesPage = { files: [makeFile()] };
+
+		it('retries a 429 and then succeeds', async () => {
+			const api = makeApi();
+			const spy = spyRequestUrl()
+				.mockResolvedValueOnce(makeMockResponse({ status: 429, json: {} }))
+				.mockResolvedValueOnce(makeMockResponse({ json: filesPage }));
+
+			const files = await api.listChildren('p');
+			expect(files).toHaveLength(1);
+			expect(spy).toHaveBeenCalledTimes(2);
+		});
+
+		it('retries a 5xx and then succeeds', async () => {
+			const api = makeApi();
+			const spy = spyRequestUrl()
+				.mockResolvedValueOnce(makeMockResponse({ status: 503, json: {} }))
+				.mockResolvedValueOnce(makeMockResponse({ json: makeFile() }));
+
+			const file = await api.getFile('f1');
+			expect(file.id).toBe('file1');
+			expect(spy).toHaveBeenCalledTimes(2);
+		});
+
+		it('gives up after maxAttempts on a persistent 429 and surfaces the status', async () => {
+			const api = makeApi({ maxAttempts: 3 });
+			const spy = spyRequestUrl().mockResolvedValue(makeMockResponse({ status: 429, json: {} }));
+
+			await expect(api.listChildren('p')).rejects.toMatchObject({ code: 'quota-exceeded', status: 429 });
+			expect(spy).toHaveBeenCalledTimes(3);
+		});
+
+		it('does not retry a non-retryable status (404)', async () => {
+			const api = makeApi();
+			const spy = spyRequestUrl().mockResolvedValue(makeMockResponse({ status: 404, json: {} }));
+
+			await expect(api.getFile('missing')).rejects.toMatchObject({ code: 'not-found' });
+			expect(spy).toHaveBeenCalledOnce();
+		});
+
+		it('retries a rate-limit 403 (reason: userRateLimitExceeded) and then succeeds', async () => {
+			const api = makeApi();
+			const rateLimitBody = { error: { errors: [{ reason: 'userRateLimitExceeded' }] } };
+			const spy = spyRequestUrl()
+				.mockResolvedValueOnce(makeMockResponse({ status: 403, json: rateLimitBody }))
+				.mockResolvedValueOnce(makeMockResponse({ json: filesPage }));
+
+			const files = await api.listChildren('p');
+			expect(files).toHaveLength(1);
+			expect(spy).toHaveBeenCalledTimes(2);
+		});
+
+		it('does NOT retry an authorization 403 (reason: insufficientPermissions)', async () => {
+			const api = makeApi();
+			const authBody = { error: { errors: [{ reason: 'insufficientPermissions' }] } };
+			const spy = spyRequestUrl().mockResolvedValue(makeMockResponse({ status: 403, json: authBody }));
+
+			await expect(api.listChildren('p')).rejects.toMatchObject({ code: 'auth-expired' });
+			expect(spy).toHaveBeenCalledOnce();
+		});
+
+		it('retries a transport-level failure (rejected request promise) and then succeeds', async () => {
+			const api = makeApi();
+			const spy = spyRequestUrl()
+				.mockRejectedValueOnce(new Error('ECONNRESET'))
+				.mockResolvedValueOnce(makeMockResponse({ json: filesPage }));
+
+			const files = await api.listChildren('p');
+			expect(files).toHaveLength(1);
+			expect(spy).toHaveBeenCalledTimes(2);
+		});
+
+		it('rethrows the transport error after exhausting retries', async () => {
+			const api = makeApi({ maxAttempts: 3 });
+			const spy = spyRequestUrl().mockRejectedValue(new Error('ECONNRESET'));
+
+			await expect(api.listChildren('p')).rejects.toThrow('ECONNRESET');
+			expect(spy).toHaveBeenCalledTimes(3);
+		});
+
+		it('honours a Retry-After header on a 429 (does not error on the header path)', async () => {
+			const api = makeApi();
+			const spy = spyRequestUrl()
+				.mockResolvedValueOnce(makeMockResponse({ status: 429, json: {}, headers: { 'Retry-After': '0' } }))
+				.mockResolvedValueOnce(makeMockResponse({ json: filesPage }));
+
+			const files = await api.listChildren('p');
+			expect(files).toHaveLength(1);
+			expect(spy).toHaveBeenCalledTimes(2);
 		});
 	});
 });
