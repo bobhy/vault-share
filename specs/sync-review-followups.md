@@ -361,8 +361,9 @@ addressed; add follow-up items as new ones are discovered.
 ## Documentation follow-ups
 
 - [ ] **(D1) Audit and tag every spec as Living / Historical / Future, and add a
-    doc map.** [specs/sync-model.md](sync-model.md) was added (June 2026) as the
-    first *Living* reference, carrying a `> Status: Living` banner. The remaining
+    doc map.** [specs/sync-model.md](sync-model.md) and
+    [specs/testing-e2e.md](testing-e2e.md) were added (June 2026) as the first
+    *Living* references, each carrying a `> Status: Living` banner. The remaining
     specs in [specs/](.) are organised as feature-history narratives and are
     *unmarked*, so a cold reader cannot tell which describe the current design
     versus a since-superseded proposal. Do this later:
