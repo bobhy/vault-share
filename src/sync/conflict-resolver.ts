@@ -11,7 +11,7 @@
  */
 import type { Candidate, SyncContext, SyncedFileState } from './types';
 import type { FileConflictStrategy, TextFileConflictStrategy } from '../settings';
-import { isMergeEligible, threeWayMerge } from './merge';
+import { isMergeEligible, reconcileText } from './nway-merge';
 import { shortClientId } from './client-id';
 
 const PLACEHOLDER_TEXT = 'Placeholder for deleted file';
@@ -209,7 +209,21 @@ async function resolveKeepBoth(
 	return { localConflictPath, remoteConflictPath, merged: false, hadConflictMarkers: false, newSyncedFiles };
 }
 
-/** Merge: diff3 three-way merge for text files. */
+/**
+ * Merge: N-way reconcile for text files ({@link reconcileText}).
+ *
+ * Three outcomes:
+ * - **clean** — the sides reduce to one marker-free version; written to local,
+ *   and pushed to Drive only when it differs from the current remote (a drained
+ *   resolution pushes; an adopted remote does not).
+ * - **folded** — a (possibly grown) N-way file; pushed to Drive only when
+ *   `changed` (we contributed a new alternative), otherwise we adopt Drive's bytes.
+ * - **keepBoth** — base mismatch / malformed / out-of-span; delegate to
+ *   {@link resolveKeepBoth}, never garbling.
+ *
+ * The caller (`file-syncer`) records the written content as the new base, which
+ * is the provenance the next reconcile relies on (see specs/nway-conflict.md).
+ */
 async function resolveMerge(
 	candidate: Candidate,
 	ctx: SyncContext,
@@ -243,17 +257,22 @@ async function resolveMerge(
 	const localText = dec.decode(localBytes);
 	const remoteText = dec.decode(remoteBytes);
 
-	const result = threeWayMerge(baseText, localText, remoteText);
-	const mergedBytes = new TextEncoder().encode(result.content).buffer;
+	const result = reconcileText(baseText, localText, remoteText);
+	if (result.kind === 'keepBoth') {
+		return resolveKeepBoth(candidate, ctx, prereadLocalContent);
+	}
 
-	// Write merged content to both sides.
-	await ctx.localFs.write(path, mergedBytes);
-	await ctx.driveFs.write(rootFolderId, path, mergedBytes, ctx.statsTracker, sampler);
+	const mergedBytes = new TextEncoder().encode(result.content).buffer;
+	const pushDrive = result.kind === 'folded' ? result.changed : result.content !== remoteText;
+
+	if (result.content !== localText) await ctx.localFs.write(path, mergedBytes);
+	if (pushDrive) await ctx.driveFs.write(rootFolderId, path, mergedBytes, ctx.statsTracker, sampler);
 
 	ctx.statsTracker.recordMerge();
-	if (result.hasConflicts) ctx.statsTracker.recordContentConflict();
+	const hadConflictMarkers = result.kind === 'folded';
+	if (hadConflictMarkers) ctx.statsTracker.recordContentConflict();
 
-	return { merged: true, hadConflictMarkers: result.hasConflicts };
+	return { merged: true, hadConflictMarkers };
 }
 
 /**

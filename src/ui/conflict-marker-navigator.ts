@@ -3,38 +3,38 @@
  *
  * Exposes a CM6 extension ({@link conflictHighlightExtension}) and the
  * {@link ConflictMarkerNavigator} class that backs the **Find next/previous
- * conflict** commands. The navigator parses {@link MARKER_LOCAL} …
- * {@link MARKER_GROUP} blocks, outlines the active block with a CM6 line
- * decoration, and floats a CM6-managed panel above the editor with one-click
- * resolution buttons (Keep local / Keep group / Revert to base / Keep all)
- * plus next/previous navigation.
+ * conflict** commands. The navigator parses {@link MARKER_OPEN} …
+ * {@link MARKER_CLOSE} N-way regions, outlines the active region with a CM6 line
+ * decoration, and floats a CM6-managed panel above the editor with one
+ * resolution button **per labelled segment** (`base`, `A1`, `A2`, …) — choosing
+ * one replaces the whole region with it — plus next/previous navigation.
  *
  * @packageDocumentation
  */
 import { Editor, MarkdownView, Notice, setIcon } from 'obsidian';
 import { type Extension, type Range, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, type Panel, showPanel } from '@codemirror/view';
-import { MARKER_LOCAL, MARKER_BASE, MARKER_SEP, MARKER_GROUP } from '../sync/merge';
+import { MARKER_OPEN, MARKER_CLOSE, SEGMENT_MARKER_RE } from '../sync/nway-merge';
+
+/** One labelled segment of a conflict region: `base` or an alternative `A<n>`. */
+export interface ConflictSegment {
+	/** `base`, or `A1` / `A2` / … */
+	label: string;
+	/** The content lines under this segment's marker. */
+	lines: string[];
+}
 
 /**
- * A parsed conflict block found in the editor.
- * Corresponds to one {@link MARKER_LOCAL} … {@link MARKER_GROUP} region.
+ * A parsed conflict region found in the editor.
+ * Corresponds to one {@link MARKER_OPEN} … {@link MARKER_CLOSE} region.
  */
 export interface ConflictBlock {
-	/** Line index of the {@link MARKER_LOCAL} marker. */
+	/** Line index of the {@link MARKER_OPEN} marker. */
 	startLine: number;
-	/** Line index of the {@link MARKER_BASE} marker. */
-	baseLine: number;
-	/** Line index of the {@link MARKER_SEP} marker. */
-	sepLine: number;
-	/** Line index of the {@link MARKER_GROUP} marker. */
+	/** Line index of the {@link MARKER_CLOSE} marker. */
 	endLine: number;
-	/** Lines belonging to the local (A) side. */
-	localLines: string[];
-	/** Lines belonging to the common base (O). */
-	baseLines: string[];
-	/** Lines belonging to the remote/group (B) side. */
-	remoteLines: string[];
+	/** The region's segments in document order (`base` plus the alternatives). */
+	segments: ConflictSegment[];
 }
 
 // ---------------------------------------------------------------------------
@@ -102,11 +102,12 @@ export const conflictHighlightExtension: Extension = [conflictHighlightField, co
  * offers inline resolution options without obscuring the editor.
  *
  * When a conflict is found:
- * - The block is outlined with a rounded rectangle via a CM6 line decoration.
+ * - The region is outlined with a rounded rectangle via a CM6 line decoration.
  * - A resolution panel (hosted as a CM6 top panel, like the built-in find bar)
- *   appears above the editor and shows "Conflict N of M" with buttons:
- *   **Keep local**, **Keep group**, **Revert to base**, **Keep all**, plus
- *   **↑ / ↓** navigation arrows and a **×** close button.
+ *   appears above the editor and shows "Conflict N of M" with **one button per
+ *   labelled segment** (`base`, `A1`, `A2`, …) — choosing one replaces the whole
+ *   region with that segment — plus **↑ / ↓** navigation arrows and a **×**
+ *   close button.
  *
  * Because the panel is managed by CM6 it survives editor re-renders and
  * post-edit DOM sweeps — the limitation of the previous `contentEl.prepend`
@@ -238,10 +239,9 @@ export class ConflictMarkerNavigator {
 						});
 				};
 
-				addBtn('Keep local', block.localLines);
-				addBtn('Keep group', block.remoteLines);
-				addBtn('Revert to base', block.baseLines);
-				addBtn('Keep all', [...block.localLines, ...block.baseLines, ...block.remoteLines]);
+				// One button per labelled segment; choosing it replaces the whole
+				// region with that segment (the base is selectable too).
+				for (const seg of block.segments) addBtn(seg.label, seg.lines);
 
 				// ── Right: separator | nav arrows | close ──────────────────
 				dom.createSpan({ cls: 'vault-share-conflict-banner-sep' });
@@ -331,45 +331,43 @@ export class ConflictMarkerNavigator {
 		return blocks[blocks.length - 1]!;
 	}
 
-	/** Parse all conflict blocks in the editor, in document order. */
+	/**
+	 * Parse all N-way conflict regions in the editor, in document order. A region
+	 * runs from {@link MARKER_OPEN} to {@link MARKER_CLOSE}, with each segment
+	 * introduced by a `` `===== <label>` `` line. Only regions with at least two
+	 * segments (a real choice) are returned; anything malformed is skipped.
+	 */
 	private parseBlocks(editor: Editor): ConflictBlock[] {
 		const lineCount = editor.lineCount();
 		const blocks: ConflictBlock[] = [];
 
 		let i = 0;
 		while (i < lineCount) {
-			if (editor.getLine(i) !== MARKER_LOCAL) {
+			if (editor.getLine(i) !== MARKER_OPEN) {
 				i++;
 				continue;
 			}
 
 			const startLine = i;
-			let baseLine = -1;
-			let sepLine = -1;
+			const segments: ConflictSegment[] = [];
+			let current: ConflictSegment | null = null;
 			let endLine = -1;
 
 			for (let j = i + 1; j < lineCount; j++) {
 				const line = editor.getLine(j);
-				if (line === MARKER_BASE && baseLine === -1) {
-					baseLine = j;
-				} else if (line === MARKER_SEP && baseLine !== -1 && sepLine === -1) {
-					sepLine = j;
-				} else if (line === MARKER_GROUP && sepLine !== -1) {
-					endLine = j;
-					break;
+				if (line === MARKER_CLOSE) { if (current) segments.push(current); endLine = j; break; }
+				if (line === MARKER_OPEN) break; // malformed: nested open, bail
+				const m = SEGMENT_MARKER_RE.exec(line);
+				if (m) {
+					if (current) segments.push(current);
+					current = { label: m[1]!, lines: [] };
+				} else if (current) {
+					current.lines.push(line);
 				}
 			}
 
-			if (baseLine !== -1 && sepLine !== -1 && endLine !== -1) {
-				blocks.push({
-					startLine,
-					baseLine,
-					sepLine,
-					endLine,
-					localLines: this.lineRange(editor, startLine + 1, baseLine),
-					baseLines: this.lineRange(editor, baseLine + 1, sepLine),
-					remoteLines: this.lineRange(editor, sepLine + 1, endLine),
-				});
+			if (endLine !== -1 && segments.length >= 2) {
+				blocks.push({ startLine, endLine, segments });
 				i = endLine + 1;
 			} else {
 				i++;
@@ -377,14 +375,5 @@ export class ConflictMarkerNavigator {
 		}
 
 		return blocks;
-	}
-
-	/** Collect lines from `from` (inclusive) to `to` (exclusive). */
-	private lineRange(editor: Editor, from: number, to: number): string[] {
-		const lines: string[] = [];
-		for (let i = from; i < to; i++) {
-			lines.push(editor.getLine(i));
-		}
-		return lines;
 	}
 }

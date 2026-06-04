@@ -183,15 +183,19 @@ describe('resolveConflict: Keep Both', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveConflict: Merge', () => {
-	it('writes the merged result to both sides for a clean merge', async () => {
+	it('writes the merged result to both sides for a clean (non-overlapping) merge', async () => {
 		const ctx = makeMockCtx();
-		ctx.localFs.read.mockResolvedValue(new TextEncoder().encode('line1\nline2\n').buffer);
+		// Local changed line 1, remote changed line 3, common base differs from both.
+		// The merged result differs from each side, so both sides are written.
+		ctx.localFs.read.mockResolvedValue(new TextEncoder().encode('A\nb\nc\n').buffer);
 		ctx.driveFs.stat.mockResolvedValue(makeDriveSide({ driveFileId: 'remote-id' }));
-		ctx.driveFs.readBinary.mockResolvedValue(new TextEncoder().encode('line1\nline2\n').buffer);
+		ctx.driveFs.readBinary.mockResolvedValue(new TextEncoder().encode('a\nb\nC\n').buffer);
+		ctx.store.getContent.mockResolvedValue(new TextEncoder().encode('a\nb\nc\n').buffer);
 		const candidate = makeConflictCandidate(
 			'note.md',
 			{ path: 'note.md', mtime: 2000, size: 10 },
 			{ path: 'note.md', mtime: 1000, size: 10, driveFileId: 'remote-id' },
+			{ syncedAt: 500 },
 		);
 
 		const result = await resolveConflict(candidate, 'Keep Both', 'Merge', ctx);
@@ -199,7 +203,9 @@ describe('resolveConflict: Merge', () => {
 		expect(ctx.localFs.write).toHaveBeenCalledWith('note.md', expect.anything());
 		expect(ctx.driveFs.write).toHaveBeenCalledWith('root-id', 'note.md', expect.anything(), expect.anything(), expect.anything());
 		expect(ctx.statsTracker.recordMerge).toHaveBeenCalled();
+		expect(ctx.statsTracker.recordContentConflict).not.toHaveBeenCalled();
 		expect(result.merged).toBe(true);
+		expect(result.hadConflictMarkers).toBe(false);
 	});
 
 	it('records content conflict when merge produces conflict markers', async () => {

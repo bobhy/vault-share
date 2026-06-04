@@ -68,7 +68,9 @@ export const config: WebdriverIO.Config = {
 
 	mochaOpts: {
 		ui: "bdd",
-		timeout: 120_000,
+		// Scale specs push/pull hundreds of files in a single bulk pass, which can
+		// far exceed the small default specs' budget — give them 10 minutes.
+		timeout: SCALE ? 600_000 : 120_000,
 	},
 
 	onPrepare: async () => {
@@ -98,8 +100,10 @@ export const config: WebdriverIO.Config = {
 
 		// Bump WebDriver's async-script timeout so `runBulkSync` can await
 		// `bulkSync.run()` inside executeObsidian without hitting the 30 s
-		// default during slow Drive passes. Matches mocha's per-test timeout.
-		await br.setTimeout({ script: 120_000 });
+		// default during slow Drive passes. Matches mocha's per-test timeout —
+		// including the longer scale budget, since one scale pass uploads/downloads
+		// hundreds of files in a single executeObsidian call.
+		await br.setTimeout({ script: SCALE ? 600_000 : 120_000 });
 
 		// Wait for the wdio-obsidian-service bridge to be ready before calling
 		// executeObsidian — avoids the "not a function" retry warnings on startup.

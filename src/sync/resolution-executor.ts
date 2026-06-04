@@ -13,7 +13,15 @@
 import type { Candidate, SyncContext } from './types';
 import type { CandidateStore } from './candidate-store';
 import { syncOneFile } from './file-syncer';
-import { threeWayMerge, type MergeResult } from './merge';
+import { reconcileText } from './nway-merge';
+
+/** Pre-populated merge preview for the editable panel in PendingListModal. */
+export interface MergePreview {
+	/** The merged text to seed the editor (N-way markers when unresolved). */
+	content: string;
+	/** True when the preview still contains unresolved conflict markers. */
+	hasConflicts: boolean;
+}
 
 /**
  * Execute the planned action for a candidate immediately.
@@ -174,7 +182,7 @@ export async function executeDeleteBoth(
  * Used to pre-populate the editable panel in PendingListModal before the user edits.
  * Does not write to either vault side.
  */
-export async function computeMerge(candidate: Candidate, ctx: SyncContext): Promise<MergeResult> {
+export async function computeMerge(candidate: Candidate, ctx: SyncContext): Promise<MergePreview> {
 	const dec = new TextDecoder();
 	const driveFileId = candidate.remote?.driveFileId ?? candidate.driveFileId;
 
@@ -191,7 +199,11 @@ export async function computeMerge(candidate: Candidate, ctx: SyncContext): Prom
 	const baseBytes = await ctx.store.getContent(candidate.path);
 	if (baseBytes) baseText = dec.decode(baseBytes);
 
-	return threeWayMerge(baseText, localText, remoteText);
+	const result = reconcileText(baseText, localText, remoteText);
+	// keep-both has no merged text to preview — fall back to local so the user
+	// still sees content; the actual Merge action resolves it via resolveKeepBoth.
+	if (result.kind === 'keepBoth') return { content: localText, hasConflicts: true };
+	return { content: result.content, hasConflicts: result.kind === 'folded' };
 }
 
 /**

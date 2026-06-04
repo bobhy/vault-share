@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { type Editor, Notice } from 'obsidian';
-import { ConflictMarkerNavigator } from './conflict-marker-navigator';
-import { MARKER_LOCAL, MARKER_BASE, MARKER_SEP, MARKER_GROUP } from '../sync/merge';
+import { ConflictMarkerNavigator, type ConflictBlock } from './conflict-marker-navigator';
+import { MARKER_OPEN, MARKER_CLOSE, segmentMarker } from '../sync/nway-merge';
 
 // ---------------------------------------------------------------------------
 // Mock Notice so tests can verify which messages are emitted.
@@ -47,45 +47,34 @@ function makeEditor(lines: string[]): {
 }
 
 // ---------------------------------------------------------------------------
-// Shared document fixtures
+// Shared document fixtures (N-way: base + A1 + A2 = 8 lines per region)
 // ---------------------------------------------------------------------------
 
-/** Minimal 7-line conflict block (A side = local, base, remote). */
-const BLOCK_A = [
-	MARKER_LOCAL,
-	'LOCAL LINE',
-	MARKER_BASE,
-	'BASE LINE',
-	MARKER_SEP,
-	'REMOTE LINE',
-	MARKER_GROUP,
-];
+function regionLines(segs: Array<[string, string[]]>): string[] {
+	const lines = [MARKER_OPEN];
+	for (const [label, l] of segs) lines.push(segmentMarker(label), ...l);
+	lines.push(MARKER_CLOSE);
+	return lines;
+}
 
-/** A distinct second conflict block. */
-const BLOCK_B = [
-	MARKER_LOCAL,
-	'X',
-	MARKER_BASE,
-	'Y',
-	MARKER_SEP,
-	'Z',
-	MARKER_GROUP,
-];
+/** Minimal 8-line conflict region (base + A1 + A2). */
+const BLOCK_A = regionLines([['base', ['BASE LINE']], ['A1', ['LOCAL LINE']], ['A2', ['REMOTE LINE']]]);
+/** A distinct second region. */
+const BLOCK_B = regionLines([['base', ['Y']], ['A1', ['X']], ['A2', ['Z']]]);
 
-/** Two blocks separated by a plain line (the typical real-world layout). */
 const MID           = 'mid';
 const TWO_BLOCK_DOC = [...BLOCK_A, MID, ...BLOCK_B];
-const BLOCK_B_START = BLOCK_A.length + 1; // 8 — line where BLOCK_B's MARKER_LOCAL sits
+const BLOCK_B_START = BLOCK_A.length + 1; // 9 — line where BLOCK_B's MARKER_OPEN sits
 
-// Shared block descriptor for the first block in a BLOCK_A-only document.
-const BLOCK_A_DESC = {
-	startLine:   0,
-	baseLine:    2,
-	sepLine:     4,
-	endLine:     6,
-	localLines:  ['LOCAL LINE'],
-	baseLines:   ['BASE LINE'],
-	remoteLines: ['REMOTE LINE'],
+/** Block descriptor for the first region in a BLOCK_A-only document. */
+const BLOCK_A_DESC: ConflictBlock = {
+	startLine: 0,
+	endLine: 7,
+	segments: [
+		{ label: 'base', lines: ['BASE LINE'] },
+		{ label: 'A1', lines: ['LOCAL LINE'] },
+		{ label: 'A2', lines: ['REMOTE LINE'] },
+	],
 };
 
 // ---------------------------------------------------------------------------
@@ -93,39 +82,37 @@ const BLOCK_A_DESC = {
 // ---------------------------------------------------------------------------
 
 describe('ConflictMarkerNavigator — navigateForward', () => {
-	it('moves cursor to the startLine of the first conflict block', () => {
+	it('moves cursor to the startLine of the first conflict region', () => {
 		const { editor } = makeEditor([...BLOCK_A]);
 		new ConflictMarkerNavigator().navigateForward(editor);
 		expect(editor.getCursor().line).toBe(0);
 	});
 
-	it('advances from the first block to the second', () => {
+	it('advances from the first region to the second', () => {
 		const { editor } = makeEditor(TWO_BLOCK_DOC);
-		// cursor starts at 0 (inside block A)
 		new ConflictMarkerNavigator().navigateForward(editor);
 		expect(editor.getCursor().line).toBe(BLOCK_B_START);
 	});
 
-	it('wraps from the last block back to the first', () => {
+	it('wraps from the last region back to the first', () => {
 		const { editor, cursor } = makeEditor(TWO_BLOCK_DOC);
-		cursor.line = TWO_BLOCK_DOC.length - 1; // past the last block
+		cursor.line = TWO_BLOCK_DOC.length - 1;
 		new ConflictMarkerNavigator().navigateForward(editor);
 		expect(editor.getCursor().line).toBe(0);
 	});
 
-	it('advances to the next block when cursor sits between two blocks', () => {
+	it('advances to the next region when cursor sits between two regions', () => {
 		const { editor, cursor } = makeEditor(TWO_BLOCK_DOC);
 		cursor.line = BLOCK_A.length; // on the 'mid' separator line
 		new ConflictMarkerNavigator().navigateForward(editor);
 		expect(editor.getCursor().line).toBe(BLOCK_B_START);
 	});
 
-	it('advances to the next when blocks are adjacent (no gap line)', () => {
+	it('advances to the next when regions are adjacent (no gap line)', () => {
 		const doc = [...BLOCK_A, ...BLOCK_B];
 		const { editor, cursor } = makeEditor(doc);
-		cursor.line = 0; // inside block A
+		cursor.line = 0;
 		new ConflictMarkerNavigator().navigateForward(editor);
-		// Block B starts immediately after block A.
 		expect(editor.getCursor().line).toBe(BLOCK_A.length);
 	});
 });
@@ -135,23 +122,23 @@ describe('ConflictMarkerNavigator — navigateForward', () => {
 // ---------------------------------------------------------------------------
 
 describe('ConflictMarkerNavigator — navigateBackward', () => {
-	it('moves cursor to the previous conflict block', () => {
+	it('moves cursor to the previous conflict region', () => {
 		const { editor, cursor } = makeEditor(TWO_BLOCK_DOC);
-		cursor.line = BLOCK_B_START; // at block B
+		cursor.line = BLOCK_B_START;
 		new ConflictMarkerNavigator().navigateBackward(editor);
 		expect(editor.getCursor().line).toBe(0);
 	});
 
-	it('wraps from the first block to the last', () => {
+	it('wraps from the first region to the last', () => {
 		const { editor, cursor } = makeEditor(TWO_BLOCK_DOC);
-		cursor.line = 0; // at block A
+		cursor.line = 0;
 		new ConflictMarkerNavigator().navigateBackward(editor);
 		expect(editor.getCursor().line).toBe(BLOCK_B_START);
 	});
 
-	it('goes to the previous block when cursor sits between two blocks', () => {
+	it('goes to the previous region when cursor sits between two regions', () => {
 		const { editor, cursor } = makeEditor(TWO_BLOCK_DOC);
-		cursor.line = BLOCK_A.length; // on the 'mid' separator line
+		cursor.line = BLOCK_A.length;
 		new ConflictMarkerNavigator().navigateBackward(editor);
 		expect(editor.getCursor().line).toBe(0);
 	});
@@ -164,7 +151,7 @@ describe('ConflictMarkerNavigator — navigateBackward', () => {
 describe('ConflictMarkerNavigator — single-conflict, cursor inside', () => {
 	it('does not move cursor forward when already inside the only conflict', () => {
 		const { editor, cursor } = makeEditor([...BLOCK_A]);
-		cursor.line = 3; // deep inside the block
+		cursor.line = 3;
 		new ConflictMarkerNavigator().navigateForward(editor);
 		expect(editor.getCursor().line).toBe(3);
 	});
@@ -183,13 +170,8 @@ describe('ConflictMarkerNavigator — single-conflict, cursor inside', () => {
 		expect(vi.mocked(Notice)).toHaveBeenCalledWith('No other conflicts.');
 	});
 
-	// The banner/highlight path must be reached even on the first invocation
-	// when the cursor starts inside the only conflict.  We can't inspect CM6
-	// panel state here, but we CAN confirm navigate() did NOT throw and DID
-	// emit the notice — meaning it ran past the old early-return that skipped
-	// showBanner/setHighlight entirely.
 	it('completes navigation (no throw) with cursor anywhere in the conflict on first use', () => {
-		for (const line of [0, 1, 2, 3, 4, 5, 6]) {
+		for (const line of [0, 1, 2, 3, 4, 5, 6, 7]) {
 			const { editor, cursor } = makeEditor([...BLOCK_A]);
 			cursor.line = line;
 			vi.mocked(Notice).mockClear();
@@ -202,14 +184,14 @@ describe('ConflictMarkerNavigator — single-conflict, cursor inside', () => {
 describe('ConflictMarkerNavigator — single-conflict, cursor outside', () => {
 	it('navigates forward to the conflict when cursor is before it', () => {
 		const { editor, cursor } = makeEditor(['before', ...BLOCK_A]);
-		cursor.line = 0; // above the conflict, which starts at line 1
+		cursor.line = 0;
 		new ConflictMarkerNavigator().navigateForward(editor);
 		expect(editor.getCursor().line).toBe(1);
 	});
 
 	it('wraps to the conflict when cursor is after it (forward)', () => {
 		const { editor, cursor } = makeEditor([...BLOCK_A, 'after']);
-		cursor.line = BLOCK_A.length; // below the conflict
+		cursor.line = BLOCK_A.length;
 		new ConflictMarkerNavigator().navigateForward(editor);
 		expect(editor.getCursor().line).toBe(0);
 	});
@@ -223,68 +205,54 @@ describe('ConflictMarkerNavigator — single-conflict, cursor outside', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Block parsing correctness
+// Region parsing correctness
 // ---------------------------------------------------------------------------
 
-describe('ConflictMarkerNavigator — block parsing', () => {
-	it('parses a block with multiple content lines in each section', () => {
-		// Navigate successfully into a multi-line block.
-		const doc = [
-			MARKER_LOCAL,
-			'local 1',
-			'local 2',
-			MARKER_BASE,
-			'base 1',
-			'base 2',
-			MARKER_SEP,
-			'remote 1',
-			'remote 2',
-			MARKER_GROUP,
-		];
+describe('ConflictMarkerNavigator — region parsing', () => {
+	it('parses a region with multiple content lines per segment', () => {
+		const doc = regionLines([
+			['base', ['base 1', 'base 2']],
+			['A1', ['local 1', 'local 2']],
+			['A2', ['remote 1', 'remote 2']],
+		]);
 		const { editor } = makeEditor(doc);
 		new ConflictMarkerNavigator().navigateForward(editor);
-		expect(editor.getCursor().line).toBe(0); // found the block
+		expect(editor.getCursor().line).toBe(0);
 	});
 
-	it('finds all three blocks in a three-conflict document', () => {
+	it('parses a region with three alternatives (A1/A2/A3)', () => {
+		const doc = regionLines([['base', ['O']], ['A1', ['A']], ['A2', ['B']], ['A3', ['C']]]);
+		const { editor } = makeEditor(doc);
+		new ConflictMarkerNavigator().navigateForward(editor);
+		expect(editor.getCursor().line).toBe(0);
+	});
+
+	it('finds all three regions in a three-conflict document', () => {
 		const doc = [...BLOCK_A, MID, ...BLOCK_B, MID, ...BLOCK_A];
-		const blockCStart = BLOCK_A.length + 1 + BLOCK_B.length + 1;
+		const blockCStart = BLOCK_A.length + 1 + BLOCK_B.length + 1; // 18
 		const { editor, cursor } = makeEditor(doc);
-		cursor.line = BLOCK_B_START; // at block B
+		cursor.line = BLOCK_B_START;
 		new ConflictMarkerNavigator().navigateForward(editor);
-		expect(editor.getCursor().line).toBe(blockCStart); // advanced to block C
+		expect(editor.getCursor().line).toBe(blockCStart);
 	});
 
-	it('does not parse a block where MARKER_SEP precedes MARKER_BASE', () => {
-		// Parser requires BASE before SEP; wrong-order document yields no valid blocks.
-		const doc = [
-			MARKER_LOCAL,
-			'local',
-			MARKER_SEP,  // wrong order: should come after MARKER_BASE
-			'remote',
-			MARKER_BASE,
-			'base',
-			MARKER_GROUP,
-		];
-		const { editor, cursor } = makeEditor(doc);
-		cursor.line = 4;
+	it('skips a region with only one segment (no real choice)', () => {
+		const doc = [MARKER_OPEN, segmentMarker('A1'), 'only', MARKER_CLOSE];
+		const { editor } = makeEditor(doc);
 		new ConflictMarkerNavigator().navigateForward(editor);
-		expect(editor.getCursor().line).toBe(4); // cursor did not move
 		expect(vi.mocked(Notice)).toHaveBeenCalledWith('No conflicts found.');
 	});
 
-	it('does not parse an unterminated block (missing MARKER_GROUP)', () => {
-		const doc = [MARKER_LOCAL, 'local', MARKER_BASE, 'base', MARKER_SEP, 'remote'];
-		const { editor, cursor } = makeEditor(doc);
-		cursor.line = 0;
+	it('does not parse an unterminated region (missing MARKER_CLOSE)', () => {
+		const doc = [MARKER_OPEN, segmentMarker('base'), 'base', segmentMarker('A1'), 'a'];
+		const { editor } = makeEditor(doc);
 		new ConflictMarkerNavigator().navigateForward(editor);
-		expect(editor.getCursor().line).toBe(0);
 		expect(vi.mocked(Notice)).toHaveBeenCalledWith('No conflicts found.');
 	});
 });
 
 // ---------------------------------------------------------------------------
-// applyResolution
+// applyResolution — choosing exactly one segment
 // ---------------------------------------------------------------------------
 
 describe('ConflictMarkerNavigator — applyResolution', () => {
@@ -296,45 +264,38 @@ describe('ConflictMarkerNavigator — applyResolution', () => {
 		({ editor, getLines } = makeEditor([...BLOCK_A]));
 	});
 
-	it('keep local: replaces block with local lines only', () => {
-		nav.applyResolution(editor, BLOCK_A_DESC, BLOCK_A_DESC.localLines);
+	it('choose A1: replaces the region with that alternative only', () => {
+		nav.applyResolution(editor, BLOCK_A_DESC, ['LOCAL LINE']);
 		expect(getLines()).toEqual(['LOCAL LINE']);
 	});
 
-	it('keep group: replaces block with remote lines only', () => {
-		nav.applyResolution(editor, BLOCK_A_DESC, BLOCK_A_DESC.remoteLines);
+	it('choose A2: replaces the region with that alternative only', () => {
+		nav.applyResolution(editor, BLOCK_A_DESC, ['REMOTE LINE']);
 		expect(getLines()).toEqual(['REMOTE LINE']);
 	});
 
-	it('revert to base: replaces block with base lines only', () => {
-		nav.applyResolution(editor, BLOCK_A_DESC, BLOCK_A_DESC.baseLines);
+	it('choose base: replaces the region with the base segment only', () => {
+		nav.applyResolution(editor, BLOCK_A_DESC, ['BASE LINE']);
 		expect(getLines()).toEqual(['BASE LINE']);
 	});
 
-	it('keep all: concatenates all three content sections', () => {
-		const all = [...BLOCK_A_DESC.localLines, ...BLOCK_A_DESC.baseLines, ...BLOCK_A_DESC.remoteLines];
-		nav.applyResolution(editor, BLOCK_A_DESC, all);
-		expect(getLines()).toEqual(['LOCAL LINE', 'BASE LINE', 'REMOTE LINE']);
-	});
-
-	it('preserves lines before and after the replaced block', () => {
+	it('preserves lines before and after the replaced region', () => {
 		const { editor: e } = makeEditor(['before', ...BLOCK_A, 'after']);
-		const shifted = { ...BLOCK_A_DESC, startLine: 1, baseLine: 3, sepLine: 5, endLine: 7 };
-		nav.applyResolution(e, shifted, shifted.localLines);
+		const shifted: ConflictBlock = { ...BLOCK_A_DESC, startLine: 1, endLine: 8 };
+		nav.applyResolution(e, shifted, ['LOCAL LINE']);
 		expect(Array.from({ length: e.lineCount() }, (_, i) => e.getLine(i)))
 			.toEqual(['before', 'LOCAL LINE', 'after']);
 	});
 
-	it('positions cursor at startLine of the replaced block', () => {
+	it('positions cursor at startLine of the replaced region', () => {
 		const { editor: e } = makeEditor(['before', ...BLOCK_A, 'after']);
-		const shifted = { ...BLOCK_A_DESC, startLine: 1, baseLine: 3, sepLine: 5, endLine: 7 };
-		nav.applyResolution(e, shifted, shifted.localLines);
-		expect(e.getCursor().line).toBe(1); // startLine of the shifted block
+		const shifted: ConflictBlock = { ...BLOCK_A_DESC, startLine: 1, endLine: 8 };
+		nav.applyResolution(e, shifted, ['LOCAL LINE']);
+		expect(e.getCursor().line).toBe(1);
 	});
 
 	it('handles an empty resolution (removes all conflict lines)', () => {
 		nav.applyResolution(editor, BLOCK_A_DESC, []);
-		// replaceRange('', ...) leaves one empty line.
 		expect(editor.lineCount()).toBe(1);
 		expect(editor.getLine(0)).toBe('');
 	});
@@ -345,15 +306,12 @@ describe('ConflictMarkerNavigator — applyResolution', () => {
 // ---------------------------------------------------------------------------
 
 describe('ConflictMarkerNavigator — resolve and advance', () => {
-	it('after resolving the first of two blocks, navigates to the second', () => {
+	it('after resolving the first of two regions, navigates to the second', () => {
 		const { editor } = makeEditor(TWO_BLOCK_DOC);
-		// cursor starts at 0 (set by makeEditor default)
 		const nav = new ConflictMarkerNavigator();
 
-		// Resolve block A (7 lines → 1 'LOCAL LINE'). Block B shifts up by 6.
-		nav.applyResolution(editor, BLOCK_A_DESC, BLOCK_A_DESC.localLines);
-		// Document now: ['LOCAL LINE', 'mid', ...BLOCK_B] — block B starts at line 2.
-
+		// Resolve region A (8 lines → 1). Region B shifts up to line 2.
+		nav.applyResolution(editor, BLOCK_A_DESC, ['LOCAL LINE']);
 		nav.navigateForward(editor);
 		expect(editor.getCursor().line).toBe(2);
 	});
@@ -361,38 +319,34 @@ describe('ConflictMarkerNavigator — resolve and advance', () => {
 	it('after resolving the only conflict, reports no conflicts remain', () => {
 		const { editor } = makeEditor([...BLOCK_A]);
 		const nav = new ConflictMarkerNavigator();
-		nav.applyResolution(editor, BLOCK_A_DESC, BLOCK_A_DESC.localLines);
+		nav.applyResolution(editor, BLOCK_A_DESC, ['LOCAL LINE']);
 		nav.navigateForward(editor);
 		expect(vi.mocked(Notice)).toHaveBeenCalledWith('No conflicts found.');
 	});
 
 	it('sequences correctly through all three conflicts when resolving in order', () => {
-		// Three conflict blocks, each separated by 'mid'.
 		const doc = [...BLOCK_A, MID, ...BLOCK_B, MID, ...BLOCK_A];
 		const { editor } = makeEditor(doc);
 		const nav = new ConflictMarkerNavigator();
 
-		// 1. Resolve block A (lines 0–6 → 1 line). Blocks shift up by 6.
-		nav.applyResolution(editor, BLOCK_A_DESC, BLOCK_A_DESC.localLines);
-		// Doc: ['LOCAL LINE', 'mid', ...BLOCK_B (at 2–8), 'mid', ...BLOCK_A (at 10–16)]
-
-		nav.navigateForward(editor); // → block B at line 2
+		// 1. Resolve region A (lines 0–7 → 1). Regions shift up by 7.
+		nav.applyResolution(editor, BLOCK_A_DESC, ['LOCAL LINE']);
+		nav.navigateForward(editor); // → region B at line 2
 		expect(editor.getCursor().line).toBe(2);
 
-		// 2. Resolve block B (now at lines 2–8 → 1 line). Remaining block shifts up.
-		const block2 = { startLine: 2, baseLine: 4, sepLine: 6, endLine: 8,
-			localLines: ['X'], baseLines: ['Y'], remoteLines: ['Z'] };
-		nav.applyResolution(editor, block2, block2.localLines);
-		// Doc: ['LOCAL LINE', 'mid', 'X', 'mid', ...BLOCK_A (at 4–10)]
-
-		nav.navigateForward(editor); // → final block A at line 4
+		// 2. Resolve region B (now at lines 2–9 → 1).
+		const block2: ConflictBlock = {
+			startLine: 2, endLine: 9,
+			segments: [{ label: 'base', lines: ['Y'] }, { label: 'A1', lines: ['X'] }, { label: 'A2', lines: ['Z'] }],
+		};
+		nav.applyResolution(editor, block2, ['X']);
+		nav.navigateForward(editor); // → final region at line 4
 		expect(editor.getCursor().line).toBe(4);
 
-		// 3. Resolve the last block.
-		const block3 = { ...BLOCK_A_DESC, startLine: 4, baseLine: 6, sepLine: 8, endLine: 10 };
-		nav.applyResolution(editor, block3, block3.localLines);
-
-		nav.navigateForward(editor); // → no conflicts remain
+		// 3. Resolve the last region.
+		const block3: ConflictBlock = { ...BLOCK_A_DESC, startLine: 4, endLine: 11 };
+		nav.applyResolution(editor, block3, ['LOCAL LINE']);
+		nav.navigateForward(editor);
 		expect(vi.mocked(Notice)).toHaveBeenCalledWith('No conflicts found.');
 	});
 });
@@ -415,7 +369,7 @@ describe('ConflictMarkerNavigator — notice messages', () => {
 		expect(vi.mocked(Notice)).toHaveBeenCalledWith('No other conflicts.');
 	});
 
-	it('does not emit "No other conflicts." when navigating between multiple blocks', () => {
+	it('does not emit "No other conflicts." when navigating between multiple regions', () => {
 		const { editor, cursor } = makeEditor(TWO_BLOCK_DOC);
 		cursor.line = 0;
 		new ConflictMarkerNavigator().navigateForward(editor);

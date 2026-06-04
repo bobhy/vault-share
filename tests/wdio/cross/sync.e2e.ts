@@ -246,7 +246,7 @@ describe("Cross-vault sync", () => {
 
 	// ── Diff3 merge ──────────────────────────────────────────────────────────
 
-	it("merges conflicting edits to the same line with diff3 markers", async () => {
+	it("merges conflicting edits to the same line with N-way conflict markers", async () => {
 		const { primary, peer } = vaults();
 		const testPath     = `merge-test-${Date.now()}.md`;
 		const baseContent  = "line 1\nshared line\nline 3";
@@ -267,15 +267,18 @@ describe("Cross-vault sync", () => {
 		await runBulkSync(peer);
 		await runBulkSync(primary);
 
+		// N-way format: base + alternatives A1 (local = peer) and A2 (remote = primary),
+		// each introduced by a labelled separator. See specs/nway-conflict.md.
 		const expectedMerged = [
 			"line 1",
-			"`<<<<< local`",
-			"peer edit",
-			"`||||| base`",
+			"`<<<<< conflict`",
+			"`===== base`",
 			"shared line",
-			"`=====`",
+			"`===== A1`",
+			"peer edit",
+			"`===== A2`",
 			"primary edit",
-			"`>>>>> group`",
+			"`>>>>> conflict`",
 			"line 3",
 		].join("\n");
 

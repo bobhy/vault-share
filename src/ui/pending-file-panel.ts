@@ -11,7 +11,7 @@
  */
 import type { Candidate, SyncContext } from '../sync/types';
 import { computeMerge } from '../sync/resolution-executor';
-import { isMergeEligible } from '../sync/merge';
+import { isMergeEligible } from '../sync/nway-merge';
 
 /**
  * Mutable reference to the editable textarea created for text-conflict candidates.

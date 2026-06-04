@@ -33,7 +33,7 @@ import {
 	executeDeleteBoth,
 	writeResolvedMerge,
 } from '../sync/resolution-executor';
-import { hasConflictMarkers } from '../sync/merge';
+import { hasConflictMarkers } from '../sync/nway-merge';
 import { loadFilePanels, type TextareaRef } from './pending-file-panel';
 
 const TEXT_EXTENSIONS = new Set([

@@ -15,6 +15,7 @@ import type { Candidate, SyncContext } from './types';
 import type { CandidateStore } from './candidate-store';
 import { planAction } from './decision-engine';
 import { syncOneFile } from './file-syncer';
+import { hasConflictMarkers, isMergeEligible } from './nway-merge';
 import { ConfirmationModal } from '../ui/confirmation-modal';
 import { GDriveError } from '../gdrive/errors';
 
@@ -79,6 +80,18 @@ export async function singleFileSync(
 		if (actionType === 'noOp') {
 			ctx.logger.debug(`singleFileSync: ${path} — no action needed`);
 			return;
+		}
+
+		// Push-hold: never share a file the user is still resolving. A local text
+		// file that carries conflict markers stays put until it is conflict-free;
+		// only the eventual clean resolution propagates upward.
+		if (actionType === 'push' && isMergeEligible(path) && localSide) {
+			const localText = new TextDecoder().decode(await ctx.localFs.read(path));
+			if (hasConflictMarkers(localText)) {
+				ctx.logger.info(`singleFileSync: holding push of ${path} — unresolved conflict markers`);
+				setStatusBar(`Holding ${basename(path)} — resolve conflict markers to share`);
+				return;
+			}
 		}
 
 		ctx.logger.debug(`singleFileSync: ${path} — action=${actionType}`);

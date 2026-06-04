@@ -8,7 +8,7 @@ import type { SyncStore } from './store';
 import type { StatsTracker } from './stats-tracker';
 import type { Logger } from '../logger';
 import { mockSettings } from '../__mocks__/sync-test-helpers';
-import { MARKER_LOCAL } from './merge';
+import { MARKER_OPEN } from './nway-merge';
 import {
 	executeAction,
 	executeBackOut,
@@ -442,7 +442,7 @@ describe('computeMerge', () => {
 		const result = await computeMerge(makeCandidate('note.md', 'conflict', 'drive-c2'), ctx);
 
 		expect(result.hasConflicts).toBe(true);
-		expect(result.content).toContain(MARKER_LOCAL);
+		expect(result.content).toContain(MARKER_OPEN);
 		expect(result.content).toContain('LOCAL');
 		expect(result.content).toContain('REMOTE');
 	});
