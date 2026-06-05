@@ -193,10 +193,21 @@ export default class VaultSharePlugin extends Plugin {
 		});
 
 		// 13. Sidebar log view
-		this.registerView(SYNC_LOG_VIEW_TYPE, leaf => new SyncLogView(leaf, this.logger, () => {
-			this.settings.logToSidebar = false;
-			void this.saveData(this.settings);
-		}));
+		this.registerView(SYNC_LOG_VIEW_TYPE, leaf => new SyncLogView(
+			leaf,
+			this.logger,
+			() => this.settings.logSeverity,
+			severity => {
+				// The Logger reads logSeverity on every append, so this takes
+				// effect on the next log line without re-wiring anything.
+				this.settings.logSeverity = severity;
+				void this.saveData(this.settings);
+			},
+			() => {
+				this.settings.logToSidebar = false;
+				void this.saveData(this.settings);
+			},
+		));
 		if (this.settings.logToSidebar) {
 			this.app.workspace.onLayoutReady(() => { void this.activateSidebarLogView(); });
 		}

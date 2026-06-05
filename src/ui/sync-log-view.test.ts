@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { WorkspaceLeaf } from 'obsidian';
 import { App } from 'obsidian';
 import { SyncLogView } from './sync-log-view';
-import { Logger } from '../logger';
+import { Logger, type LogSeverity } from '../logger';
 
 function makeLeaf(): WorkspaceLeaf {
 	return { app: new App() } as unknown as WorkspaceLeaf;
@@ -12,13 +12,23 @@ function makeLogger(): Logger {
 	return new Logger(() => 'DEBUG', () => 100);
 }
 
+/** The scrollable log list inside the view content (built by onOpen). */
+function logList(view: SyncLogView): HTMLElement {
+	const root = view.containerEl.children[1] as HTMLElement;
+	return root.querySelector('.vault-share-log-container') as HTMLElement;
+}
+
 describe('SyncLogView', () => {
 	let view: SyncLogView;
 	let logger: Logger;
+	let severity: LogSeverity;
+	let setSeverity: ReturnType<typeof vi.fn<(s: LogSeverity) => void>>;
 
 	beforeEach(() => {
 		logger = makeLogger();
-		view = new SyncLogView(makeLeaf(), logger);
+		severity = 'DEBUG';
+		setSeverity = vi.fn<(s: LogSeverity) => void>(s => { severity = s; });
+		view = new SyncLogView(makeLeaf(), logger, () => severity, setSeverity);
 	});
 
 	describe('metadata', () => {
@@ -36,13 +46,17 @@ describe('SyncLogView', () => {
 	});
 
 	describe('refresh()', () => {
-		it('renders log entries in containerEl.children[1]', () => {
+		beforeEach(async () => {
+			await view.onOpen();
+		});
+
+		it('renders log entries in the scrollable list', () => {
 			logger.info('hello world');
 			view.refresh();
 
-			const container = view.containerEl.children[1] as HTMLElement;
-			expect(container.children.length).toBe(1);
-			const row = container.children[0] as HTMLElement;
+			const list = logList(view);
+			expect(list.children.length).toBe(1);
+			const row = list.children[0] as HTMLElement;
 			expect(row.classList.contains('vault-share-log-info')).toBe(true);
 			expect(row.textContent).toContain('hello world');
 			expect(row.textContent).toContain('[INFO]');
@@ -52,8 +66,7 @@ describe('SyncLogView', () => {
 			logger.error('something broke', 'stack trace here');
 			view.refresh();
 
-			const container = view.containerEl.children[1] as HTMLElement;
-			const detail = container.querySelector('.vault-share-log-detail');
+			const detail = logList(view).querySelector('.vault-share-log-detail');
 			expect(detail?.textContent).toBe('stack trace here');
 		});
 
@@ -62,10 +75,10 @@ describe('SyncLogView', () => {
 			logger.warning('second');
 			view.refresh();
 
-			const container = view.containerEl.children[1] as HTMLElement;
-			expect(container.children.length).toBe(2);
-			expect(container.children[0]!.textContent).toContain('first');
-			expect(container.children[1]!.textContent).toContain('second');
+			const list = logList(view);
+			expect(list.children.length).toBe(2);
+			expect(list.children[0]!.textContent).toContain('first');
+			expect(list.children[1]!.textContent).toContain('second');
 		});
 
 		it('clears previous entries on re-render', () => {
@@ -75,9 +88,9 @@ describe('SyncLogView', () => {
 			logger.info('new');
 			view.refresh();
 
-			const container = view.containerEl.children[1] as HTMLElement;
-			expect(container.children.length).toBe(1);
-			expect(container.textContent).toContain('new');
+			const list = logList(view);
+			expect(list.children.length).toBe(1);
+			expect(list.textContent).toContain('new');
 		});
 	});
 
@@ -96,18 +109,35 @@ describe('SyncLogView', () => {
 			expect(refreshSpy).toHaveBeenCalled();
 		});
 
-		it('sets tabIndex on the content container', async () => {
+		it('sets tabIndex on the scrollable list', async () => {
 			await view.onOpen();
-			const container = view.containerEl.children[1] as HTMLElement;
-			expect(container.tabIndex).toBe(0);
+			expect(logList(view).tabIndex).toBe(0);
 		});
 
-		it('adds two action buttons', async () => {
-			const addActionSpy = vi.spyOn(view, 'addAction');
+		it('renders a toolbar with copy, clear, and a log-level dropdown', async () => {
 			await view.onOpen();
-			expect(addActionSpy).toHaveBeenCalledTimes(2);
-			expect(addActionSpy).toHaveBeenCalledWith('copy', 'Copy log to clipboard', expect.any(Function));
-			expect(addActionSpy).toHaveBeenCalledWith('trash', 'Clear log', expect.any(Function));
+			const root = view.containerEl.children[1] as HTMLElement;
+
+			// Copy + clear render as two ExtraButtonComponent action elements.
+			const actions = root.querySelectorAll('.vault-share-log-toolbar-actions .extra-settings-button');
+			expect(actions.length).toBe(2);
+
+			// Log-level dropdown reflects the current severity.
+			const select = root.querySelector('.vault-share-log-toolbar select') as HTMLSelectElement;
+			expect(select).not.toBeNull();
+			expect(select.value).toBe('DEBUG');
+		});
+
+		it('changing the dropdown persists the new severity', async () => {
+			await view.onOpen();
+			const root = view.containerEl.children[1] as HTMLElement;
+			const select = root.querySelector('.vault-share-log-toolbar select') as HTMLSelectElement;
+
+			select.value = 'WARNING';
+			select.dispatchEvent(new Event('change'));
+
+			expect(setSeverity).toHaveBeenCalledWith('WARNING');
+			expect(severity).toBe('WARNING');
 		});
 	});
 
@@ -122,15 +152,15 @@ describe('SyncLogView', () => {
 		});
 
 		it('empties the containerEl', async () => {
+			await view.onOpen();
 			logger.info('msg');
-			view.refresh();
 			await view.onClose();
 			expect(view.containerEl.children.length).toBe(0);
 		});
 
 		it('calls onViewClose callback if provided', async () => {
 			const onClose = vi.fn();
-			const view2 = new SyncLogView(makeLeaf(), logger, onClose);
+			const view2 = new SyncLogView(makeLeaf(), logger, () => severity, setSeverity, onClose);
 			await view2.onClose();
 			expect(onClose).toHaveBeenCalledTimes(1);
 		});
