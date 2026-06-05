@@ -7,6 +7,7 @@ import type { DriveFsAdapter, DriveFileSide } from './drive-fs';
 import type { SyncStore } from './store';
 import type { StatsTracker } from './stats-tracker';
 import type { Logger } from '../logger';
+import { SyncActivity } from './sync-activity';
 import { mockSettings } from '../__mocks__/sync-test-helpers';
 import { MARKER_OPEN } from './nway-merge';
 import {
@@ -203,6 +204,7 @@ function makeCtx(): {
 		driveFs,
 		store,
 		statsTracker: stubStats,
+		activity: new SyncActivity(),
 		settings: () => mockSettings(),
 		clientId: 'abcd1234-0000-0000-0000-000000000000',
 		driveFolderId: () => 'root-folder-id',

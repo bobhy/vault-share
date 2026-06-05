@@ -205,24 +205,25 @@
 	margin-bottom: 12px;
 }
 
-.vault-share-sharing-status-state {
+.vault-share-sharing-status-activity {
 	flex: 1 1 100%;
 	margin: 0 0 4px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.vault-share-sharing-status-activity-label {
 	font-weight: var(--font-semibold);
+}
+
+.vault-share-sharing-status-activity-path {
+	color: var(--text-muted);
+	font-family: var(--font-monospace);
 }
 
 .vault-share-sharing-status-btn {
 	font-size: var(--font-ui-small);
-}
-
-.vault-share-sharing-status-notice {
-	color: var(--text-muted);
-	font-size: var(--font-ui-small);
-	margin-top: 8px;
-}
-
-.vault-share-sharing-status-notice p {
-	margin: 0;
 }
 
 .vault-share-sharing-status-empty {
@@ -248,7 +249,7 @@
 	padding: 4px 8px;
 }
 
-.vault-share-sharing-status-row:hover {
+.vault-share-sharing-status-row.is-clickable:hover {
 	background: var(--background-modifier-hover);
 	cursor: pointer;
 }

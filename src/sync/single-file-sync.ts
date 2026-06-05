@@ -102,6 +102,7 @@ export async function singleFileSync(
 
 		// applyFileResult upserts (markSynced for cached, insertSynced for new),
 		// so the existing/new distinction doesn't need to be handled here.
+		// syncOneFile already managed the "Current file" activity signal.
 		await candidateStore.applyFileResult(path, actionType, fileResult);
 
 		// If conflict files were created (keep-both / delete-conflict), reopen the view.

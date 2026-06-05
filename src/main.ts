@@ -27,6 +27,7 @@ import { LocalFs } from './sync/local-fs';
 import { DriveFsAdapter } from './sync/drive-fs';
 import { BulkSync } from './sync/bulk-sync';
 import { CandidateStore } from './sync/candidate-store';
+import { SyncActivity } from './sync/sync-activity';
 import { SyncScheduler } from './sync/scheduler';
 import { SyncContext } from './sync/types';
 import { VaultShareSettingTab } from './ui/settings-tab';
@@ -124,6 +125,14 @@ export default class VaultSharePlugin extends Plugin {
 			});
 		}
 
+		// Live activity tracker for the Sharing Status panel's "Current file" /
+		// running indicators. Unlike CandidateStore.onChange (which covers
+		// persistent state), this carries the transient "a pass is running /
+		// syncing file X" signal. Threaded through SyncContext so syncOneFile —
+		// the single place every sync path funnels through — owns the per-file
+		// "Current file" signal.
+		const syncActivity = new SyncActivity();
+
 		// 10. Build SyncContext
 		const ctx: SyncContext = {
 			app: this.app,
@@ -135,6 +144,7 @@ export default class VaultSharePlugin extends Plugin {
 			clientId: this.clientId,
 			driveFolderId: () => this.driveFolderId,
 			logger: this.logger,
+			activity: syncActivity,
 		};
 
 		// 11. CandidateStore — single source of truth for all per-file sharing state
@@ -153,6 +163,10 @@ export default class VaultSharePlugin extends Plugin {
 			this.updateDeferralStatusBar();
 			this.refreshSharingStatusViews();
 		});
+
+		// Re-render the Sharing Status panel whenever live activity changes (a bulk
+		// pass starts/stops, advances to the next file, or single-file sync runs).
+		syncActivity.onChange(() => { this.refreshSharingStatusViews(); });
 
 		// Warm the in-memory cache so isPausedSync() and isDeferred() are accurate
 		// from the very first scheduler tick.

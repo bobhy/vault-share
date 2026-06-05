@@ -16,6 +16,7 @@ import type { SyncStore } from './store';
 import type { StatsTracker } from './stats-tracker';
 import type { LocalFs } from './local-fs';
 import type { DriveFsAdapter } from './drive-fs';
+import type { SyncActivity } from './sync-activity';
 
 /** One side's (local or remote) view of a file. */
 export interface FileSide {
@@ -242,4 +243,11 @@ export interface SyncContext {
 	clientId: string;
 	driveFolderId: () => string;  // getter so re-resolution after log in is visible
 	logger: Logger;
+	/**
+	 * Live activity tracker. {@link syncOneFile} reports the file it is currently
+	 * processing here (`setCurrentPath`), so every sync path — bulk, single-file,
+	 * and manual resolution — drives the Sharing Status "Current file" indicator
+	 * from one place. `BulkSync` additionally reports the pass-level running flag.
+	 */
+	activity: SyncActivity;
 }

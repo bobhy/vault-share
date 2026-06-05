@@ -1,11 +1,21 @@
 /**
  * Sidebar view that lets the user inspect and control the sharing process.
  *
- * Two display modes: while sharing is running the view shows only a status
- * banner and a "Pause sharing" button; while paused, it shows a per-action-
- * type count table whose rows open the `PendingListModal`. All
- * candidate state is read directly from {@link CandidateStore} via subscribe-
- * and-re-render — there is no separate snapshot in this view.
+ * A single always-on layout (no separate running/paused modes):
+ *
+ * 1. **Live status section** — the bulk-sync state (Paused / Running / Idle)
+ *    with the path of the file currently being shared, plus the file
+ *    single-file sync is currently processing. Both lines are blank when idle.
+ * 2. **Pause/Resume + Refresh buttons** — Refresh is enabled only while paused
+ *    (live counts already update from running passes otherwise).
+ * 3. **Per-operation count table** — `Pending` (Default + Approved) and
+ *    `Deferred` (held-back) counts per action type. Always visible and live;
+ *    rows are clickable (opening {@link PendingListModal}) only while paused.
+ *
+ * Persistent candidate state is read directly from {@link CandidateStore}; the
+ * transient "currently sharing" signal comes from {@link SyncActivity}. Both
+ * fire change notifications wired in `main.ts` to re-render this view — there
+ * is no separate snapshot held here.
  *
  * @packageDocumentation
  */
@@ -36,22 +46,19 @@ const STATUS_ROWS: StatusRow[] = [
 /**
  * Sidebar panel for manually inspecting and controlling the sharing process.
  *
- * Reads all candidate state from {@link CandidateStore} — no in-memory
- * `viewCandidates` snapshot.  Refreshes reactively whenever
- * `candidateStore.onChanged` fires (wired in `main.ts`).
+ * Reads candidate state from {@link CandidateStore} and live activity from
+ * {@link SyncActivity} — no in-memory snapshot.  Refreshes reactively whenever
+ * either store's change notification fires (both wired in `main.ts`).
  *
- * **While sharing is running** the view shows only the current state and a
- * "Pause sharing" button, plus an informational banner.  Candidate counts are
- * intentionally hidden — they are a moving target while sync is active.
+ * The layout is always-on: a live status section (bulk state + currently-shared
+ * file, plus the single-file-sync file), Pause/Resume and Refresh buttons, and a
+ * per-operation count table with `Pending` (Default + Approved) and `Deferred`
+ * (held-back) columns.  The table is always visible and updates live as the
+ * engine works; its rows open the {@link PendingListModal} only while paused.
  *
- * **While paused** the view shows the queued count (the grand total awaiting
- * resume — pending + deferred), a "Resume sharing" button, a "Refresh" button,
- * and a per-operation-type table with `Pending` (Default + Approved) and
- * `Deferred` (held-back) counts.  Tapping a table row opens the
- * `PendingListModal` for that type.
- *
- * The "Refresh" button triggers {@link BulkSync.planOnly} which calls
- * `CandidateStore.reconcile()` internally, then re-renders the view.
+ * The "Refresh" button (enabled only while paused) triggers
+ * {@link BulkSync.planOnly}, which calls `CandidateStore.reconcile()`
+ * internally, then re-renders the view.
  */
 export class SharingStatusView extends ItemView {
 	private isRefreshing = false;
@@ -95,7 +102,7 @@ export class SharingStatusView extends ItemView {
 		this.containerEl.empty();
 	}
 
-	/** Re-renders the view with the latest paused state and candidate counts. */
+	/** Re-renders the view with the latest paused state, live activity, and counts. */
 	async refresh(): Promise<void> {
 		const container = this.containerEl.children[1] as HTMLElement | undefined;
 		if (!container) return;
@@ -104,22 +111,30 @@ export class SharingStatusView extends ItemView {
 		container.addClass('vault-share-sharing-status-container');
 
 		const paused = await this.candidateStore.isPaused();
+		const activity = this.ctx.activity.getSnapshot();
 		const allCandidates = this.candidateStore.getAll().filter(c => c.state !== 'Synced');
+		const totalCount = allCandidates.length;
 
-		// ── State header (always shown) ────────────────────────────────────
 		const header = container.createDiv({ cls: 'vault-share-sharing-status-header' });
 
-		// "Queued" is the grand total awaiting resume — pending (Default +
-		// Approved) plus deferred (held back). The per-type table below breaks
-		// this down into Pending and Deferred columns.
-		const totalCount = allCandidates.length;
-		header.createEl('p', {
-			cls: 'vault-share-sharing-status-state',
-			text: paused
-				? `Sharing is paused — ${totalCount} file${totalCount === 1 ? '' : 's'} queued`
-				: 'Sharing is running',
-		});
+		// ── Live status section (always shown) ─────────────────────────────
+		// Bulk state: Paused (user flag) takes precedence; otherwise Running
+		// reflects an in-flight pass and Idle is the enabled-but-waiting state.
+		const bulkState = paused ? 'Paused' : activity.bulkRunning ? 'Running' : 'Idle';
+		// Pending = will be shared on resume (Default + Approved); Deferred =
+		// held back. Together they total the non-Synced candidate population.
+		const deferred = allCandidates.filter(c => c.state === 'Deferred').length;
+		const pending = totalCount - deferred;
+		this.renderStatusLine(
+			header,
+			'Bulk sharing status: ',
+			`${bulkState}, pending files: ${pending}, deferred: ${deferred}`,
+		);
+		// Current file: whatever file the engine is syncing right now (bulk,
+		// single-file, or manual resolution), blank when idle.
+		this.renderStatusLine(header, 'Current file: ', activity.currentPath ?? '', 'path');
 
+		// ── Pause / Resume + Refresh buttons ────────────────────────────────
 		const pauseBtn = header.createEl('button', {
 			text: paused ? 'Resume sharing' : 'Pause sharing',
 			cls: paused ? 'mod-cta vault-share-sharing-status-btn' : 'vault-share-sharing-status-btn',
@@ -133,22 +148,13 @@ export class SharingStatusView extends ItemView {
 			});
 		});
 
-		// ── Running state: prompt to pause; don't show candidates ──────────
-		if (!paused) {
-			container.createDiv({ cls: 'vault-share-sharing-status-notice' }, notice => {
-				notice.createEl('p', {
-					text: 'Pause sharing to examine sharing status.',
-				});
-			});
-			return;
-		}
-
-		// ── Paused state: refresh button + candidate table ──────────────────
+		// Refresh re-enumerates via planOnly. Only useful while paused — a running
+		// pass keeps the counts live on its own — so it is disabled otherwise.
 		const refreshBtn = header.createEl('button', {
 			text: this.isRefreshing ? 'Refreshing…' : 'Refresh',
 			cls: 'vault-share-sharing-status-btn',
 		});
-		refreshBtn.disabled = this.isRefreshing;
+		refreshBtn.disabled = !paused || this.isRefreshing;
 		refreshBtn.addEventListener('click', () => {
 			this.isRefreshing = true;
 			void this.bulkSync.planOnly().then(() => {
@@ -157,6 +163,7 @@ export class SharingStatusView extends ItemView {
 			});
 		});
 
+		// ── Per-operation count table (always shown, live) ──────────────────
 		if (totalCount === 0) {
 			container.createEl('p', {
 				cls: 'vault-share-sharing-status-empty',
@@ -192,18 +199,46 @@ export class SharingStatusView extends ItemView {
 			const pending = candidates.filter(c => c.state !== 'Deferred').length;
 			const deferred = candidates.length - pending;
 
-			const tr = tbody.createEl('tr', { cls: 'vault-share-sharing-status-row is-clickable' });
+			// Rows are interactive only while paused; otherwise they are inert
+			// (the per-operation modal acts on a frozen plan, so it must not be
+			// reachable while the engine is mutating candidates).
+			const tr = tbody.createEl('tr', {
+				cls: paused
+					? 'vault-share-sharing-status-row is-clickable'
+					: 'vault-share-sharing-status-row',
+			});
 			tr.createEl('td', { text: row.vault });
 			tr.createEl('td', { text: row.description });
 			tr.createEl('td', { text: String(pending) });
 			tr.createEl('td', { text: String(deferred) });
 
-			tr.addEventListener('click', () => {
-				new PendingListModal(
-					this.app, row.type, this.candidateStore, this.ctx,
-					() => { void this.refresh(); },
-				).open();
-			});
+			if (paused) {
+				tr.addEventListener('click', () => {
+					new PendingListModal(
+						this.app, row.type, this.candidateStore, this.ctx,
+						() => { void this.refresh(); },
+					).open();
+				});
+			}
 		}
+	}
+
+	/**
+	 * Render one status line: a bold `label` followed by `value`. When
+	 * `valueKind` is `'path'` the value is styled as a muted, truncating file
+	 * path (used for the "Current file" line); otherwise it is plain text.
+	 */
+	private renderStatusLine(
+		parent: HTMLElement,
+		label: string,
+		value: string,
+		valueKind: 'text' | 'path' = 'text',
+	): void {
+		const line = parent.createDiv({ cls: 'vault-share-sharing-status-activity' });
+		line.createSpan({ cls: 'vault-share-sharing-status-activity-label', text: label });
+		line.createSpan({
+			cls: valueKind === 'path' ? 'vault-share-sharing-status-activity-path' : '',
+			text: value,
+		});
 	}
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { App } from 'obsidian';
 import { BulkSync } from './bulk-sync';
+import { SyncActivity } from './sync-activity';
 import type { Candidate, SyncContext } from './types';
 import type { CandidateStore } from './candidate-store';
 import type { ExcludeMatcher } from './exclude';
@@ -83,6 +84,7 @@ interface BulkSyncHarness {
 	setStatusBar: ReturnType<typeof vi.fn>;
 	onThresholdPause: ReturnType<typeof vi.fn>;
 	onSuspectDeletePause: ReturnType<typeof vi.fn>;
+	activity: SyncActivity;
 }
 
 function makeBulkSync(
@@ -91,7 +93,9 @@ function makeBulkSync(
 	approvedCandidates: Candidate[] = [],
 	remoteFileCount = 0,
 ): BulkSyncHarness {
+	const activity = new SyncActivity();
 	const ctx: SyncContext = {
+		activity,
 		app: new App(),
 		localFs: {
 			list: vi.fn().mockResolvedValue(
@@ -172,7 +176,7 @@ function makeBulkSync(
 
 	const bulk = new BulkSync(ctx, excludeMatcher, setStatusBar, candidateStore, onThresholdPause, onSuspectDeletePause);
 
-	return { bulk, candidateStore, setStatusBar, onThresholdPause, onSuspectDeletePause };
+	return { bulk, candidateStore, setStatusBar, onThresholdPause, onSuspectDeletePause, activity };
 }
 
 // ---------------------------------------------------------------------------
@@ -399,6 +403,27 @@ describe('BulkSync.run: normal planning path', () => {
 
 		expect(candidateStore.remove).toHaveBeenCalledWith('dead.md');
 		expect(candidateStore.markSynced).not.toHaveBeenCalled();
+	});
+
+	it('reports bulkRunning true during the pass and false after', async () => {
+		const pending = [makeCandidate('a.md', 'push'), makeCandidate('b.md', 'push')];
+		const { bulk, activity } = makeBulkSync(2, pending);
+
+		// syncOneFile is mocked here, so the per-file currentPath signal (which the
+		// real syncOneFile owns) is not exercised — that is covered in
+		// file-syncer.test. Here we only assert the pass-level running flag, which
+		// BulkSync.run sets directly. Capture it mid-pass via the mock.
+		const runningDuringPass: boolean[] = [];
+		pending.forEach(c => mockSyncOneFile.mockImplementationOnce(() => {
+			runningDuringPass.push(activity.getSnapshot().bulkRunning);
+			return Promise.resolve(makeSuccessResult(c.actionType));
+		}));
+
+		expect(activity.getSnapshot().bulkRunning).toBe(false);
+		await bulk.run();
+
+		expect(runningDuringPass).toEqual([true, true]);
+		expect(activity.getSnapshot().bulkRunning).toBe(false);
 	});
 });
 

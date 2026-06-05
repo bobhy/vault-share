@@ -222,6 +222,24 @@ describe('Sharing status panel — open does not auto-pause', () => {
 		}) as unknown as boolean;
 		expect(pausedAfter).toBe(false);
 	});
+
+	it('renders the always-on status section while sharing is running', async () => {
+		// The panel layout is always-on (no running/paused modes): the live status
+		// section is present whether or not sharing is paused. Here sharing runs,
+		// so the bulk-sync line must report a non-paused state (Running or Idle).
+		await browser.waitUntil(
+			async () => browser.executeObsidian(() =>
+				!!activeDocument.querySelector('.vault-share-sharing-status-activity'),
+			) as unknown as Promise<boolean>,
+			{ timeout: 15000, interval: 500, timeoutMsg: 'Status section did not appear within 15 s' },
+		);
+
+		const bulkLine = await browser.executeObsidian(() =>
+			activeDocument.querySelector('.vault-share-sharing-status-activity')?.textContent ?? '',
+		) as unknown as string;
+		expect(bulkLine).toContain('Bulk sharing status:');
+		expect(bulkLine).not.toContain('Paused');
+	});
 });
 
 // ── Threshold deferral ────────────────────────────────────────────────────────

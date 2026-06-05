@@ -7,6 +7,7 @@ import type { SyncStore } from './store';
 import type { StatsTracker } from './stats-tracker';
 import type { Logger } from '../logger';
 import { syncOneFile } from './file-syncer';
+import { SyncActivity } from './sync-activity';
 import { mockSettings } from '../__mocks__/sync-test-helpers';
 
 // ---------------------------------------------------------------------------
@@ -152,6 +153,7 @@ describe('syncOneFile conflict handling', () => {
 			driveFs,
 			store,
 			statsTracker: stubStats,
+			activity: new SyncActivity(),
 			settings: () => mockSettings({ fileConflict: 'Keep Both', textFileConflict: 'Keep Both' }),
 			clientId: 'abcd1234-0000-0000-0000-000000000000',
 			driveFolderId: () => 'root-folder-id',
@@ -256,6 +258,7 @@ describe('syncOneFile syncedState mtime correctness', () => {
 			driveFs,
 			store,
 			statsTracker: stubStats,
+			activity: new SyncActivity(),
 			settings: () => mockSettings(),
 			clientId: 'abcd1234-0000-0000-0000-000000000000',
 			driveFolderId: () => 'root-folder-id',
@@ -346,6 +349,7 @@ describe('syncOneFile noOp and pull edge-cases', () => {
 			driveFs,
 			store,
 			statsTracker: stubStats,
+			activity: new SyncActivity(),
 			settings: () => mockSettings(),
 			clientId: 'abcd1234-0000-0000-0000-000000000000',
 			driveFolderId: () => 'root-folder-id',
@@ -406,6 +410,7 @@ describe('syncOneFile Site 3: sha256 identical-content fast path', () => {
 			driveFs,
 			store,
 			statsTracker: stubStats,
+			activity: new SyncActivity(),
 			settings: () => mockSettings({ fileConflict: 'Keep Both', textFileConflict: 'Merge' }),
 			clientId: 'abcd1234-0000-0000-0000-000000000000',
 			driveFolderId: () => 'root-folder-id',
@@ -508,6 +513,7 @@ describe('syncOneFile delete actions', () => {
 			driveFs,
 			store,
 			statsTracker: stubStats,
+			activity: new SyncActivity(),
 			settings: () => mockSettings(),
 			clientId: 'abcd1234-0000-0000-0000-000000000000',
 			driveFolderId: () => 'root-folder-id',
@@ -587,5 +593,55 @@ describe('syncOneFile delete actions', () => {
 		expect(result.changed).toBe(true);
 		// localFs.delete called (it is a no-op when the TFile is absent in real Obsidian).
 		expect(deleteSpy).toHaveBeenCalledWith('note.md');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: "Current file" activity signal (owned by syncOneFile for all callers)
+// ---------------------------------------------------------------------------
+
+describe('syncOneFile activity signal', () => {
+	function setup() {
+		const { localFs, files: localFiles } = makeLocalFs();
+		const { driveFs, files: driveFiles } = makeDriveFs();
+		const { store } = makeSyncStore();
+		const activity = new SyncActivity();
+		const ctx: SyncContext = {
+			app: new App(),
+			localFs,
+			driveFs,
+			store,
+			statsTracker: stubStats,
+			activity,
+			settings: () => mockSettings(),
+			clientId: 'abcd1234-0000-0000-0000-000000000000',
+			driveFolderId: () => 'root-folder-id',
+			logger: stubLogger,
+		};
+		return { ctx, activity, localFiles, driveFiles };
+	}
+
+	it('sets currentPath to the file during the sync, then clears it', async () => {
+		const { ctx, activity, localFiles } = setup();
+		localFiles.set('note.md', { content: enc('hi'), mtime: 1000, size: 2 });
+
+		// Record every currentPath value the observable reports across the sync.
+		const seen: Array<string | null> = [];
+		activity.onChange(() => { seen.push(activity.getSnapshot().currentPath); });
+
+		await syncOneFile(makeCandidate({ path: 'note.md', actionType: 'push' }), ctx, true);
+
+		expect(seen).toEqual(['note.md', null]);
+		expect(activity.getSnapshot().currentPath).toBeNull();
+	});
+
+	it('clears currentPath even when the sync throws', async () => {
+		const { ctx, activity } = setup();
+		// No local file → push reads it and throws "Local file not found".
+		await expect(
+			syncOneFile(makeCandidate({ path: 'missing.md', actionType: 'push' }), ctx, true),
+		).rejects.toThrow(/Local file not found/);
+
+		expect(activity.getSnapshot().currentPath).toBeNull();
 	});
 });

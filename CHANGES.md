@@ -11,11 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - diff3 with 3+ clients was recursively nesting an already merged file with a new variant, producing garbled merged text.
 Changed the layout of a merged file (no longer exactly diff3), it's a flat N-way merged format that any number of clients can contribute to.  But:
   - only files changed from the same original base version can be merged into a file
-  - the conflict options are labelled "base", "A1", "A2" and are consistent within a file.  That is, all the conflicts from a given device will have the same label in every conflict region.
-  - but the numbering can change when some other device adds its conflicts.
   - Alternative versions in a conflict section are de-duped.  So if multiple devices contribute the same version, only one will appear in the merged file.
   - Once you start an edit session to resolve the merge conflicts, the file will not be shared until you resolve *all* the conflicts.  This keeps sharing from thrashing the other devices.
   - The catch-all treatment if we can't create a clean merge from local and group file is to rename them per "keep-both" merge strategy.
+- Sharing Status panel now shows live counts whether sharing is paused or not.  
 
 ## [1.0.1]
 

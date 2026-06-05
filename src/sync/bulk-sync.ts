@@ -129,10 +129,14 @@ export class BulkSync {
 			return this.inFlight;
 		}
 		this.inFlight = (async () => {
+			this.ctx.activity.setBulkRunning(true);
 			try {
 				return await this.doRun();
 			} finally {
 				this.inFlight = null;
+				// Per-file currentPath is owned by syncOneFile; here we only clear
+				// the pass-level running flag.
+				this.ctx.activity.setBulkRunning(false);
 			}
 		})();
 		return this.inFlight;

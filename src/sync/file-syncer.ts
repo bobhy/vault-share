@@ -23,11 +23,29 @@ import { sha256Hex } from './content-hash';
  * carries the post-sync file metadata so the caller can call
  * `candidateStore.markSynced()` without this function needing a store reference.
  * For delete actions and no-ops, `syncedState` is `undefined`.
+ *
+ * Reports the file as the engine's current activity ({@link SyncActivity}) for
+ * the span of its I/O, so every caller — bulk sync, single-file sync, and the
+ * manual resolution buttons — drives the Sharing Status "Current file"
+ * indicator from this one place, and it is always cleared, even on error.
  */
 export async function syncOneFile(
 	candidate: Candidate,
 	ctx: SyncContext,
 	_hasHistory: boolean,
+): Promise<SyncFileResult> {
+	ctx.activity.setCurrentPath(candidate.path);
+	try {
+		return await executeSyncAction(candidate, ctx);
+	} finally {
+		ctx.activity.setCurrentPath(null);
+	}
+}
+
+/** Run the I/O for one already-planned action; see {@link syncOneFile}. */
+async function executeSyncAction(
+	candidate: Candidate,
+	ctx: SyncContext,
 ): Promise<SyncFileResult> {
 	const rootFolderId = ctx.driveFolderId();
 	const sampler = { value: false };

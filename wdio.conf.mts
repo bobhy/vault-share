@@ -220,13 +220,21 @@ export async function cleanupTestDriveFolder(
 		const items = await plugin.api.listChildren(folderId);
 		let deleted = 0;
 		let failed = 0;
-		for (const item of items) {
-			try {
-				await plugin.api.deleteFile(item.id);
-				deleted++;
-			} catch {
-				// Best effort: a single failed delete should not abort cleanup.
-				failed++;
+		// Delete in small concurrent batches (mirrors createDriveFiles) instead of
+		// one serial round-trip per file — the dominant cost when resetAll() wipes
+		// a folder of hundreds of files before each scale scenario. Best effort: a
+		// single failed delete must not abort cleanup, so each rejection is caught
+		// and counted rather than thrown.
+		const BATCH = 10;
+		for (let i = 0; i < items.length; i += BATCH) {
+			const results = await Promise.all(
+				items.slice(i, i + BATCH).map(item =>
+					plugin.api.deleteFile(item.id).then(() => true).catch(() => false),
+				),
+			);
+			for (const ok of results) {
+				if (ok) deleted++;
+				else failed++;
 			}
 		}
 		return { listed: items.length, deleted, failed };
