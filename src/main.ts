@@ -71,7 +71,12 @@ export default class VaultSharePlugin extends Plugin {
 		// back to defaults for any absent field. See `specs/upgrade-path.md`.
 		const { settings, migrated } = migrateSettings(
 			await this.loadData(),
-			{ driveFolderPath: `/vault-share/${this.app.vault.getName()}` },
+			{
+				driveFolderPath: `/vault-share/${this.app.vault.getName()}`,
+				// Exclude the vault config directory by default.Applied only on first run; a stored
+				// `excludeRules` overrides this.
+				excludeRules: [this.app.vault.configDir, '.trash'],
+			},
 		);
 		this.settings = settings;
 
@@ -296,11 +301,11 @@ export default class VaultSharePlugin extends Plugin {
 
 		this.addCommand({
 			id: 'repair-drive-duplicates',
-			name: 'Repair Drive duplicates', // eslint-disable-line obsidianmd/ui/sentence-case -- "Drive" is a proper noun (Google Drive)
+			name: 'Repair Google Drive duplicates',
 			callback: () => {
 				const folderId = this.driveFolderId;
 				if (!folderId) {
-					new Notice('Not logged in to Drive — cannot repair duplicates.'); // eslint-disable-line obsidianmd/ui/sentence-case -- "Drive" is a proper noun
+					new Notice('Not logged in to Google Drive — cannot repair duplicates.');
 					return;
 				}
 				void this.driveFs.repairDuplicates(folderId, this.logger)

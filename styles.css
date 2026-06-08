@@ -197,10 +197,12 @@
  * rounded corners on the first and last lines close the rectangle.
  */
 
-.vault-share-conflict-line {
+/* Selector intentionally repeated to raise specificity above the editor's
+   own line padding without resorting to !important. */
+.vault-share-conflict-line.vault-share-conflict-line {
 	border-left:  2px solid var(--color-accent);
 	border-right: 2px solid var(--color-accent);
-	padding-left: calc(var(--size-4-2) - 2px) !important; /* compensate for added border */
+	padding-left: calc(var(--size-4-2) - 2px); /* compensate for added border */
 }
 
 .vault-share-conflict-line--first {

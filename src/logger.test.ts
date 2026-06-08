@@ -149,26 +149,28 @@ describe('Logger', () => {
 	});
 
 	describe('console output', () => {
-		let logSpy: MockInstance;
+		let debugSpy: MockInstance;
 		let warnSpy: MockInstance;
 		let errorSpy: MockInstance;
 
 		beforeEach(() => {
-			logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+			// DEBUG/INFO route to console.debug — console.log is disallowed by
+			// the obsidianmd no-console rule (allows warn/error/debug only).
+			debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
 			warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 			errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		});
 
-		it('uses console.log for DEBUG', () => {
+		it('uses console.debug for DEBUG', () => {
 			const logger = makeLogger();
 			logger.debug('d');
-			expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[DEBUG]'), 'd', '');
+			expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining('[DEBUG]'), 'd', '');
 		});
 
-		it('uses console.log for INFO', () => {
+		it('uses console.debug for INFO', () => {
 			const logger = makeLogger();
 			logger.info('i');
-			expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[INFO]'), 'i', '');
+			expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining('[INFO]'), 'i', '');
 		});
 
 		it('uses console.warn for WARNING', () => {

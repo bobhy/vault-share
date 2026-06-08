@@ -94,8 +94,7 @@ export class Logger {
 		} else if (severity === 'WARNING') {
 			console.warn(prefix, message, detail ?? '');
 		} else {
-			// eslint-disable-next-line obsidianmd/rule-custom-message -- logger module: console output is the designated mechanism per ARCHITECTURE.md
-			console.log(prefix, message, detail ?? '');
+			console.debug(prefix, message, detail ?? '');
 		}
 
 		this.onAppend?.();

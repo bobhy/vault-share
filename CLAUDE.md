@@ -31,8 +31,8 @@ Enhancement and feature design specs live in [specs/](specs/).
 - Prefer latest LTS version of all dependencies and tools
 - Provide unit tests via vitest.
 - Provide end-to-end tests via wdio for selected scenarios.
-- Update all affected tests when related implementation changes.
-- After any non-trivial code change, review `tests/wdio/single/` and `tests/wdio/cross/` for e2e tests whose descriptions, assertions, or comments describe the old behaviour — update them to match the new contract before pushing.
+- Update all affected tests when related implementation changes, including both unit and e2e tests in `tests/wdio`.
+- Try to keep the Obsidan [plugin automated review score](https://community.obsidian.md/plugins/vault-share) in the high 90's.  Make reasonable code changes to accomodate style review comments posted there.
 
 ### obsidianmd ESLint plugin
 - `eslint-plugin-obsidianmd` is installed and included in `eslint.config.mts` (`obsidianmd.configs.recommended`)
@@ -91,10 +91,18 @@ Always pass `npm run lint && npm run build && npm test` after making changes.
 
 - Update `version` in `manifest.json` (SemVer, no `v` prefix) and `versions.json`. GitHub release tag must match the version exactly.
 - enforce semver backward compatibility, but not until project reaches 1.0 release.
+- Before changing `minAppVersion`, see [Designing against the API](#designing-against-the-api) — bump only when a feature genuinely needs a newer Obsidian API, not to clear deprecation warnings.
 
 ## Obsidian community plugin conventions
 
 See [Sample Plugin README.md](https://github.com/obsidianmd/obsidian-sample-plugin/blob/master/README.md) for additional details about Obsidian community plugins
+
+### Designing against the API
+
+- When designing a feature, evaluate it against the **latest** Obsidian API, not the current `minAppVersion`. Check what the newest release offers (e.g. `npm view obsidian version`, the API typings, and the release notes) before settling on an approach.
+- `minAppVersion` is the runtime floor, not a design constraint: an API newer than the floor is still worth using if it yields a materially better design (simpler, safer, more idiomatic, or fewer workarounds).
+- If a newer API offers a **real design advantage**, surface it to the user — state the advantage, the version it requires, and the cost of raising `minAppVersion` (it forces all users onto that Obsidian release) — and let them decide whether to bump the floor. Do not silently bump `minAppVersion`, and do not silently settle for an inferior design on the older API.
+- Deprecation is not removal: APIs marked `@deprecated` keep working. Don't raise `minAppVersion` solely to clear deprecation warnings — only bump when a feature genuinely needs the newer API.
 
 ## Documentation conventions
 - All modules documented with TypeDoc comments
