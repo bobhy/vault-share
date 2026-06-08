@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.3]
 
+### Changed
+- Streamlined logging - Logging view is now enabled by default in right sidebar.
+  - Added "vault share: open logging view" command to (re-open) the logging view if user closed it.
+  - Removed settings fields to enable logging and set severity
+  - Removed commands to clear logging view and copy - these are available in logging view itself.
+
 ### Fixed
 - Various nags being raised by the Obsidian community plugins automated review.
- 
+
 ## [1.0.2]
 
 ### Changed

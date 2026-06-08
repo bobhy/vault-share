@@ -2,8 +2,9 @@
  * Sidebar view that displays the {@link Logger}'s in-memory ring buffer.
  *
  * Renders oldest-first and re-renders on each append via the callback
- * registered with {@link Logger.setAppendCallback}. Opened automatically at
- * startup when `VaultShareSettings.logToSidebar` is enabled.
+ * registered with {@link Logger.setAppendCallback}. Opened automatically in the
+ * right sidebar at startup; the user can reopen it via the "Open log panel"
+ * command.
  *
  * The view owns an always-visible toolbar (copy log, clear log, and a log-level
  * dropdown) rendered as part of the view content rather than the leaf header, so
@@ -42,7 +43,6 @@ export class SyncLogView extends ItemView {
 		private readonly logger: Logger,
 		private readonly getSeverity: () => LogSeverity,
 		private readonly setSeverity: (severity: LogSeverity) => void,
-		private readonly onViewClose?: () => void,
 	) {
 		super(leaf);
 		logger.setAppendCallback(() => this.refresh());
@@ -124,7 +124,6 @@ export class SyncLogView extends ItemView {
 		this.containerEl.empty();
 		this.logEl = null;
 		this.severityDropdown = null;
-		this.onViewClose?.();
 	}
 
 	refresh(): void {

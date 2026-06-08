@@ -197,7 +197,8 @@ export default class VaultSharePlugin extends Plugin {
 			isVaultReady: () => this.vaultReady,
 		});
 
-		// 13. Sidebar log view
+		// 13. Sidebar log view — shown by default in the right panel. The user
+		// can close it and reopen it via the "Open log panel" command.
 		this.registerView(SYNC_LOG_VIEW_TYPE, leaf => new SyncLogView(
 			leaf,
 			this.logger,
@@ -208,14 +209,8 @@ export default class VaultSharePlugin extends Plugin {
 				this.settings.logSeverity = severity;
 				void this.saveData(this.settings);
 			},
-			() => {
-				this.settings.logToSidebar = false;
-				void this.saveData(this.settings);
-			},
 		));
-		if (this.settings.logToSidebar) {
-			this.app.workspace.onLayoutReady(() => { void this.activateSidebarLogView(); });
-		}
+		this.app.workspace.onLayoutReady(() => { void this.activateSidebarLogView(); });
 
 		// 13a. Sharing status view
 		this.registerView(SHARING_STATUS_VIEW_TYPE, leaf =>
@@ -334,23 +329,9 @@ export default class VaultSharePlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'copy-sync-log',
-			name: 'Copy share log to clipboard',
-			callback: () => {
-				const lines: string[] = [];
-				for (const entry of this.logger.getEntries()) {
-					const timeStr = new Date(entry.timestamp).toLocaleTimeString(undefined, { hour12: false });
-					const line = `${timeStr} [${entry.severity}] ${entry.message}`;
-					lines.push(entry.detail ? `${line}\n  ${entry.detail}` : line);
-				}
-				void navigator.clipboard.writeText(lines.join('\n'));
-			},
-		});
-
-		this.addCommand({
-			id: 'clear-sync-log',
-			name: 'Clear share log',
-			callback: () => { this.logger.clear(); },
+			id: 'open-log-panel',
+			name: 'Open log panel',
+			callback: () => { void this.activateSidebarLogView(); },
 		});
 
 		// 17. Context menus
@@ -484,15 +465,6 @@ export default class VaultSharePlugin extends Plugin {
 	/** Rebuild ExcludeMatcher after excludeRules change. */
 	rebuildExcludeMatcher(): void {
 		this.excludeMatcher = new ExcludeMatcher(this.settings.excludeRules);
-	}
-
-	/** Open or close the sidebar log view based on current logToSidebar setting. */
-	async updateSidebarLogView(): Promise<void> {
-		if (this.settings.logToSidebar) {
-			await this.activateSidebarLogView();
-		} else {
-			this.app.workspace.detachLeavesOfType(SYNC_LOG_VIEW_TYPE);
-		}
 	}
 
 	/** Toggle monitoring for a file and refresh the monitoring status bar. */

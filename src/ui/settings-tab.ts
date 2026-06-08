@@ -175,40 +175,14 @@ export class VaultShareSettingTab extends PluginSettingTab {
 			);
 
 		// --- Logging ---
+		// The log level is set from the log panel's own dropdown, and the panel
+		// is shown by default (reopen via the "Open log panel" command), so the
+		// only logging setting here is history size.
 		new Setting(containerEl).setName('Logging').setHeading();
 
 		new Setting(containerEl)
-			.setName('Log level')
-			.setDesc('Minimum severity of messages written to the log.')
-			.addDropdown(drop =>
-				drop
-					.addOption('DEBUG', 'Debug')
-					.addOption('INFO', 'Info')
-					.addOption('WARNING', 'Warning')
-					.addOption('ERROR', 'Error')
-					.setValue(this.plugin.settings.logSeverity)
-					.onChange(async value => {
-						this.plugin.settings.logSeverity = value as typeof this.plugin.settings.logSeverity;
-						await this.plugin.saveData(this.plugin.settings);
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName('Show log in sidebar')
-			.setDesc('Display recent log messages in a right-sidebar panel.')
-			.addToggle(toggle =>
-				toggle
-					.setValue(this.plugin.settings.logToSidebar)
-					.onChange(async value => {
-						this.plugin.settings.logToSidebar = value;
-						await this.plugin.saveData(this.plugin.settings);
-						await this.plugin.updateSidebarLogView();
-					}),
-			);
-
-		new Setting(containerEl)
 			.setName('Log history size')
-			.setDesc('Number of most recent log entries to retain for the sidebar view.')
+			.setDesc('Number of most recent log entries to retain for the log panel.')
 			.addText(text =>
 				text
 					.setValue(String(this.plugin.settings.logHorizon))

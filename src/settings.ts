@@ -80,13 +80,11 @@ export interface VaultShareSettings {
 	/** Seconds after the last local edit before single-file sync is triggered. */
 	openFileChangeHoldDown: number;
 
-	/** Minimum severity level written to log output. */
+	/** Minimum severity level written to log output. Set from the log panel's
+	 * own level dropdown; persisted here so it survives reloads. */
 	logSeverity: LogSeverity;
 
-	/** When true, recent log entries are shown in a right-sidebar leaf. */
-	logToSidebar: boolean;
-
-	/** Maximum number of log entries retained for the sidebar view. */
+	/** Maximum number of log entries retained for the log panel. */
 	logHorizon: number;
 }
 
@@ -113,7 +111,6 @@ export const DEFAULT_SETTINGS: VaultShareSettings = {
 	openFilePoll: 10,
 	openFileChangeHoldDown: 5,
 	logSeverity: 'WARNING',
-	logToSidebar: false,
 	logHorizon: 1000,
 };
 

@@ -158,14 +158,8 @@ describe('SyncLogView', () => {
 			expect(view.containerEl.children.length).toBe(0);
 		});
 
-		it('calls onViewClose callback if provided', async () => {
-			const onClose = vi.fn();
-			const view2 = new SyncLogView(makeLeaf(), logger, () => severity, setSeverity, onClose);
-			await view2.onClose();
-			expect(onClose).toHaveBeenCalledTimes(1);
-		});
-
-		it('does not throw when onViewClose is not provided', async () => {
+		it('closes cleanly without throwing', async () => {
+			await view.onOpen();
 			await view.onClose();
 		});
 	});
