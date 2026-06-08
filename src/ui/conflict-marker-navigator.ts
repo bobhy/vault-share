@@ -146,6 +146,27 @@ export class ConflictMarkerNavigator {
 		this.navigate(editor, 'backward', view);
 	}
 
+	/**
+	 * Wire `handler` to activate `el` by both mouse/keyboard (`click`) and touch
+	 * (`touchend`). On Obsidian mobile a tap inside the editor's DOM is consumed
+	 * by the editor's own touch-gesture handling and the synthetic `click` is
+	 * never delivered to a CM6 panel button — so the buttons render but taps do
+	 * nothing. Handling `touchend` and calling `preventDefault()` activates the
+	 * control on touch and suppresses the would-be synthetic `click`, so the
+	 * handler still fires exactly once.
+	 *
+	 * This workaround is specific to controls embedded in the CodeMirror editor.
+	 * Controls hosted in a normal view or modal (e.g. the log view's toolbar) are
+	 * not inside the editor, so plain taps reach them — use Obsidian's
+	 * `ButtonComponent` / `ExtraButtonComponent` / `DropdownComponent` there
+	 * instead. Do not apply this `touchend`/`preventDefault()` pattern to a native
+	 * control such as a `<select>`: it would suppress the OS option picker.
+	 */
+	private bindActivate(el: HTMLElement, handler: () => void): void {
+		el.addEventListener('click', handler);
+		el.addEventListener('touchend', (e) => { e.preventDefault(); handler(); });
+	}
+
 	/** Apply a resolution to a block by replacing it with `replacement` lines. */
 	applyResolution(editor: Editor, block: ConflictBlock, replacement: string[]): void {
 		const from = { line: block.startLine, ch: 0 };
@@ -226,8 +247,8 @@ export class ConflictMarkerNavigator {
 				});
 
 				const addBtn = (label: string, lines: string[]): void => {
-					dom.createEl('button', { cls: 'vault-share-conflict-banner-btn', text: label })
-						.addEventListener('click', () => {
+					const btn = dom.createEl('button', { cls: 'vault-share-conflict-banner-btn', text: label });
+					this.bindActivate(btn, () => {
 							this.applyResolution(editor, block, lines);
 							this.dismissBanner();
 							const remaining = this.parseBlocks(editor);
@@ -252,16 +273,17 @@ export class ConflictMarkerNavigator {
 						attr: { 'aria-label': label },
 					});
 					setIcon(btn, iconName);
-					btn.addEventListener('click', () => { this.navigate(editor, dir, view); });
+					this.bindActivate(btn, () => { this.navigate(editor, dir, view); });
 				};
 				addNavBtn('chevron-up',   'Previous conflict', 'backward');
 				addNavBtn('chevron-down', 'Next conflict',     'forward');
 
-				dom.createEl('button', {
+				const closeBtn = dom.createEl('button', {
 					cls: 'vault-share-conflict-banner-close',
 					text: '×',
 					attr: { 'aria-label': 'Close' },
-				}).addEventListener('click', () => { this.dismissBanner(); });
+				});
+				this.bindActivate(closeBtn, () => { this.dismissBanner(); });
 
 				return { dom, top: true };
 			}),
