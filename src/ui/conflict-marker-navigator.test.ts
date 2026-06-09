@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { type Editor, Notice } from 'obsidian';
-import { ConflictMarkerNavigator, type ConflictBlock } from './conflict-marker-navigator';
+import { ConflictMarkerNavigator, buildConflictBanner, type ConflictBlock } from './conflict-marker-navigator';
 import { MARKER_OPEN, MARKER_CLOSE, segmentMarker } from '../sync/nway-merge';
 
 // ---------------------------------------------------------------------------
@@ -375,5 +375,95 @@ describe('ConflictMarkerNavigator — notice messages', () => {
 		new ConflictMarkerNavigator().navigateForward(editor);
 		expect(vi.mocked(Notice)).not.toHaveBeenCalledWith('No other conflicts.');
 		expect(vi.mocked(Notice)).not.toHaveBeenCalledWith('No conflicts found.');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// buildConflictBanner — panel DOM + mobile placement (Tier 0: pure unit)
+//
+// These tests exercise the resolution panel without a CodeMirror EditorView or
+// a live MarkdownView. They guard two mobile fixes:
+//   1. Placement — the panel must dock at the BOTTOM on mobile (`top === false`)
+//      so the device status bar does not overlay it.
+//   2. Touch activation — a `touchend` on a button must fire its handler (the
+//      synthetic `click` is swallowed by the editor on real mobile).
+// ---------------------------------------------------------------------------
+// The bare global `createDiv` that buildConflictBanner uses is supplied by
+// obsidian-mock (installed via the `obsidian` import's index side effect), so
+// no jsdom shim is needed.
+
+/** A two-segment conflict block (base + A1) for banner tests. */
+function makeBlock(): ConflictBlock {
+	return {
+		startLine: 0,
+		endLine: 5,
+		segments: [
+			{ label: 'base', lines: ['base line'] },
+			{ label: 'A1', lines: ['a1 line one', 'a1 line two'] },
+		],
+	};
+}
+
+/** No-op callbacks; individual tests override the field they assert on. */
+function noopCallbacks() {
+	return { onResolve: vi.fn(), onNavigate: vi.fn(), onClose: vi.fn() };
+}
+
+describe('buildConflictBanner — mobile placement', () => {
+	it('docks at the BOTTOM on mobile (top === false)', () => {
+		const { top } = buildConflictBanner(makeBlock(), 0, 2, true, noopCallbacks());
+		expect(top).toBe(false);
+	});
+
+	it('docks at the TOP on desktop (top === true)', () => {
+		const { top } = buildConflictBanner(makeBlock(), 0, 2, false, noopCallbacks());
+		expect(top).toBe(true);
+	});
+});
+
+describe('buildConflictBanner — DOM structure', () => {
+	it('renders the "Conflict N of M" label', () => {
+		const { dom } = buildConflictBanner(makeBlock(), 0, 3, false, noopCallbacks());
+		const label = dom.querySelector('.vault-share-conflict-banner-label');
+		expect(label?.textContent).toBe('Conflict 1 of 3');
+	});
+
+	it('renders one resolution button per labelled segment', () => {
+		const { dom } = buildConflictBanner(makeBlock(), 0, 2, false, noopCallbacks());
+		const btns = [...dom.querySelectorAll('.vault-share-conflict-banner-btn')];
+		expect(btns.map(b => b.textContent)).toEqual(['base', 'A1']);
+	});
+});
+
+describe('buildConflictBanner — touch activation', () => {
+	it('fires onResolve with the segment lines when a button is tapped (touchend)', () => {
+		const cb = noopCallbacks();
+		const { dom } = buildConflictBanner(makeBlock(), 0, 2, true, cb);
+		const a1 = [...dom.querySelectorAll('.vault-share-conflict-banner-btn')]
+			.find(b => b.textContent === 'A1')!;
+		a1.dispatchEvent(new Event('touchend', { cancelable: true, bubbles: true }));
+		expect(cb.onResolve).toHaveBeenCalledWith(['a1 line one', 'a1 line two']);
+	});
+
+	it('also fires onResolve on a plain click (desktop/keyboard path)', () => {
+		const cb = noopCallbacks();
+		const { dom } = buildConflictBanner(makeBlock(), 0, 2, false, cb);
+		const base = [...dom.querySelectorAll('.vault-share-conflict-banner-btn')]
+			.find(b => b.textContent === 'base')!;
+		base.dispatchEvent(new Event('click', { bubbles: true }));
+		expect(cb.onResolve).toHaveBeenCalledWith(['base line']);
+	});
+
+	it('fires onNavigate / onClose for the nav arrows and close button', () => {
+		const cb = noopCallbacks();
+		const { dom } = buildConflictBanner(makeBlock(), 0, 2, true, cb);
+		const navs = dom.querySelectorAll('.vault-share-conflict-banner-nav');
+		navs[0]!.dispatchEvent(new Event('touchend', { cancelable: true }));
+		navs[1]!.dispatchEvent(new Event('touchend', { cancelable: true }));
+		dom.querySelector('.vault-share-conflict-banner-close')!
+			.dispatchEvent(new Event('touchend', { cancelable: true }));
+		expect(cb.onNavigate).toHaveBeenNthCalledWith(1, 'backward');
+		expect(cb.onNavigate).toHaveBeenNthCalledWith(2, 'forward');
+		expect(cb.onClose).toHaveBeenCalledTimes(1);
 	});
 });

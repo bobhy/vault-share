@@ -152,6 +152,15 @@
 	font-size: var(--font-ui-small);
 }
 
+/*
+ * On mobile the banner docks at the bottom of the edit view (CM6 bottom panel)
+ * rather than the top, where the device status bar would overlay it. Keep it
+ * clear of the home indicator / bottom safe area.
+ */
+.cm-panels-bottom .vault-share-conflict-banner {
+	padding-bottom: max(2px, env(safe-area-inset-bottom));
+}
+
 /* Flex spacer that also renders the visual pipe separator. */
 .vault-share-conflict-banner-sep {
 	margin-left: auto;

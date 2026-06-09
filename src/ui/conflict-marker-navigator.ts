@@ -11,7 +11,7 @@
  *
  * @packageDocumentation
  */
-import { Editor, MarkdownView, Notice, setIcon } from 'obsidian';
+import { Editor, MarkdownView, Notice, Platform, setIcon } from 'obsidian';
 import { type Extension, type Range, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, type Panel, showPanel } from '@codemirror/view';
 import { MARKER_OPEN, MARKER_CLOSE, SEGMENT_MARKER_RE } from '../sync/nway-merge';
@@ -103,8 +103,9 @@ export const conflictHighlightExtension: Extension = [conflictHighlightField, co
  *
  * When a conflict is found:
  * - The region is outlined with a rounded rectangle via a CM6 line decoration.
- * - A resolution panel (hosted as a CM6 top panel, like the built-in find bar)
- *   appears above the editor and shows "Conflict N of M" with **one button per
+ * - A resolution panel (hosted as a CM6 panel, like the built-in find bar —
+ *   docked at the top on desktop, at the bottom on mobile so the device status
+ *   bar does not overlay it) shows "Conflict N of M" with **one button per
  *   labelled segment** (`base`, `A1`, `A2`, …) — choosing one replaces the whole
  *   region with that segment — plus **↑ / ↓** navigation arrows and a **×**
  *   close button.
@@ -144,27 +145,6 @@ export class ConflictMarkerNavigator {
 	 */
 	navigateBackward(editor: Editor, view?: MarkdownView): void {
 		this.navigate(editor, 'backward', view);
-	}
-
-	/**
-	 * Wire `handler` to activate `el` by both mouse/keyboard (`click`) and touch
-	 * (`touchend`). On Obsidian mobile a tap inside the editor's DOM is consumed
-	 * by the editor's own touch-gesture handling and the synthetic `click` is
-	 * never delivered to a CM6 panel button — so the buttons render but taps do
-	 * nothing. Handling `touchend` and calling `preventDefault()` activates the
-	 * control on touch and suppresses the would-be synthetic `click`, so the
-	 * handler still fires exactly once.
-	 *
-	 * This workaround is specific to controls embedded in the CodeMirror editor.
-	 * Controls hosted in a normal view or modal (e.g. the log view's toolbar) are
-	 * not inside the editor, so plain taps reach them — use Obsidian's
-	 * `ButtonComponent` / `ExtraButtonComponent` / `DropdownComponent` there
-	 * instead. Do not apply this `touchend`/`preventDefault()` pattern to a native
-	 * control such as a `<select>`: it would suppress the OS option picker.
-	 */
-	private bindActivate(el: HTMLElement, handler: () => void): void {
-		el.addEventListener('click', handler);
-		el.addEventListener('touchend', (e) => { e.preventDefault(); handler(); });
 	}
 
 	/** Apply a resolution to a block by replacing it with `replacement` lines. */
@@ -237,56 +217,20 @@ export class ConflictMarkerNavigator {
 		this.activeEditorView = cm;
 
 		cm.dispatch({
-			effects: setConflictPanel.of(() => {
-				const dom = createDiv({ cls: 'vault-share-conflict-banner' });
-
-				// ── Left: label + resolution buttons ──────────────────────
-				dom.createSpan({
-					cls: 'vault-share-conflict-banner-label',
-					text: `Conflict ${index + 1} of ${total}`,
-				});
-
-				const addBtn = (label: string, lines: string[]): void => {
-					const btn = dom.createEl('button', { cls: 'vault-share-conflict-banner-btn', text: label });
-					this.bindActivate(btn, () => {
-							this.applyResolution(editor, block, lines);
-							this.dismissBanner();
-							const remaining = this.parseBlocks(editor);
-							if (remaining.length > 0) {
-								this.navigate(editor, 'forward', view);
-							} else {
-								new Notice('All conflicts resolved.');
-							}
-						});
-				};
-
-				// One button per labelled segment; choosing it replaces the whole
-				// region with that segment (the base is selectable too).
-				for (const seg of block.segments) addBtn(seg.label, seg.lines);
-
-				// ── Right: separator | nav arrows | close ──────────────────
-				dom.createSpan({ cls: 'vault-share-conflict-banner-sep' });
-
-				const addNavBtn = (iconName: string, label: string, dir: 'forward' | 'backward'): void => {
-					const btn = dom.createEl('button', {
-						cls: 'vault-share-conflict-banner-nav',
-						attr: { 'aria-label': label },
-					});
-					setIcon(btn, iconName);
-					this.bindActivate(btn, () => { this.navigate(editor, dir, view); });
-				};
-				addNavBtn('chevron-up',   'Previous conflict', 'backward');
-				addNavBtn('chevron-down', 'Next conflict',     'forward');
-
-				const closeBtn = dom.createEl('button', {
-					cls: 'vault-share-conflict-banner-close',
-					text: '×',
-					attr: { 'aria-label': 'Close' },
-				});
-				this.bindActivate(closeBtn, () => { this.dismissBanner(); });
-
-				return { dom, top: true };
-			}),
+			effects: setConflictPanel.of(() => buildConflictBanner(block, index, total, Platform.isMobile, {
+				onResolve: (lines) => {
+					this.applyResolution(editor, block, lines);
+					this.dismissBanner();
+					const remaining = this.parseBlocks(editor);
+					if (remaining.length > 0) {
+						this.navigate(editor, 'forward', view);
+					} else {
+						new Notice('All conflicts resolved.');
+					}
+				},
+				onNavigate: (dir) => { this.navigate(editor, dir, view); },
+				onClose: () => { this.dismissBanner(); },
+			})),
 		});
 	}
 
@@ -398,4 +342,103 @@ export class ConflictMarkerNavigator {
 
 		return blocks;
 	}
+}
+
+
+// ---------------------------------------------------------------------------
+// Resolution panel DOM — extracted as a pure builder so it is unit-testable
+// without a CodeMirror EditorView or a live MarkdownView.
+// ---------------------------------------------------------------------------
+
+/** Callbacks the resolution panel invokes when its buttons are activated. */
+export interface ConflictBannerCallbacks {
+	/** Replace the conflict region with the chosen segment's `lines`. */
+	onResolve(lines: string[]): void;
+	/** Move to the next (`forward`) or previous (`backward`) conflict. */
+	onNavigate(direction: 'forward' | 'backward'): void;
+	/** Dismiss the panel without changing the document. */
+	onClose(): void;
+}
+
+/**
+ * Wire `handler` to activate `el` by both mouse/keyboard (`click`) and touch
+ * (`touchend`). On Obsidian mobile a tap inside the editor's DOM is consumed by
+ * the editor's own touch-gesture handling and the synthetic `click` is never
+ * delivered to a CM6 panel button — so the buttons render but taps do nothing.
+ * Handling `touchend` and calling `preventDefault()` activates the control on
+ * touch and suppresses the would-be synthetic `click`, so the handler still
+ * fires exactly once.
+ *
+ * This workaround is specific to controls embedded in the CodeMirror editor.
+ * Controls hosted in a normal view or modal (e.g. the log view's toolbar) are
+ * not inside the editor, so plain taps reach them — use Obsidian's
+ * `ButtonComponent` / `ExtraButtonComponent` / `DropdownComponent` there
+ * instead. Do not apply this `touchend`/`preventDefault()` pattern to a native
+ * control such as a `<select>`: it would suppress the OS option picker.
+ */
+export function bindActivate(el: HTMLElement, handler: () => void): void {
+	el.addEventListener('click', handler);
+	el.addEventListener('touchend', (e) => { e.preventDefault(); handler(); });
+}
+
+/**
+ * Build the conflict-resolution panel DOM and decide where it docks.
+ *
+ * Pure and free of editor/CM dependencies so it can be unit-tested: it takes the
+ * parsed `block`, its position (`index` / `total`), whether the host is mobile,
+ * and the `callbacks` the buttons invoke. Returns the panel `dom` plus the CM6
+ * `top` flag.
+ *
+ * Placement: `top` is `true` (dock at the top, like the built-in find bar) on
+ * desktop and `false` (dock at the bottom) on mobile — a top panel on mobile
+ * sits under the device status/notification bar, which overlays it and pushes
+ * its buttons out of the tappable region.
+ */
+export function buildConflictBanner(
+	block: ConflictBlock,
+	index: number,
+	total: number,
+	isMobile: boolean,
+	callbacks: ConflictBannerCallbacks,
+): { dom: HTMLElement; top: boolean } {
+	const dom = createDiv({ cls: 'vault-share-conflict-banner' });
+
+	// ── Left: label + resolution buttons ──────────────────────
+	dom.createSpan({
+		cls: 'vault-share-conflict-banner-label',
+		text: `Conflict ${index + 1} of ${total}`,
+	});
+
+	const addBtn = (label: string, lines: string[]): void => {
+		const btn = dom.createEl('button', { cls: 'vault-share-conflict-banner-btn', text: label });
+		bindActivate(btn, () => callbacks.onResolve(lines));
+	};
+	// One button per labelled segment; choosing it replaces the whole region with
+	// that segment (the base is selectable too).
+	for (const seg of block.segments) addBtn(seg.label, seg.lines);
+
+	// ── Right: separator | nav arrows | close ──────────────────
+	dom.createSpan({ cls: 'vault-share-conflict-banner-sep' });
+
+	const addNavBtn = (iconName: string, label: string, dir: 'forward' | 'backward'): void => {
+		const btn = dom.createEl('button', {
+			cls: 'vault-share-conflict-banner-nav',
+			attr: { 'aria-label': label },
+		});
+		setIcon(btn, iconName);
+		bindActivate(btn, () => callbacks.onNavigate(dir));
+	};
+	addNavBtn('chevron-up',   'Previous conflict', 'backward');
+	addNavBtn('chevron-down', 'Next conflict',     'forward');
+
+	const closeBtn = dom.createEl('button', {
+		cls: 'vault-share-conflict-banner-close',
+		text: '×',
+		attr: { 'aria-label': 'Close' },
+	});
+	bindActivate(closeBtn, () => callbacks.onClose());
+
+	// Desktop docks at the top (like the find bar); mobile docks at the bottom so
+	// the device status bar does not overlay it.
+	return { dom, top: !isMobile };
 }
