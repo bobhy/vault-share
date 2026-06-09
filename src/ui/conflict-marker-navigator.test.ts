@@ -388,24 +388,9 @@ describe('ConflictMarkerNavigator — notice messages', () => {
 //   2. Touch activation — a `touchend` on a button must fire its handler (the
 //      synthetic `click` is swallowed by the editor on real mobile).
 // ---------------------------------------------------------------------------
-
-// Obsidian provides a global `createDiv`; jsdom does not. The obsidian-mock
-// installs the element-level helpers (createEl/createSpan) on the prototype but
-// not the bare global, so shim it here when absent. Only the empty root div is
-// produced by the shim — every asserted behaviour (buttons, labels, placement)
-// is the real buildConflictBanner output.
-beforeEach(() => {
-	// eslint-disable-next-line obsidianmd/prefer-active-doc -- shimming the global createDiv requires reaching globalThis, not a document
-	const g = globalThis as unknown as { createDiv?: (o?: { cls?: string }) => HTMLElement };
-	if (typeof g.createDiv !== 'function') {
-		g.createDiv = (o) => {
-			// eslint-disable-next-line obsidianmd/prefer-create-el, obsidianmd/prefer-active-doc -- this IS the createDiv polyfill standing in for the missing jsdom global; it cannot call createDiv/activeDocument
-			const el = document.createElement('div');
-			if (o?.cls) el.className = o.cls;
-			return el;
-		};
-	}
-});
+// The bare global `createDiv` that buildConflictBanner uses is supplied by
+// obsidian-mock (installed via the `obsidian` import's index side effect), so
+// no jsdom shim is needed.
 
 /** A two-segment conflict block (base + A1) for banner tests. */
 function makeBlock(): ConflictBlock {
