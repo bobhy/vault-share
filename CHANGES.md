@@ -7,8 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [unreleased]
 
+## Added
+- Updated `obsidian-mock` to enable unit tests on UI, added a fairly comprehensive set of UI tests, getting coverage from 0% to 90%-ish.
+No actual bugs found and no functional changes.
+
 ### Fixed
-- In conflict resolution header displayed after 'find next conflict', alternative resolutions buttons now tappable on mobile.  They were displaying but were not working.
+- In conflict resolution header displayed after 'find next conflict', alternative resolutions buttons moved to the bottom of the view on mobile and are now tappable.  They were displaying at the top, but were overlaid by Android status bar.
 
 ## [1.0.3]
 
