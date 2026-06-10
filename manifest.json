@@ -1,7 +1,7 @@
 {
 	"id": "vault-share",
 	"name": "Vault Share",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"minAppVersion": "1.11.4",
 	"description": "Share vaults between devices and users through Google Drive.",
 	"author": "Bob Hyman",
