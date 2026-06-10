@@ -175,9 +175,27 @@ tests robust:
   mock `Setting` renders `.setting-item` / `.setting-item-name` /
   `.setting-item-heading` with components in `controlEl`.
 
-Run: `npm test` (all), or scope to a file. Coverage: `npm run test:coverage`.
-Note `main.ts` and `single-file-sync.ts` UI paths are still only covered by wdio
-(not piped into v8 coverage), so they read as low in the vitest report.
+### Coverage
+
+Run: `npm test` (all), or scope to a file. Three coverage views:
+
+- **Unit** — `npm run test:coverage` → `coverage/` (vitest, **istanbul** provider).
+- **E2e** — `npm run test:coverage:e2e` → `coverage-e2e/`. Builds an
+  Istanbul-instrumented `main.js` (`npm run build:coverage`, a `coverage` mode in
+  `esbuild.config.mjs` that instruments TS source directly so positions stay in
+  TS coordinates), runs the credential-free UI wdio config, harvests
+  `window.__coverage__` in each config's `after` hook (`collectCoverage` in
+  `wdio.conf.mts`) into `.nyc_output/`, and reports via `nyc`. This is what
+  finally gives `main.ts`, the editor panel, and the `src/sync`/`src/gdrive`
+  plugin-load paths real numbers. (`test:coverage:e2e:single` also runs the
+  token-gated single-vault config for fuller reach.)
+- **Combined** — `npm run test:coverage:combined` (or `test:coverage:all` to run
+  everything first) → a **line-level union** of unit ∪ e2e
+  (`scripts/coverage-combine.mjs` → `coverage-all/`). It unions covered *source
+  lines*, not statement maps: unit and e2e instrument different transpiled JS, so
+  a statement-level `nyc merge` would be incoherent (it averages). Both sides use
+  istanbul against TS coordinates, so the line sets align and combined ≥ each
+  input. All wdio coverage hooks are no-ops on a normal (uninstrumented) build.
 
 ## Where this maps in code
 

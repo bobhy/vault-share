@@ -7,10 +7,16 @@ export default defineConfig({
 		environment: "jsdom",
 		clearMocks: true,
 		coverage: {
-			provider: "v8",
+			// istanbul (not v8) so unit coverage uses the same line model as the
+			// Istanbul-instrumented e2e build — required for a coherent line-union
+			// combined report (scripts/coverage-combine.mjs).
+			provider: "istanbul",
 			include: ["src/**/*.ts"],
 			exclude: ["src/**/*.test.ts", "src/**/__mocks__/**", "src/**/test-helpers.ts"],
-			reporter: ["text", "html"],
+			// `json` emits coverage/coverage-final.json (Istanbul-shaped) so the
+			// unit run can be merged with the wdio e2e coverage — see the
+			// test:coverage:combined script and specs/ui-map.md.
+			reporter: ["text", "html", "json"],
 		},
 	},
 	resolve: {

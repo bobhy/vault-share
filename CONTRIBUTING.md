@@ -88,6 +88,14 @@ The e2e test runner injects it into the sandboxed vault at startup.
 | `npm run test:e2e:single:interactive` | Same, but uses the current `$DISPLAY` — useful for debugging test failures visually. |
 | `npm run test:e2e:cross` | Build then run the two-vault cross-sync e2e test suite headlessly via WebdriverIO multiremote. |
 | `npm run test:e2e:cross:interactive` | Same, but uses the current `$DISPLAY`. |
+| `npm run test:e2e:ui` | Build then run the credential-free UI e2e suite (renders the plugin's UI surfaces; no Google Drive needed) headlessly via WebdriverIO. |
+| `npm run test:e2e:ui:interactive` | Same, but uses the current `$DISPLAY`. |
+| `npm run test:coverage` | Unit-test coverage (Vitest, istanbul provider) → `coverage/`. |
+| `npm run build:coverage` | Produce an Istanbul-instrumented `main.js` (helper used by the e2e coverage scripts; not for normal installs). |
+| `npm run test:coverage:e2e` | E2e coverage: build an instrumented `main.js`, run the credential-free UI e2e suite, harvest `window.__coverage__`, and report → `coverage-e2e/`. No Google Drive token needed. |
+| `npm run test:coverage:e2e:single` | Same, but also runs the token-gated single-vault e2e suite for fuller reach. |
+| `npm run test:coverage:combined` | Combined unit ∪ e2e coverage by **line union** (a covered line is counted if either suite exercised it) → `coverage-all/`. Run after `test:coverage` + `test:coverage:e2e`. |
+| `npm run test:coverage:all` | Run unit coverage, e2e coverage, then the combined report in one pass. |
 | `npm run docs` | Generate TypeDoc API documentation into `docs/`. |
 | `npm run version` | Propagate the version in `package.json` into `manifest.json` and `versions.json` (see [version bump](#5-bumping-the-version-and-cutting-a-release)). |
 | `npm run new-credential` | Replace the Google OAuth credential (see [section 4](#4-creating-a-google-oauth-credential)). |

@@ -4,6 +4,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 
@@ -142,7 +143,29 @@ export const config: WebdriverIO.Config = {
 		// Cache the token so Drive API helpers in test files can access it.
 		process.env["VAULT_SHARE_REFRESH_TOKEN"] = refreshToken;
 	},
+
+	// After the session, harvest any coverage the instrumented build recorded.
+	// No-op for normal (uninstrumented) runs. See test:coverage:e2e scripts.
+	after: async () => {
+		await collectCoverage(browser, "single");
+	},
 };
+
+/**
+ * Write the Istanbul coverage object the instrumented `main.js` recorded into
+ * `window.__coverage__` to `.nyc_output/` so `nyc report` can consume it. A
+ * no-op when the plugin was built without instrumentation (the global is
+ * undefined), so it is safe to call unconditionally from every wdio config.
+ */
+export async function collectCoverage(br: WebdriverIO.Browser, label: string): Promise<void> {
+	const cov = await br.execute(() => {
+		const w = window as unknown as { __coverage__?: unknown };
+		return w.__coverage__ ?? null;
+	});
+	if (!cov) return;
+	mkdirSync(".nyc_output", { recursive: true });
+	writeFileSync(`.nyc_output/${label}-${Date.now()}.json`, JSON.stringify(cov));
+}
 
 /**
  * Inject a GDrive refresh token and fully configure the vault-share plugin for

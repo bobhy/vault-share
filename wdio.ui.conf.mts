@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { collectCoverage } from "./wdio.conf.mts";
 
 // UI / rendering e2e tests. Run with: npm run test:e2e:ui
 //
@@ -101,5 +102,10 @@ export const config: WebdriverIO.Config = {
 			}).plugins.plugins["vault-share"] as Plugin | undefined;
 			await plugin?.scheduler?.stop();
 		});
+	},
+
+	// Harvest coverage from the instrumented build (no-op for normal runs).
+	after: async () => {
+		await collectCoverage(browser, "ui");
 	},
 };

@@ -1,0 +1,10 @@
+{
+  "all": false,
+  "exclude": [
+    "**/*.test.ts",
+    "**/__mocks__/**",
+    "**/test-helpers.ts",
+    "node_modules/**"
+  ],
+  "reporter": ["text", "html"]
+}

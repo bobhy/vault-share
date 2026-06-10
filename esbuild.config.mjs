@@ -4,6 +4,7 @@ import { builtinModules } from 'node:module';
 import { copyFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { createInstrumenter } from 'istanbul-lib-instrument';
 
 const banner =
 `/*
@@ -13,6 +14,10 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === "production");
+// Coverage build: a one-shot production-like build whose `src/**` modules are
+// Istanbul-instrumented so the wdio (Electron) run populates `window.__coverage__`.
+// See specs/ui-map.md → "Testing the UI layer" and the test:coverage:e2e scripts.
+const coverage = (process.argv[2] === "coverage");
 
 const PLUGIN_ID = 'vault-share';
 const PLUGIN_FILES = ['main.js', 'manifest.json', 'styles.css'];
@@ -65,6 +70,45 @@ const devDeployPlugin = {
 	},
 };
 
+/**
+ * esbuild plugin: Istanbul-instrument every `src/**` TypeScript module (test
+ * files and node_modules excluded) so the bundled `main.js` records line/branch
+ * coverage into the global `__coverage__` at runtime. Each file is transpiled
+ * TS→JS with a sourcemap first, then instrumented against that map, so coverage
+ * attributes back to the original `.ts` source (same absolute paths vitest uses,
+ * which is what lets the two reports merge).
+ */
+const coveragePlugin = {
+	name: 'istanbul-coverage',
+	setup(build) {
+		// Instrument the ORIGINAL TypeScript directly (parsed with the `typescript`
+		// plugin) rather than transpiled JS. istanbul records statement positions
+		// in the coordinates of the code it parses, so instrumenting TS keeps the
+		// recorded line/branch positions in TS coordinates — matching vitest's
+		// istanbul provider, which is what makes the line-union combined report
+		// (scripts/coverage-combine.mjs) coherent. esbuild's `ts` loader then
+		// strips the types and bundles, leaving the inserted counters intact.
+		const instrumenter = createInstrumenter({
+			esModules: true,
+			compact: false,
+			coverageVariable: '__coverage__',
+			parserPlugins: [
+				'typescript',
+				'asyncGenerators', 'bigInt', 'classProperties', 'classPrivateProperties',
+				'classPrivateMethods', 'dynamicImport', 'importMeta', 'nullishCoalescingOperator',
+				'numericSeparator', 'objectRestSpread', 'optionalCatchBinding', 'optionalChaining',
+				'topLevelAwait',
+			],
+		});
+		build.onLoad({ filter: /\.ts$/ }, (args) => {
+			if (args.path.includes('node_modules') || /\.test\.ts$/.test(args.path)) return undefined;
+			const source = readFileSync(args.path, 'utf8');
+			const code = instrumenter.instrumentSync(source, args.path);
+			return { contents: code, loader: 'ts' };
+		});
+	},
+};
+
 const context = await esbuild.context({
 	banner: {
 		js: banner,
@@ -93,11 +137,11 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: "main.js",
 	minify: prod,
-	// Auto-deploy into local test vaults only in dev/watch mode.
-	plugins: prod ? [] : [devDeployPlugin],
+	// coverage → istanbul instrumentation; dev/watch → auto-deploy; prod → neither.
+	plugins: coverage ? [coveragePlugin] : prod ? [] : [devDeployPlugin],
 });
 
-if (prod) {
+if (prod || coverage) {
 	await context.rebuild();
 	process.exit(0);
 } else {

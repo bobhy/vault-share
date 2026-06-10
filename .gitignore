@@ -47,4 +47,10 @@ dev-vaults.local.json
 
 coverage
 
+# e2e / combined coverage artifacts (see test:coverage:* scripts)
+.nyc_output
+coverage-e2e
+coverage-all
+.coverage-combined
+
 
