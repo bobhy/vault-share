@@ -123,7 +123,7 @@ export class CandidateStore {
 	 *
 	 * Returns the paths that were newly rebaselined as `Synced` via the
 	 * no-history size-equality heuristic.  Callers that have access to local file
-	 * I/O (e.g. `BulkSync`) should verify these with a SHA-256 comparison
+	 * I/O (e.g. {@link sync/bulk-sync!BulkSync}) should verify these with a SHA-256 comparison
 	 * and call {@link rebaselineAsConflict} for any that do not match, so the
 	 * size-only false-positive window is eliminated when Drive provides a hash.
 	 */
@@ -331,7 +331,7 @@ export class CandidateStore {
 		return Array.from(this.cache.values());
 	}
 
-	/** Candidates filtered by `actionType`; for `PendingListModal` rows. */
+	/** Candidates filtered by `actionType`; for {@link ui/pending-list-modal!PendingListModal} rows. */
 	getByType(type: SyncActionType): Candidate[] {
 		return Array.from(this.cache.values()).filter(c => c.actionType === type);
 	}
@@ -440,7 +440,7 @@ export class CandidateStore {
 
 	/**
 	 * Transition all `Default` candidates → `Deferred`, and set the paused flag.
-	 * Called by `BulkSync` when the action count exceeds the threshold.
+	 * Called by {@link sync/bulk-sync!BulkSync} when the action count exceeds the threshold.
 	 * Fires {@link onChange} once after all writes complete.
 	 */
 	async deferAllAndPause(pending: Candidate[]): Promise<void> {
@@ -632,7 +632,7 @@ export class CandidateStore {
 	 * `changed: true` today, but the early return keeps the contract clear).
 	 *
 	 * Callers are responsible for tallying their own counters
-	 * (e.g. `BulkSync` updates `SyncPassResult`).
+	 * (e.g. {@link sync/bulk-sync!BulkSync} updates {@link sync/types!SyncPassResult}).
 	 */
 	async applyFileResult(
 		path: string,

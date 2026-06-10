@@ -5,7 +5,7 @@
  * {@link SyncFileResult}, {@link SyncPassResult} — that flow between the
  * planning, execution, persistence, and UI layers. Keeping these in a leaf
  * module prevents the cross-layer import cycles that would otherwise arise
- * (e.g. `bulk-sync.ts` and `candidate-store.ts` both reference `Candidate`).
+ * (e.g. `bulk-sync.ts` and `candidate-store.ts` both reference {@link Candidate}).
  *
  * @packageDocumentation
  */
@@ -55,15 +55,15 @@ export type CandidateState = 'Synced' | 'Default' | 'Deferred' | 'Approved';
  * and are `undefined` between planning passes.
  *
  * All four sharing layers — planning, UI, deferral, execution — work directly
- * with `Candidate`.  There are no intermediate projection types.
+ * with {@link Candidate}.  There are no intermediate projection types.
  *
  * ### Immutability contract
  *
- * `Candidate` is **immutable to readers**. Any reference returned by
+ * {@link Candidate} is **immutable to readers**. Any reference returned by
  * `CandidateStore.getAll()` / `getByType()` / `getApproved()` / `getPending()`
  * is a stable snapshot — its fields will not change underneath the holder.
  *
- * `CandidateStore` enforces this by **replacing** the cache entry on every
+ * {@link sync/candidate-store!CandidateStore} enforces this by **replacing** the cache entry on every
  * mutation (reconcile, markSynced, defer, approve, …) rather than rewriting
  * the existing object in place. Held references therefore go *stale* after a
  * mutation (they still describe the candidate at the moment of fetch), but
@@ -71,10 +71,10 @@ export type CandidateState = 'Synced' | 'Default' | 'Deferred' | 'Approved';
  * re-fetch from the store; subscribe to `CandidateStore.onChange` for a
  * notification when re-fetching is worthwhile.
  *
- * Code that constructs a `Candidate` outside the store (e.g.
+ * Code that constructs a {@link Candidate} outside the store (e.g.
  * `single-file-sync.ts` building a transient candidate for a brand-new path)
  * is free to mutate its own object until it hands the candidate over to
- * `CandidateStore`.
+ * {@link sync/candidate-store!CandidateStore}.
  */
 export interface Candidate {
 	// ── Identity (IDB key) ────────────────────────────────────────────────────
@@ -124,7 +124,7 @@ export interface Candidate {
 	 * deletion). A `deleteRemote` action is only *trusted* — executed without
 	 * pausing for review — when this marker is set; an unflagged `deleteRemote`
 	 * is deferred and pauses sharing so the user can confirm before the file is
-	 * removed from the group vault. Cleared by {@link CandidateStore.reconcile}
+	 * removed from the group vault. Cleared by {@link sync/candidate-store!CandidateStore.reconcile}
 	 * if the local file reappears.
 	 *
 	 * Optional: absent (or 0) means "no deletion observed" — the safe default
@@ -152,7 +152,7 @@ export interface SyncedFileState {
  * Result of a single file sync operation.
  *
  * When `changed` is true and the action was a push / pull / conflict resolution,
- * `syncedState` carries the post-sync metadata that `BulkSync` uses to call
+ * `syncedState` carries the post-sync metadata that {@link sync/bulk-sync!BulkSync} uses to call
  * `candidateStore.markSynced()`.  For delete actions and unchanged files,
  * `syncedState` is `undefined`.
  *
@@ -174,13 +174,13 @@ export interface SyncFileResult {
 	identicalContent?: boolean;
 	/**
 	 * Set when `changed = true` for non-delete actions.
-	 * Used by the caller to update `CandidateStore` without
+	 * Used by the caller to update {@link sync/candidate-store!CandidateStore} without
 	 * `syncOneFile` needing a store reference.
 	 */
 	syncedState?: SyncedFileState;
 	/**
 	 * Newly created vault paths (conflict copies, placeholders) that should be
-	 * inserted into `CandidateStore` as `Synced` candidates so the next
+	 * inserted into {@link sync/candidate-store!CandidateStore} as `Synced` candidates so the next
 	 * planning pass does not re-plan them as conflicts.
 	 */
 	newSyncedFiles?: Array<{ path: string } & SyncedFileState>;
@@ -198,7 +198,7 @@ export interface SyncPassResult {
 	/**
 	 * Per-candidate failures during execution.  An individual candidate may
 	 * fail (e.g. its local file was deleted between planning and execution);
-	 * `BulkSync` logs the error and continues to the next candidate rather
+	 * {@link sync/bulk-sync!BulkSync} logs the error and continues to the next candidate rather
 	 * than aborting the pass, and bumps this counter.  Distinct from
 	 * {@link error}, which signals a *pass-wide* failure (network outage on
 	 * the listAll round-trip, IDB transaction crash, etc.).
@@ -244,10 +244,10 @@ export interface SyncContext {
 	driveFolderId: () => string;  // getter so re-resolution after log in is visible
 	logger: Logger;
 	/**
-	 * Live activity tracker. {@link syncOneFile} reports the file it is currently
+	 * Live activity tracker. {@link sync/file-syncer!syncOneFile} reports the file it is currently
 	 * processing here (`setCurrentPath`), so every sync path — bulk, single-file,
 	 * and manual resolution — drives the Sharing Status "Current file" indicator
-	 * from one place. `BulkSync` additionally reports the pass-level running flag.
+	 * from one place. {@link sync/bulk-sync!BulkSync} additionally reports the pass-level running flag.
 	 */
 	activity: SyncActivity;
 }

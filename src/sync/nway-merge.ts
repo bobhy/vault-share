@@ -1,8 +1,7 @@
 /**
  * Flat, N-way text conflict representation and combination.
  *
- * Replaces the original two-way `diff3` marker scheme (see {@link module:merge})
- * for unresolved conflicts. The governing rule: `diff3` runs **only on clean
+ * Replaces the original two-way `diff3` marker scheme for unresolved conflicts. The governing rule: `diff3` runs **only on clean
  * text**; marker-bearing text is never fed to a three-way merge. Once a conflict
  * exists it only grows by **union of distinct contributions that share a common
  * base**, de-duplicated by content. Anything that does not fit falls back to

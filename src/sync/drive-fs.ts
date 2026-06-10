@@ -1,7 +1,7 @@
 /**
- * Drive-side counterpart to `LocalFs`.
+ * Drive-side counterpart to {@link sync/local-fs!LocalFs}.
  *
- * Adapts `GDriveApi` into the abstraction the sync engine speaks —
+ * Adapts {@link gdrive/api!GDriveApi} into the abstraction the sync engine speaks —
  * vault-relative paths instead of Drive file IDs, `(files, duplicatePathsFound)`
  * pairs instead of paged listings, mtime/size/sha256 metadata bundled as
  * {@link DriveFileSide}. Handles folder-hierarchy walking, intermediate folder

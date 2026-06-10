@@ -24,7 +24,7 @@ export interface ConflictResult {
 	hadConflictMarkers: boolean;
 	/**
 	 * Newly created vault paths (conflict copies, placeholders) that should be
-	 * inserted into `CandidateStore` as `Synced` candidates.
+	 * inserted into {@link sync/candidate-store!CandidateStore} as `Synced` candidates.
 	 */
 	newSyncedFiles?: Array<{ path: string } & SyncedFileState>;
 	/**

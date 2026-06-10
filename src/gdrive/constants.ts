@@ -1,7 +1,7 @@
 /**
  * Compile-time constants for the Google OAuth flow.
  *
- * Separated from `GDriveAuth` so the values can be imported by tooling
+ * Separated from {@link gdrive/auth!GDriveAuth} so the values can be imported by tooling
  * (the setup-wdio-token script, the OAuth relay worker) without dragging in
  * the Obsidian-dependent auth module.
  *

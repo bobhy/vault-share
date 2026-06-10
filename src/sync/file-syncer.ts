@@ -2,7 +2,7 @@
  * Per-candidate sync executor.
  *
  * Given a {@link Candidate} whose `actionType` has already been chosen by
- * `planAction`, performs the corresponding I/O — push, pull, delete, or
+ * {@link sync/decision-engine!planAction}, performs the corresponding I/O — push, pull, delete, or
  * conflict resolution — and returns a {@link SyncFileResult} the caller hands
  * back to `CandidateStore.applyFileResult`. Owns the SHA-256 fast-path
  * that short-circuits identical-content conflicts before they reach
@@ -24,7 +24,7 @@ import { sha256Hex } from './content-hash';
  * `candidateStore.markSynced()` without this function needing a store reference.
  * For delete actions and no-ops, `syncedState` is `undefined`.
  *
- * Reports the file as the engine's current activity ({@link SyncActivity}) for
+ * Reports the file as the engine's current activity ({@link sync/sync-activity!SyncActivity}) for
  * the span of its I/O, so every caller — bulk sync, single-file sync, and the
  * manual resolution buttons — drives the Sharing Status "Current file"
  * indicator from this one place, and it is always cleared, even on error.

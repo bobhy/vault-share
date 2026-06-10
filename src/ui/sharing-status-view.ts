@@ -13,7 +13,7 @@
  *    rows are clickable (opening {@link PendingListModal}) only while paused.
  *
  * Persistent candidate state is read directly from {@link CandidateStore}; the
- * transient "currently sharing" signal comes from {@link SyncActivity}. Both
+ * transient "currently sharing" signal comes from {@link sync/sync-activity!SyncActivity}. Both
  * fire change notifications wired in `main.ts` to re-render this view — there
  * is no separate snapshot held here.
  *
@@ -47,7 +47,7 @@ const STATUS_ROWS: StatusRow[] = [
  * Sidebar panel for manually inspecting and controlling the sharing process.
  *
  * Reads candidate state from {@link CandidateStore} and live activity from
- * {@link SyncActivity} — no in-memory snapshot.  Refreshes reactively whenever
+ * {@link sync/sync-activity!SyncActivity} — no in-memory snapshot.  Refreshes reactively whenever
  * either store's change notification fires (both wired in `main.ts`).
  *
  * The layout is always-on: a live status section (bulk state + currently-shared

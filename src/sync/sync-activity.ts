@@ -1,14 +1,14 @@
 /**
  * Live, in-memory view of what the sync engine is doing *right now*.
  *
- * {@link CandidateStore} already notifies the UI on every *persistent* state
+ * {@link sync/candidate-store!CandidateStore} already notifies the UI on every *persistent* state
  * change (reconcile, markSynced, defer, pause, …), which keeps the Sharing
  * Status count table live. What it cannot express is the transient
  * "currently sharing file X" / "a bulk pass is running" signal — no store
  * mutation fires when a pass begins or advances to the next file.
  *
- * `SyncActivity` fills that gap: the shared `syncAndApplyFile` path reports the
- * file it is currently syncing (whoever drives it), and `BulkSync` reports
+ * {@link SyncActivity} fills that gap: the shared `syncAndApplyFile` path reports the
+ * file it is currently syncing (whoever drives it), and {@link sync/bulk-sync!BulkSync} reports
  * whether a pass is in flight. The Sharing Status panel subscribes via
  * {@link SyncActivity.onChange} to re-render the top status section in real time.
  *
@@ -30,7 +30,7 @@ export interface SyncActivitySnapshot {
 /**
  * Observable holder for the engine's transient activity state.
  *
- * Modeled on {@link CandidateStore}'s listener pattern: setters mutate the
+ * Modeled on {@link sync/candidate-store!CandidateStore}'s listener pattern: setters mutate the
  * in-memory snapshot and fire registered listeners, but only when the value
  * actually changes so a busy pass does not spam re-renders. Listeners run
  * synchronously in registration order; a throwing listener is logged and

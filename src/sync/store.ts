@@ -4,7 +4,7 @@
  *
  * Owns the database connection ({@link IDBHelper}) shared across all stores
  * and the schema version number. Provides typed CRUD over the `sync-content`,
- * `sync-stats`, and `device` object stores; `CandidateStore` owns the
+ * `sync-stats`, and `device` object stores; {@link sync/candidate-store!CandidateStore} owns the
  * `candidates` and `sync-state` stores through the same IDB handle.
  *
  * Per project convention, schema bumps cold-start the database (drop and

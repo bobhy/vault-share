@@ -1,5 +1,5 @@
 /**
- * File-preview panel rendered inside each `PendingListModal` row.
+ * File-preview panel rendered inside each {@link ui/pending-list-modal!PendingListModal} row.
  *
  * Lazily fetches the bytes the user needs to see (local-only for pushes,
  * remote-only for pulls, both sides for conflicts) and renders the
@@ -15,14 +15,14 @@ import { isMergeEligible } from '../sync/nway-merge';
 
 /**
  * Mutable reference to the editable textarea created for text-conflict candidates.
- * Held by `PendingListModal` so the **Merge** button can read the current value.
+ * Held by {@link ui/pending-list-modal!PendingListModal} so the **Merge** button can read the current value.
  */
 export interface TextareaRef {
 	el: HTMLTextAreaElement | null;
 }
 
 /**
- * Async file-content panel renderer for `PendingListModal`.
+ * Async file-content panel renderer for {@link ui/pending-list-modal!PendingListModal}.
  *
  * Shows a loading placeholder while content is being fetched, then replaces it
  * with the appropriate panel:

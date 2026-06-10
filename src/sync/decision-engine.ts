@@ -16,8 +16,8 @@ import type { Candidate, FileSide, SyncActionType } from './types';
  *
  * Only meaningful for candidates that have actually been synced
  * (`candidate.syncedAt > 0`).  Brand-new candidates with no history are
- * classified by `planAction` directly from presence (see the no-history path
- * below) and never pass through `classifyStatus`.
+ * classified by {@link planAction} directly from presence (see the no-history path
+ * below) and never pass through {@link classifyStatus}.
  */
 export type FileStatus =
 	| 'modified'    // file exists and its mtime/size differ from the record
@@ -47,7 +47,7 @@ export function classifyStatus(
  *
  * This is the pure decision function used by `CandidateStore.reconcile`.
  * It is exported primarily for unit testing; production callers should invoke
- * it only through `CandidateStore`.
+ * it only through {@link sync/candidate-store!CandidateStore}.
  *
  * @param candidate - Existing candidate record, or `null` for a brand-new path.
  * @param local     - Current local file metadata, or `undefined` if absent.

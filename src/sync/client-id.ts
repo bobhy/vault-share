@@ -25,7 +25,7 @@ export function shortClientId(id: string): string {
 /**
  * Look up the persisted client ID; if none, generate a UUID v4, persist it,
  * and return it. Call once at plugin load and pass the result through the
- * `SyncContext`.
+ * {@link sync/types!SyncContext}.
  */
 export async function resolveClientId(store: SyncStore): Promise<string> {
 	const stored = await store.getClientId();

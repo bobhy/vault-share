@@ -52,10 +52,10 @@ function tallyFileResult(
  * single-file sync operations can run in the same event loop.
  *
  * {@link CandidateStore} is the sole source of truth for candidate state.
- * `BulkSync` reads from it, executes actions, and writes back results.
+ * {@link BulkSync} reads from it, executes actions, and writes back results.
  *
  * ### Approved candidates
- * When the user clicks Apply in `PendingListModal`, selected candidates are
+ * When the user clicks Apply in {@link ui/pending-list-modal!PendingListModal}, selected candidates are
  * persisted to IDB as `Approved` via {@link CandidateStore.approve}.  On the
  * next {@link run} call, {@link doRun} checks for `Approved` candidates first
  * and routes to {@link executeApproved} instead of the normal planning path.

@@ -4,7 +4,7 @@
  *
  * Increment methods are synchronous so they can be called from any sync code
  * path; {@link StatsTracker.flush} writes the accumulated counters to IDB.
- * `BulkSync` calls flush at the end of every successful pass. Reset is wired
+ * {@link sync/bulk-sync!BulkSync} calls flush at the end of every successful pass. Reset is wired
  * to the plugin reset and "change Drive folder" flows.
  *
  * @packageDocumentation

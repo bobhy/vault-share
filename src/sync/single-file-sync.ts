@@ -1,7 +1,7 @@
 /**
  * Reactive sync for the file the user is currently editing or viewing.
  *
- * `SyncScheduler` dispatches `singleFileSync` from its heartbeat after
+ * {@link sync/scheduler!SyncScheduler} dispatches `singleFileSync` from its heartbeat after
  * either the post-edit hold-down expires or a monitored-file poll deadline
  * fires. The path-specific code that bulk sync does not need lives here:
  * refreshing the open editor view after a pull, reopening the leaf on a
