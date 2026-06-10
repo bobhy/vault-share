@@ -407,9 +407,9 @@ export class GDriveApi {
 	}
 }
 
-/** Resolve after `ms` milliseconds. Uses `activeWindow.setTimeout` for popout-window compatibility (no Node timers). */
+/** Resolve after `ms` milliseconds. Uses `window.setTimeout` (browser timer, not Node) per obsidianmd/prefer-window-timers. */
 function sleep(ms: number): Promise<void> {
-	return new Promise(resolve => activeWindow.setTimeout(resolve, ms));
+	return new Promise(resolve => window.setTimeout(resolve, ms));
 }
 
 /** True when an HTTP response should be retried: transient status, or a rate-limit `403`. */

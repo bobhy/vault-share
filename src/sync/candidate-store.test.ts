@@ -37,7 +37,6 @@ function syncedState(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-	// eslint-disable-next-line obsidianmd/prefer-active-doc -- test env setup, not production UI code
 	globalThis.indexedDB = new IDBFactory();
 });
 

@@ -4,7 +4,6 @@ import { IDBHelper, idbRequest, sanitizeDbName } from './idb';
 
 beforeEach(() => {
 	// Fresh in-memory IDB for each test — no cross-test leakage.
-	// eslint-disable-next-line obsidianmd/prefer-active-doc -- test env setup, not production UI code
 	globalThis.indexedDB = new IDBFactory();
 });
 

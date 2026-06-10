@@ -5,14 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [unreleased]
+## [1.0.4]
 
 ## Added
 - Updated `obsidian-mock` to enable unit tests on UI, added a fairly comprehensive set of UI tests, getting coverage from 0% to 90%-ish.
 No actual bugs found and no functional changes.
+- `npm run test:coverage` subspecies to report code coverage in all tests.
 
 ### Fixed
 - In conflict resolution header displayed after 'find next conflict', alternative resolutions buttons moved to the bottom of the view on mobile and are now tappable.  They were displaying at the top, but were overlaid by Android status bar.
+- updated dev dependency eslint-plugin-obsidianmd to 0.3 and fixed miscellaneous nits it picked.
 
 ## [1.0.3]
 

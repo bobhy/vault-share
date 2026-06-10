@@ -152,7 +152,7 @@ export class SyncScheduler {
 		}
 		// Drain any in-flight bulk pass started by the most recent tick.
 		while (this.bulkRunning) {
-			await new Promise(r => activeWindow.setTimeout(r, 50));
+			await new Promise(r => window.setTimeout(r, 50));
 		}
 	}
 

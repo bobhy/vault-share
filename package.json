@@ -1,6 +1,6 @@
 {
 	"name": "vault-share",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "Share vaults between devices and users through Google Drive.",
 	"main": "main.js",
 	"type": "module",
@@ -52,7 +52,7 @@
 		"@wdio/mocha-framework": "^9.27.0",
 		"@wdio/spec-reporter": "^9.27.0",
 		"esbuild": "^0.28.0",
-		"eslint-plugin-obsidianmd": "^0.2.8",
+		"eslint-plugin-obsidianmd": "^0.3.0",
 		"fake-indexeddb": "^6.2.5",
 		"globals": "^17.5.0",
 		"istanbul-lib-instrument": "^6.0.3",
@@ -68,7 +68,7 @@
 		"wdio-obsidian-service": "^3.0.3"
 	},
 	"dependencies": {
-		"node-diff3": "^3.2.0",
+		"node-diff3": "^3.2.1",
 		"obsidian": "latest"
 	},
 	"overrides": {
