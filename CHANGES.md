@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.4]
 
-## Added
+### Added
 - Updated `obsidian-mock` to enable unit tests on UI, added a fairly comprehensive set of UI tests, getting coverage from 0% to 90%-ish.
 No actual bugs found and no functional changes.
 - `npm run test:coverage` subspecies to report code coverage in all tests.

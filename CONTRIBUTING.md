@@ -188,40 +188,59 @@ The client secret is **never committed** — it lives only in Cloudflare's secre
 
 ## 5. Bumping the version and cutting a release
 
-The version number lives in three files that must stay in sync: `package.json`, `manifest.json`, and `versions.json`. The `npm run version` script keeps them in sync automatically.
+The version number lives in three files that must stay in sync: `package.json` (the source of truth), `manifest.json`, and `versions.json`. `npm run version` propagates the `package.json` version into the other two.
 
-### Step-by-step
+### Prepare the release
 
-1. **Edit `package.json`** — change the `version` field to the new SemVer string (no `v` prefix).
+1. If you are raising the minimum required Obsidian version, edit `manifest.json`'s `minAppVersion` *first*.
 
-2. **Run the version script:**
+2. **Bump `package.json`** — set the `version` field to the new SemVer string (no `v` prefix). 
+
+3. **Propagate the version:**
    ```bash
    npm run version
    ```
-   This updates `manifest.json` and appends an entry to `versions.json` mapping the new version to the current `minAppVersion`. If you are also raising the minimum required Obsidian version, update `manifest.json`'s `minAppVersion` field *before* running this script.
+   This updates `manifest.json` and appends an entry to `versions.json` mapping the new version to the current `minAppVersion` (and stages both files).
 
-3. **Update `CHANGES.md`** with a summary of what changed in this release.
+4. **Write the changelog** — add/finish the top-most `## [x.y.z]` or `## [unreleased]` section in `CHANGES.md`. This is where the release notes come from.
 
-4. **Commit and tag:**
-   ```bash
-   git add package.json CHANGES.md   # manifest.json and versions.json already staged by `npm run version`
-   git commit -m "chore: release X.Y.Z"
-   git tag X.Y.Z
-   git push && git push --tags
-   ```
-   The tag must match the `package.json` version exactly — no `v` prefix.
+### Cut the release — `release.fish` (recommended)
 
-5. **Create the GitHub release with assets attached:**
-   ```bash
-   gh release create X.Y.Z main.js manifest.json styles.css \
-     --title "X.Y.Z" \
-     --notes-file <(sed -n '/^## \[X.Y.Z\]/,/^## /p' CHANGES.md | head -n -1)
-   ```
-   Or use the GitHub web UI: go to **Releases → Draft a new release**, select the tag you just pushed, paste the changelog section, and publish.
+From the repo root, after the prepare steps above:
 
-   This triggers the attest-release.yml (in .github) to sign the released assets.
+```fish
+./release.fish              # show the plan, prompt to confirm, then cut the release
+./release.fish --dry-run    # print the plan + notes preview and change nothing
+./release.fish --yes        # skip the confirmation prompt
+```
 
-   The Obsidian community plugin registry monitors GitHub releases and picks up the new version automatically once the release is published.
+The script (fish; needs an authenticated `gh`) performs the whole cut:
+
+- ensures the top-most `## [x.y.z]` header in `CHANGES.md` matches `package.json` (retitles it if not);
+- commits `package.json`, `manifest.json`, `versions.json` (and `CHANGES.md` if it changed) as **`release v<version>`**;
+- pushes the current branch to `origin`;
+- builds the artifacts (`npm run build` → `main.js`; `styles.css` and `manifest.json` are already present);
+- runs `gh release create <version>` attaching `main.js`, `styles.css`, and `manifest.json`, titled `<version>`, with the top `CHANGES.md` section as the notes. The tag — `<version>`, no `v` prefix — is created on the pushed commit.
+
+It refuses to run if a GitHub release for that version already exists, and stops on the first failure. If `gh release create` fails *after* the push, fix the cause and re-run — the commit/push are idempotent.
+
+### Manual equivalent
+
+If you can't run the script (no fish, or you prefer the web UI), the same steps by hand after `npm run version`:
+
+```bash
+git add package.json manifest.json versions.json CHANGES.md
+git commit -m "release vX.Y.Z"
+git push origin <branch>
+npm run build
+gh release create X.Y.Z main.js styles.css manifest.json \
+  --title "X.Y.Z" \
+  --notes-file <(awk '/^## /{n++; if(n==1)next; if(n==2)exit} n==1' CHANGES.md)
+```
+
+The tag must equal the `package.json` version exactly — no `v` prefix. `gh release create` creates the tag on the pushed commit; alternatively use the GitHub web UI (**Releases → Draft a new release**, select the version tag, paste the top `CHANGES.md` section, publish).
+
+Publishing the release triggers `attest-release.yml` (in `.github`) to sign the assets, and the Obsidian community plugin registry picks up the new version automatically.
 
 ### What each file contains
 
@@ -385,11 +404,9 @@ The port defaults to 9222 (override with `OBSIDIAN_CDP_PORT`). Useful renderer h
 ## Dependencies on hacked packages
 This plugin exercises a lot of wierd corners of the ecosystem.
 
-### Obsidian-mocks
-We want to use this collection as much as possible, avoid rolling our own.  So we have PRs pending for our extensions
-and we build against the PR branch.  (!!)
-
-[#3](https://github.com/dianedef/obsidian-mock/pull/3)
+### Obsidian-mock
+We want to use the [published obsidian-mock](https://github.com/dianedef/obsidian-mock) package for as much of the testing framework as possible.  However, we're extending it as our own testing needs expand, so 
+this package is actually built against [a PR branch](https://github.com/bobhy/obsidian-mock/tree/thirdRound) rather than the packaged version.
 
 ### Webdriverio
 Bug exposed in node 26, we're currently pinning ourselves to node 22
