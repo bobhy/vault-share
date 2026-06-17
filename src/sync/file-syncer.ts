@@ -58,6 +58,7 @@ async function executeSyncAction(
 			const content = await ctx.localFs.read(candidate.path);
 			const driveSide = await ctx.driveFs.write(rootFolderId, candidate.path, content, ctx.statsTracker, sampler);
 			ctx.statsTracker.recordPush();
+			ctx.logger.info(`Pushed to group vault: ${candidate.path}`);
 			const localSide = candidate.local ?? ctx.localFs.stat(candidate.path);
 			await ctx.store.putContent(candidate.path, content);
 			return {
@@ -85,6 +86,7 @@ async function executeSyncAction(
 			const content = await ctx.driveFs.readBinary(driveFileId);
 			await ctx.localFs.write(candidate.path, content);
 			ctx.statsTracker.recordPull();
+			ctx.logger.info(`Pulled to local vault: ${candidate.path}`);
 			// Re-stat after write: size and mtime must reflect the written content, not
 			// candidate.local which carries pre-pull values and would cause a false push
 			// on the next poll when the pulled file is a different size.
@@ -111,12 +113,14 @@ async function executeSyncAction(
 				?? (await ctx.driveFs.stat(rootFolderId, candidate.path))?.driveFileId;
 			if (driveFileId) await ctx.driveFs.delete(driveFileId);
 			await ctx.store.deleteContent(candidate.path);
+			ctx.logger.info(`Deleted from group vault: ${candidate.path}`);
 			return { changed: true, merged: false, hadConflictMarkers: false };
 		}
 
 		case 'deleteLocal': {
 			await ctx.localFs.delete(candidate.path);
 			await ctx.store.deleteContent(candidate.path);
+			ctx.logger.info(`Deleted from local vault: ${candidate.path}`);
 			return { changed: true, merged: false, hadConflictMarkers: false };
 		}
 
@@ -161,6 +165,10 @@ async function executeSyncAction(
 			}
 
 			const conflictResult = await resolveConflict(candidate, fileConflict, textFileConflict, ctx, prereadLocalContent);
+			// A genuine conflict resolution reconciles both sides, so it affects a
+			// file in each vault — log one line per vault (the issue asks for two).
+			ctx.logger.info(`Resolved conflict in local vault: ${candidate.path}`);
+			ctx.logger.info(`Resolved conflict in group vault: ${candidate.path}`);
 			// "In place" = the original path now has coherent content on both
 			// sides and the caller should build a `syncedState` for it.
 			//   - Merge: `merged` is true.

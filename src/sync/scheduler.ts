@@ -9,7 +9,7 @@
  *
  * @packageDocumentation
  */
-import type { EventRef, Workspace, WorkspaceLeaf } from 'obsidian';
+import type { EventRef, TAbstractFile, Workspace, WorkspaceLeaf } from 'obsidian';
 import type { SyncContext } from './types';
 import type { BulkSync } from './bulk-sync';
 import type { CandidateStore } from './candidate-store';
@@ -26,6 +26,18 @@ export interface PerFileState {
 	nextPollAt: number;
 	/** Whether the user has enabled monitoring (poll) mode for this file. */
 	monitored: boolean;
+	/**
+	 * True only for the open/visible file (tracked via
+	 * {@link SyncScheduler.onFileVisible}), whose entry has an ongoing lifecycle —
+	 * merge-base seed, optional polling, view refresh, and re-arming across edits —
+	 * and is removed by visibility ({@link SyncScheduler.recomputeVisibleFiles}).
+	 *
+	 * The common case is `false`: an entry created reactively by a vault
+	 * create/modify (any non-excluded file, e.g. another plugin rewriting a closed
+	 * note) is a one-shot — it fires a single hold-down sync and is then evicted, so
+	 * {@link fileStates} does not accumulate one row per file ever touched.
+	 */
+	persistent: boolean;
 }
 
 /** Dependencies passed to {@link SyncScheduler} at construction. */
@@ -53,6 +65,13 @@ export interface SyncSchedulerDeps {
 	 */
 	isDeferredPath: (path: string) => boolean;
 	/**
+	 * Returns true if the given vault path is excluded from sharing (config dir
+	 * or a user exclude rule). Gates the reactive create/modify trigger so the
+	 * scheduler does not single-file-sync constantly-churning excluded files
+	 * (e.g. `.obsidian/workspace.json`). Backed by {@link sync/exclude!ExcludeMatcher}.
+	 */
+	isExcludedPath: (path: string) => boolean;
+	/**
 	 * Returns true once the vault's file index is fully loaded (Obsidian's
 	 * `onLayoutReady`). Bulk sync is gated on this so a not-yet-loaded vault — a
 	 * transiently-empty/incomplete `localFs.list()` — cannot be misread as mass
@@ -74,6 +93,12 @@ export interface SyncSchedulerDeps {
  * "openFilePoll has precedence over openFileChangeHoldDown and will cancel a
  * pending holdDown event."
  *
+ * Beyond open files, vault `create`/`modify` events arm a one-shot hold-down sync
+ * for any non-excluded file — including files rewritten by other plugins as a side
+ * effect of editing an open note (e.g. the Tasks plugin updating a closed source
+ * note). These reactive entries are not {@link PerFileState.persistent} and are
+ * evicted after their single sync so {@link fileStates} stays bounded.
+ *
  * Handles background/foreground catchup: past-due deadlines fire on the next tick
  * after the app is foregrounded.
  *
@@ -92,8 +117,40 @@ export class SyncScheduler {
 	 * than waiting for {@link bulkNextRunAt}.
 	 */
 	private wasPaused = false;
+	/**
+	 * Fired whenever {@link bulkNextRunAt} changes, so UI showing the next
+	 * scheduled bulk pass (the "Idle till HH:MM:SS" line in the Sharing Status
+	 * panel) re-renders the moment the schedule actually moves — on trigger,
+	 * resume, or after a pass reschedules the next one.
+	 */
+	private nextRunChangeCb: (() => void) | null = null;
 
 	constructor(private readonly deps: SyncSchedulerDeps) {}
+
+	/**
+	 * Register a callback fired whenever the next scheduled bulk-sync time
+	 * changes. Used by the Sharing Status panel to keep its "Idle till …" line
+	 * responsive to reschedules. Only one callback is held; the latest wins.
+	 */
+	onNextRunChange(cb: () => void): void {
+		this.nextRunChangeCb = cb;
+	}
+
+	/**
+	 * Epoch ms of the next scheduled bulk-sync pass, or `0` when one is due to
+	 * run on the next eligible tick. Reflects only the timer; it does not account
+	 * for the paused flag or an in-flight pass (the panel reads those separately).
+	 */
+	getNextBulkSyncAt(): number {
+		return this.bulkNextRunAt;
+	}
+
+	/** Assign {@link bulkNextRunAt} and notify listeners if the value changed. */
+	private setBulkNextRunAt(at: number): void {
+		if (this.bulkNextRunAt === at) return;
+		this.bulkNextRunAt = at;
+		this.nextRunChangeCb?.();
+	}
 
 	/**
 	 * Begin the 1-second heartbeat and register Obsidian event listeners.
@@ -111,12 +168,17 @@ export class SyncScheduler {
 			this.recomputeVisibleFiles(workspace);
 		}));
 
-		registerEvent(ctx.app.vault.on('modify', file => {
-			const state = this.fileStates.get(file.path);
-			if (!state) return;
-			const holdMs = ctx.settings().openFileChangeHoldDown * 1000;
-			state.nextHoldDownAt = Date.now() + holdMs;
-		}));
+		// Create/modify both arm a reactive sync for the affected file, whether or
+		// not it is open. This catches files rewritten by other plugins as a side
+		// effect of editing an open note (e.g. the Tasks plugin updating a closed
+		// source note from a query result). Folders are skipped, and excluded paths
+		// are filtered inside armReactiveSync.
+		const onCreateOrModify = (file: TAbstractFile) => {
+			if ('children' in file) return; // TFolder has children; sync files only
+			this.armReactiveSync(file.path);
+		};
+		registerEvent(ctx.app.vault.on('create', onCreateOrModify));
+		registerEvent(ctx.app.vault.on('modify', onCreateOrModify));
 
 		registerEvent(ctx.app.vault.on('delete', file => {
 			const state = this.fileStates.get(file.path);
@@ -163,7 +225,7 @@ export class SyncScheduler {
 
 	/** Schedule bulk sync to run immediately on the next tick. */
 	triggerBulkSync(): void {
-		this.bulkNextRunAt = 0;
+		this.setBulkNextRunAt(0);
 	}
 
 	/**
@@ -226,7 +288,7 @@ export class SyncScheduler {
 		// command) because it keys off the persisted paused flag, not the UI.
 		if (this.wasPaused) {
 			this.wasPaused = false;
-			this.bulkNextRunAt = 0;
+			this.setBulkNextRunAt(0);
 		}
 
 		const now = Date.now();
@@ -238,7 +300,7 @@ export class SyncScheduler {
 		if (!this.bulkRunning && now >= this.bulkNextRunAt && doc.visibilityState === 'visible' && this.deps.isVaultReady()) {
 			this.bulkRunning = true;
 			const intervalMs = ctx.settings().bulkSyncPoll * 1000;
-			this.bulkNextRunAt = now + intervalMs;
+			this.setBulkNextRunAt(now + intervalMs);
 			void bulkSync.run().finally(() => { this.bulkRunning = false; });
 		}
 
@@ -257,14 +319,41 @@ export class SyncScheduler {
 				if (!this.deps.isDeferredPath(path)) {
 					void singleFileSync(path, ctx, this.deps.candidateStore, workspace, setStatusBar, p => this.clearHoldDown(p));
 				}
+				// A non-persistent entry (reactive create/modify on a closed file)
+				// fires exactly once, then is evicted so fileStates does not
+				// accumulate a row per file ever touched. A later change re-creates it.
+				if (!state.persistent) this.fileStates.delete(path);
 			}
 		}
+	}
+
+	/**
+	 * Arm a reactive hold-down sync for a file changed by a create/modify event,
+	 * whether or not it is open. Excluded paths are ignored. An already-tracked
+	 * file (the open file, or a still-pending one-shot) just has its hold-down
+	 * re-armed, preserving its flags; an untracked file gets a fresh one-shot
+	 * (non-persistent) entry.
+	 */
+	private armReactiveSync(path: string): void {
+		if (this.deps.isExcludedPath(path)) return;
+		const holdMs = this.deps.ctx.settings().openFileChangeHoldDown * 1000;
+		const existing = this.fileStates.get(path);
+		if (existing) {
+			existing.nextHoldDownAt = Date.now() + holdMs;
+			return;
+		}
+		this.fileStates.set(path, {
+			nextHoldDownAt: Date.now() + holdMs,
+			nextPollAt: Infinity,
+			monitored: false,
+			persistent: false,
+		});
 	}
 
 	private onFileVisible(path: string): void {
 		if (this.fileStates.has(path)) return;
 		// nextHoldDownAt = 0 triggers an immediate sync on first tick after open.
-		this.fileStates.set(path, { nextHoldDownAt: 0, nextPollAt: Infinity, monitored: false });
+		this.fileStates.set(path, { nextHoldDownAt: 0, nextPollAt: Infinity, monitored: false, persistent: true });
 		void this.seedBaseContent(path);
 	}
 
