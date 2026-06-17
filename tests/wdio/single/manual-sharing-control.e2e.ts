@@ -237,7 +237,7 @@ describe('Sharing status panel — open does not auto-pause', () => {
 		const bulkLine = await browser.executeObsidian(() =>
 			activeDocument.querySelector('.vault-share-sharing-status-activity')?.textContent ?? '',
 		) as unknown as string;
-		expect(bulkLine).toContain('Bulk sharing status:');
+		expect(bulkLine).toContain('Sharing:');
 		expect(bulkLine).not.toContain('Paused');
 	});
 });

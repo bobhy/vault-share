@@ -92,8 +92,40 @@ export class SyncScheduler {
 	 * than waiting for {@link bulkNextRunAt}.
 	 */
 	private wasPaused = false;
+	/**
+	 * Fired whenever {@link bulkNextRunAt} changes, so UI showing the next
+	 * scheduled bulk pass (the "Idle till HH:MM:SS" line in the Sharing Status
+	 * panel) re-renders the moment the schedule actually moves — on trigger,
+	 * resume, or after a pass reschedules the next one.
+	 */
+	private nextRunChangeCb: (() => void) | null = null;
 
 	constructor(private readonly deps: SyncSchedulerDeps) {}
+
+	/**
+	 * Register a callback fired whenever the next scheduled bulk-sync time
+	 * changes. Used by the Sharing Status panel to keep its "Idle till …" line
+	 * responsive to reschedules. Only one callback is held; the latest wins.
+	 */
+	onNextRunChange(cb: () => void): void {
+		this.nextRunChangeCb = cb;
+	}
+
+	/**
+	 * Epoch ms of the next scheduled bulk-sync pass, or `0` when one is due to
+	 * run on the next eligible tick. Reflects only the timer; it does not account
+	 * for the paused flag or an in-flight pass (the panel reads those separately).
+	 */
+	getNextBulkSyncAt(): number {
+		return this.bulkNextRunAt;
+	}
+
+	/** Assign {@link bulkNextRunAt} and notify listeners if the value changed. */
+	private setBulkNextRunAt(at: number): void {
+		if (this.bulkNextRunAt === at) return;
+		this.bulkNextRunAt = at;
+		this.nextRunChangeCb?.();
+	}
 
 	/**
 	 * Begin the 1-second heartbeat and register Obsidian event listeners.
@@ -163,7 +195,7 @@ export class SyncScheduler {
 
 	/** Schedule bulk sync to run immediately on the next tick. */
 	triggerBulkSync(): void {
-		this.bulkNextRunAt = 0;
+		this.setBulkNextRunAt(0);
 	}
 
 	/**
@@ -226,7 +258,7 @@ export class SyncScheduler {
 		// command) because it keys off the persisted paused flag, not the UI.
 		if (this.wasPaused) {
 			this.wasPaused = false;
-			this.bulkNextRunAt = 0;
+			this.setBulkNextRunAt(0);
 		}
 
 		const now = Date.now();
@@ -238,7 +270,7 @@ export class SyncScheduler {
 		if (!this.bulkRunning && now >= this.bulkNextRunAt && doc.visibilityState === 'visible' && this.deps.isVaultReady()) {
 			this.bulkRunning = true;
 			const intervalMs = ctx.settings().bulkSyncPoll * 1000;
-			this.bulkNextRunAt = now + intervalMs;
+			this.setBulkNextRunAt(now + intervalMs);
 			void bulkSync.run().finally(() => { this.bulkRunning = false; });
 		}
 

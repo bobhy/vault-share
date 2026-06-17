@@ -2,13 +2,14 @@
  * Modal that lets the user review and act on every pending candidate of one
  * {@link SyncActionType}.
  *
- * Reached from the Sharing Status panel by tapping a row in the count table.
+ * Reached from the Sharing status panel ({@link ui/sharing-panel!SharingPanelView})
+ * by tapping a row in the count table.
  * Renders one row per candidate with a preview panel ({@link loadFilePanels})
  * and per-row action buttons routed to `resolution-executor`'s
  * `execute*` functions. Approving a row marks the candidate as `Approved` in
  * the store so the next bulk pass bypasses the threshold guard.
  *
- * TODO: this and the other UI modules (`sharing-status-view.ts`,
+ * TODO: this and the other UI modules (`sharing-panel.ts`,
  * `pending-file-panel.ts`, `settings-tab.ts`, `single-file-sync.ts`, `main.ts`)
  * sit at 0% in `npm run test:coverage` — wdio exercises them end-to-end but
  * wdio's runs aren't piped into v8 coverage so they contribute nothing to the

@@ -31,8 +31,7 @@ import { SyncActivity } from './sync/sync-activity';
 import { SyncScheduler } from './sync/scheduler';
 import { SyncContext } from './sync/types';
 import { VaultShareSettingTab } from './ui/settings-tab';
-import { SyncLogView, SYNC_LOG_VIEW_TYPE } from './ui/sync-log-view';
-import { SharingStatusView, SHARING_STATUS_VIEW_TYPE } from './ui/sharing-status-view';
+import { SharingPanelView, SHARING_STATUS_VIEW_TYPE } from './ui/sharing-panel';
 import { ConfirmationModal } from './ui/confirmation-modal';
 import { ConflictMarkerNavigator, conflictHighlightExtension } from './ui/conflict-marker-navigator';
 import { formatSyncStatus } from './ui/sync-status-bar';
@@ -197,25 +196,33 @@ export default class VaultSharePlugin extends Plugin {
 			isVaultReady: () => this.vaultReady,
 		});
 
-		// 13. Sidebar log view — shown by default in the right panel. The user
-		// can close it and reopen it via the "Open log panel" command.
-		this.registerView(SYNC_LOG_VIEW_TYPE, leaf => new SyncLogView(
-			leaf,
-			this.logger,
-			() => this.settings.logSeverity,
-			severity => {
-				// The Logger reads logSeverity on every append, so this takes
-				// effect on the next log line without re-wiring anything.
-				this.settings.logSeverity = severity;
-				void this.saveData(this.settings);
-			},
-		));
-		this.app.workspace.onLayoutReady(() => { void this.activateSidebarLogView(); });
+		// Keep the panel's "Idle till HH:MM:SS" line responsive to reschedules
+		// (trigger, resume, or a completed pass arming the next one).
+		this.scheduler.onNextRunChange(() => { this.refreshSharingStatusViews(); });
 
-		// 13a. Sharing status view
+		// 13. Consolidated sharing panel (log + status in one leaf). It is NOT
+		// opened on startup — that would steal focus from the user's default note
+		// (e.g. the Daily Note). A ribbon icon and commands open it on demand.
 		this.registerView(SHARING_STATUS_VIEW_TYPE, leaf =>
-			new SharingStatusView(leaf, candidateStore, bulkSync, ctx),
+			new SharingPanelView(
+				leaf,
+				candidateStore,
+				bulkSync,
+				ctx,
+				this.logger,
+				() => this.settings.logSeverity,
+				severity => {
+					// The Logger reads logSeverity on every append, so this takes
+					// effect on the next log line without re-wiring anything.
+					this.settings.logSeverity = severity;
+					void this.saveData(this.settings);
+				},
+				() => this.scheduler?.getNextBulkSyncAt() ?? 0,
+			),
 		);
+		this.addRibbonIcon('alert-triangle', 'Sharing status', () => {
+			void this.activateSharingStatusView();
+		});
 
 		// 14. OAuth callback
 		this.registerObsidianProtocolHandler('vault-share-auth', async params => {
@@ -328,10 +335,12 @@ export default class VaultSharePlugin extends Plugin {
 			},
 		});
 
+		// Log and status are now one panel; this command ID is immutable (already
+		// published) so it stays, pointing at the consolidated Sharing status panel.
 		this.addCommand({
 			id: 'open-log-panel',
 			name: 'Open log panel',
-			callback: () => { void this.activateSidebarLogView(); },
+			callback: () => { void this.activateSharingStatusView(); },
 		});
 
 		// 17. Context menus
@@ -610,28 +619,13 @@ export default class VaultSharePlugin extends Plugin {
 		await this.app.workspace.revealLeaf(leaf);
 	}
 
-	/** Refresh all currently open Sharing Status panels. */
+	/** Refresh all currently open Sharing status panels. */
 	private refreshSharingStatusViews(): void {
 		for (const leaf of this.app.workspace.getLeavesOfType(SHARING_STATUS_VIEW_TYPE)) {
-			void (leaf.view as SharingStatusView).refresh();
+			// A leaf restored from a saved layout is a lightweight DeferredView until
+			// the user visits it (Obsidian ≥ 1.7.7) — it has no refresh(). Skip those;
+			// they render fresh from current state when activated.
+			if (leaf.view instanceof SharingPanelView) leaf.view.refresh();
 		}
-	}
-
-	private async activateSidebarLogView(): Promise<void> {
-		const existing = this.app.workspace.getLeavesOfType(SYNC_LOG_VIEW_TYPE);
-		if (existing[0]) {
-			await this.app.workspace.revealLeaf(existing[0]);
-			return;
-		}
-		// getRightLeaf(false) throws when the right sidebar panel hasn't been created yet.
-		let leaf: WorkspaceLeaf | null = null;
-		try {
-			leaf = this.app.workspace.getRightLeaf(false);
-		} catch {
-			return;
-		}
-		if (!leaf) return;
-		await leaf.setViewState({ type: SYNC_LOG_VIEW_TYPE, active: true });
-		await this.app.workspace.revealLeaf(leaf);
 	}
 }

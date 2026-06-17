@@ -603,6 +603,41 @@ describe('SyncScheduler', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// next-run reporting (drives the panel's "Idle till HH:MM:SS" line)
+	// -------------------------------------------------------------------------
+
+	it('getNextBulkSyncAt is 0 before any pass and the scheduled time after one', async () => {
+		const { scheduler } = makeScheduler({ bulkSyncPoll: 3600 });
+		expect(scheduler.getNextBulkSyncAt()).toBe(0);
+
+		scheduler.start();
+		await tick(1000); // initial bulk pass arms the next run
+		expect(scheduler.getNextBulkSyncAt()).toBe(Date.now() + 3600 * 1000);
+	});
+
+	it('onNextRunChange fires when the scheduled time changes', async () => {
+		const { scheduler } = makeScheduler({ bulkSyncPoll: 3600 });
+		const cb = vi.fn();
+		scheduler.onNextRunChange(cb);
+
+		scheduler.start();
+		await tick(1000); // pass reschedules: 0 → now+interval
+		expect(cb).toHaveBeenCalled();
+
+		cb.mockClear();
+		scheduler.triggerBulkSync(); // now+interval → 0
+		expect(cb).toHaveBeenCalledTimes(1);
+	});
+
+	it('onNextRunChange does not fire when the time is unchanged', () => {
+		const { scheduler } = makeScheduler();
+		const cb = vi.fn();
+		scheduler.onNextRunChange(cb);
+		scheduler.triggerBulkSync(); // already 0 → no change
+		expect(cb).not.toHaveBeenCalled();
+	});
+
+	// -------------------------------------------------------------------------
 	// clearHoldDown
 	// -------------------------------------------------------------------------
 

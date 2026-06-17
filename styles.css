@@ -1,23 +1,83 @@
-.vault-share-log-view {
+/* ── Consolidated sharing panel (status + log sections in one leaf) ───────── */
+.vault-share-sharing-panel {
 	display: flex;
 	flex-direction: column;
 	height: 100%;
 	padding: 0;
 }
 
-.vault-share-log-toolbar {
+/* Two stacked sections sized by the user-draggable splitter; each is a flex
+   column of [header toolbar] + [scrollable content]. The `--vault-share-split`
+   variable (set by the view, clamped 0.2–0.8) is the status section's share of
+   the height; the log section takes the rest. flex-basis 0 makes the grow values
+   act as direct proportions. */
+.vault-share-panel-section {
+	display: flex;
+	flex-direction: column;
+	flex-shrink: 1;
+	flex-basis: 0;
+	min-height: 0; /* allow the inner content to scroll instead of overflowing */
+}
+
+.vault-share-panel-section-status {
+	flex-grow: var(--vault-share-split, 0.5);
+}
+
+.vault-share-panel-section-log {
+	flex-grow: calc(1 - var(--vault-share-split, 0.5));
+}
+
+/* Draggable divider between the two sections. */
+.vault-share-panel-splitter {
+	flex: 0 0 6px;
+	cursor: row-resize;
+	background: var(--background-modifier-border);
+	transition: background 0.1s ease;
+}
+
+.vault-share-panel-splitter:hover,
+.vault-share-panel-splitter:focus-visible {
+	background: var(--interactive-accent);
+	outline: none;
+}
+
+.vault-share-panel-section-header {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: 8px;
 	padding: 4px 8px;
+	background: var(--background-secondary);
 	border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.vault-share-log-toolbar-actions {
+.vault-share-panel-section-title {
+	font-size: var(--font-ui-smaller);
+	font-weight: var(--font-semibold);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--text-muted);
+}
+
+.vault-share-panel-section-controls {
 	display: flex;
 	align-items: center;
 	gap: 4px;
+}
+
+.vault-share-panel-status {
+	flex: 1;
+	overflow-y: auto;
+	padding: 8px 12px;
+}
+
+/* Mobile: each section's toolbar drops below its content, clear of the
+   notification area. The header keeps its divider on the side now adjacent
+   to the content. */
+.vault-share-sharing-panel.is-mobile .vault-share-panel-section-header {
+	order: 2;
+	border-bottom: none;
+	border-top: 1px solid var(--background-modifier-border);
 }
 
 .vault-share-log-container {
@@ -228,18 +288,6 @@
 
 /* ── Sharing status sidebar panel ────────────────────────────────────────── */
 
-.vault-share-sharing-status-container {
-	padding: 12px;
-}
-
-.vault-share-sharing-status-header {
-	display: flex;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: 8px;
-	margin-bottom: 12px;
-}
-
 .vault-share-sharing-status-activity {
 	flex: 1 1 100%;
 	margin: 0 0 4px;
@@ -255,10 +303,6 @@
 .vault-share-sharing-status-activity-path {
 	color: var(--text-muted);
 	font-family: var(--font-monospace);
-}
-
-.vault-share-sharing-status-btn {
-	font-size: var(--font-ui-small);
 }
 
 .vault-share-sharing-status-empty {

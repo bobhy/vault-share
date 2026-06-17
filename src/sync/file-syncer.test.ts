@@ -645,3 +645,79 @@ describe('syncOneFile activity signal', () => {
 		expect(activity.getSnapshot().currentPath).toBeNull();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Tests: per-operation INFO logging (each executed action that touches a file
+// in a vault logs an INFO line naming the vault and the file path; a genuine
+// conflict resolution logs two lines, one per affected vault). See issue #12.
+// ---------------------------------------------------------------------------
+
+describe('syncOneFile operation logging', () => {
+	function setup() {
+		const { localFs, files: localFiles } = makeLocalFs();
+		const { driveFs, files: driveFiles } = makeDriveFs();
+		const { store } = makeSyncStore();
+		const info = vi.fn();
+		const logger = { ...stubLogger, info } as unknown as Logger;
+		const ctx: SyncContext = {
+			app: new App(),
+			localFs,
+			driveFs,
+			store,
+			statsTracker: stubStats,
+			activity: new SyncActivity(),
+			settings: () => mockSettings({ fileConflict: 'Use Newer', textFileConflict: 'Use Newer' }),
+			clientId: 'abcd1234-0000-0000-0000-000000000000',
+			driveFolderId: () => 'root-folder-id',
+			logger,
+		};
+		return { ctx, info, localFiles, driveFiles };
+	}
+
+	it('push logs one line naming the group vault and path', async () => {
+		const { ctx, info, localFiles } = setup();
+		localFiles.set('note.md', { content: enc('hi'), mtime: 1000, size: 2 });
+		await syncOneFile(makeCandidate({ path: 'note.md', actionType: 'push' }), ctx, true);
+		expect(info).toHaveBeenCalledWith('Pushed to group vault: note.md');
+	});
+
+	it('pull logs one line naming the local vault and path', async () => {
+		const { ctx, info, driveFiles } = setup();
+		driveFiles.set('note.md', { driveFileId: 'd1', content: enc('hi'), mtime: 1000 });
+		await syncOneFile(makeCandidate({
+			path: 'note.md', actionType: 'pull',
+			remote: { path: 'note.md', mtime: 1000, size: 2, driveFileId: 'd1' },
+		}), ctx, true);
+		expect(info).toHaveBeenCalledWith('Pulled to local vault: note.md');
+	});
+
+	it('deleteRemote logs one line naming the group vault and path', async () => {
+		const { ctx, info, driveFiles } = setup();
+		driveFiles.set('gone.md', { driveFileId: 'd2', content: enc('x'), mtime: 1000 });
+		await syncOneFile(makeCandidate({
+			path: 'gone.md', actionType: 'deleteRemote',
+			remote: { path: 'gone.md', mtime: 1000, size: 1, driveFileId: 'd2' },
+		}), ctx, true);
+		expect(info).toHaveBeenCalledWith('Deleted from group vault: gone.md');
+	});
+
+	it('deleteLocal logs one line naming the local vault and path', async () => {
+		const { ctx, info, localFiles } = setup();
+		localFiles.set('gone.md', { content: enc('x'), mtime: 1000, size: 1 });
+		await syncOneFile(makeCandidate({ path: 'gone.md', actionType: 'deleteLocal' }), ctx, true);
+		expect(info).toHaveBeenCalledWith('Deleted from local vault: gone.md');
+	});
+
+	it('a genuine conflict resolution logs two lines, one per affected vault', async () => {
+		const { ctx, info, localFiles, driveFiles } = setup();
+		localFiles.set('Welcome.md', { content: enc('local content'), mtime: 2000, size: 13 });
+		driveFiles.set('Welcome.md', { driveFileId: 'drive-orig-1', content: enc('drive content'), mtime: 1000 });
+		await syncOneFile(makeCandidate({
+			path: 'Welcome.md', actionType: 'conflict', driveFileId: 'drive-orig-1',
+			local:  { path: 'Welcome.md', mtime: 2000, size: 13 },
+			remote: { path: 'Welcome.md', mtime: 1000, size: 12, driveFileId: 'drive-orig-1' },
+		}), ctx, false);
+		expect(info).toHaveBeenCalledWith('Resolved conflict in local vault: Welcome.md');
+		expect(info).toHaveBeenCalledWith('Resolved conflict in group vault: Welcome.md');
+	});
+});
