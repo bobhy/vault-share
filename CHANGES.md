@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - do single-file sharing for *any* file modified or created in the local vault, not just a file open for editing.  Previously, non-edit file changes (e.g, the Tasks plugin updating a task status in the the original note) would not be shared until the next bulk sharing cycle and other devices would lag in tracking the change.
 
-## [1.0.4]
+## [1.0.5]
 
 ### Added
 - Updated `obsidian-mock` to enable unit tests on UI, added a fairly comprehensive set of UI tests, getting coverage from 0% to 90%-ish.
