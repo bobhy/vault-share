@@ -79,6 +79,7 @@ function makeScheduler(
 	settingsOverrides = {},
 	isSharingPaused: () => boolean = () => false,
 	isDeferredPath: (path: string) => boolean = () => false,
+	isExcludedPath: (path: string) => boolean = () => false,
 ) {
 	const workspace = makeWorkspace();
 	const app = makeApp();
@@ -113,6 +114,7 @@ function makeScheduler(
 		registerInterval: vi.fn(),
 		isSharingPaused,
 		isDeferredPath,
+		isExcludedPath,
 		isVaultReady: () => true,
 	};
 
@@ -578,6 +580,89 @@ describe('SyncScheduler', () => {
 		const syncedPaths = (singleFileSyncSpy.mock.calls as string[][]).map(c => c[0]);
 		expect(syncedPaths).not.toContain('deferred.md');
 		expect(syncedPaths).toContain('normal.md');
+	});
+
+	// -------------------------------------------------------------------------
+	// Reactive sync of files changed while not open (create / modify)
+	// -------------------------------------------------------------------------
+
+	/** Read the private fileStates map for eviction assertions. */
+	function fileStates(scheduler: SyncScheduler): Map<string, unknown> {
+		return (scheduler as unknown as { fileStates: Map<string, unknown> }).fileStates;
+	}
+
+	it('syncs a closed (untracked) file on modify, after the hold-down', async () => {
+		const { scheduler, app } = makeScheduler({ openFileChangeHoldDown: 5 });
+		scheduler.start();
+
+		app.vault.emit('modify', { path: 'side-effect.md' }); // never opened
+		await tick(4000);
+		expect(singleFileSyncSpy).not.toHaveBeenCalled(); // hold-down not elapsed
+
+		await tick(2000); // crosses the 5 s hold-down
+		const syncedPaths = (singleFileSyncSpy.mock.calls as string[][]).map(c => c[0]);
+		expect(syncedPaths).toContain('side-effect.md');
+	});
+
+	it('syncs a newly created file on create', async () => {
+		const { scheduler, app } = makeScheduler({ openFileChangeHoldDown: 5 });
+		scheduler.start();
+
+		app.vault.emit('create', { path: 'new-note.md' });
+		await tick(6000);
+		const syncedPaths = (singleFileSyncSpy.mock.calls as string[][]).map(c => c[0]);
+		expect(syncedPaths).toContain('new-note.md');
+	});
+
+	it('evicts the one-shot (non-persistent) entry after its sync (no unbounded growth)', async () => {
+		const { scheduler, app } = makeScheduler({ openFileChangeHoldDown: 5 });
+		scheduler.start();
+
+		app.vault.emit('modify', { path: 'closed.md' });
+		expect(fileStates(scheduler).has('closed.md')).toBe(true);
+
+		await tick(6000); // hold-down fires, entry evicted
+		expect(fileStates(scheduler).has('closed.md')).toBe(false);
+	});
+
+	it('keeps an open file tracked after its hold-down (persistent)', async () => {
+		const { scheduler, workspace, app } = makeScheduler({ openFileChangeHoldDown: 5 });
+		scheduler.start();
+
+		workspace.emit('file-open', { path: 'open.md' });
+		await tick(1000); // initial open sync
+		app.vault.emit('modify', { path: 'open.md' });
+		await tick(6000); // hold-down fires
+		// Open files persist (re-armable on the next edit); only one-shot ones evict.
+		expect(fileStates(scheduler).has('open.md')).toBe(true);
+	});
+
+	it('ignores create/modify for excluded paths', async () => {
+		// The predicate stands in for ExcludeMatcher (config dir + user rules).
+		const { scheduler, app } = makeScheduler(
+			{ openFileChangeHoldDown: 5 },
+			() => false,
+			() => false,
+			path => path.startsWith('excluded/'),
+		);
+		scheduler.start();
+
+		app.vault.emit('modify', { path: 'excluded/churns.json' });
+		app.vault.emit('create', { path: 'excluded/new.json' });
+		await tick(6000);
+		expect(singleFileSyncSpy).not.toHaveBeenCalled();
+		expect(fileStates(scheduler).size).toBe(0);
+	});
+
+	it('skips folder create events (folders have children)', async () => {
+		const { scheduler, app } = makeScheduler({ openFileChangeHoldDown: 5 });
+		scheduler.start();
+
+		// A TFolder carries a `children` array; the handler must skip it.
+		app.vault.emit('create', { path: 'New Folder', children: [] } as unknown as { path: string });
+		await tick(6000);
+		expect(singleFileSyncSpy).not.toHaveBeenCalled();
+		expect(fileStates(scheduler).has('New Folder')).toBe(false);
 	});
 
 	// -------------------------------------------------------------------------

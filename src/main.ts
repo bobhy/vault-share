@@ -193,6 +193,7 @@ export default class VaultSharePlugin extends Plugin {
 			registerInterval: id => this.registerInterval(id),
 			isSharingPaused: () => candidateStore.isPausedSync(),
 			isDeferredPath: path => candidateStore.isDeferred(path),
+			isExcludedPath: path => this.excludeMatcher.isExcluded(path),
 			isVaultReady: () => this.vaultReady,
 		});
 

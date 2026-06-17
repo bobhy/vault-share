@@ -20,6 +20,7 @@
 | **`hasSyncHistory()`** | A *vault-global* predicate: true if *any* candidate has been synced at least once. The master switch that selects the with-history vs. no-history planning path and gates the threshold guard. |
 | **Rebaseline** | Recording two already-matching sides as `Synced` *without* moving any bytes — used when a candidate has no history but both sides are present and look identical. |
 | **Bulk sync pass** | One full reconcile-plan-execute cycle over every path. The scheduler and UI both trigger this; concurrent triggers coalesce onto one in-flight pass. |
+| **Single-file sync** | A targeted plan-execute on one path, dispatched by the scheduler off a hold-down/poll deadline rather than a full walk. Triggered by editing/opening a file *and* by any vault `create`/`modify` on a non-excluded file — so files rewritten by other plugins (e.g. Tasks updating a closed note) ship promptly instead of waiting for the next bulk pass. |
 
 ## The unit of state: `Candidate`
 

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [unreleased]
+
+### Changed 
+- Consolidated sharing log and sharing status panels to a single panel.  Allows you to see the log activity when you pause or resume sharing, e.g.
+- each file modified by sharing is now logged at INFO rather than DEBUG severity.  So INFO is a reasonable setting for logging filter.
+
+### Added
+- do single-file sharing for *any* file modified or created in the local vault, not just a file open for editing.  Previously, non-edit file changes (e.g, the Tasks plugin updating a task status in the the original note) would not be shared until the next bulk sharing cycle and other devices would lag in tracking the change.
+
 ## [1.0.4]
 
 ### Added
