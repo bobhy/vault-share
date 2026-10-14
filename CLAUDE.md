@@ -7,7 +7,7 @@ An Obsidian community plugin for multi-master sync among multiple Obsidian vault
 ```bash
 npm install             # Install dependencies
 npm run dev             # Development (watch)
-npm run build           # Production build (tsc -noEmit && esbuild)
+npm run build           # Production build (type-check src + wdio tests, then esbuild)
 npm test                # vitest (unit tests)
 npm run test:watch      # vitest watch
 npm run lint            # eslint .

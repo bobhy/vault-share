@@ -14,10 +14,19 @@ import { CROSS_VAULT_DRIVE_FOLDER, cleanupTestDriveFolder, injectAndConfigure, r
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * The multiremote session as its proper type. Must go through `browser`, not the
+ * `multiremotebrowser` global: wdio-obsidian-service reloads sessions when it opens
+ * a vault, and only `browser` tracks the reloaded instances.
+ */
+function multiremote(): WebdriverIO.MultiRemoteBrowser {
+	return browser as unknown as WebdriverIO.MultiRemoteBrowser;
+}
+
 function vaults(): { primary: WebdriverIO.Browser; peer: WebdriverIO.Browser } {
 	return {
-		primary: browser.getInstance("primaryVault") as WebdriverIO.Browser,
-		peer: browser.getInstance("peerVault") as WebdriverIO.Browser,
+		primary: multiremote().getInstance("primaryVault"),
+		peer: multiremote().getInstance("peerVault"),
 	};
 }
 

@@ -8,12 +8,15 @@
 		"noImplicitReturns": true,
 		"allowSyntheticDefaultImports": true,
 		"isolatedModules": true,
-		"types": ["node", "webdriverio", "@wdio/globals/types", "wdio-obsidian-service"],
+		"noEmit": true,
+		"allowImportingTsExtensions": true,
+		"types": ["node", "mocha", "webdriverio", "@wdio/globals/types", "wdio-obsidian-service"],
 		"skipLibCheck": true
 	},
 	"include": [
 		"wdio.conf.mts",
 		"wdio.multiremote.conf.mts",
+		"wdio.ui.conf.mts",
 		"tests/wdio/**/*.ts"
 	]
 }
