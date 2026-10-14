@@ -31,7 +31,7 @@ Enhancement and feature design specs live in [specs/](specs/).
 General TypeScript, testing and docs conventions come from the user-level `~/.claude/CLAUDE.md` and `~/.claude/rules/typescript.md`. This file holds only what is specific to this project.
 
 - Provide unit tests via vitest; end-to-end tests via wdio (`tests/wdio`) for selected scenarios. Update both when related implementation changes.
-- E2e commands need Node 22 (`.nvmrc`); the shell default is newer and fails with `UND_ERR_INVALID_ARG`.
+- E2e tests need Node 22 (`.nvmrc`); newer Node fails with `UND_ERR_INVALID_ARG`. The wdio configs check this at load and fail with a clear message; no `PATH` prefix is needed.
 - Try to keep the Obsidan [plugin automated review score](https://community.obsidian.md/plugins/vault-share) in the high 90's.  Make reasonable code changes to accomodate style review comments posted there.
 
 ### obsidianmd ESLint plugin

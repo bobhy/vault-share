@@ -7,9 +7,12 @@ import { readFile, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import ObsidianLauncher from "obsidian-launcher";
+import { requireNodeVersion } from "./wdio.conf.mts";
 
 // Cross-vault (multiremote) e2e tests. Run with: npm run test:e2e:cross
 // One-time token setup:  npm run setup:e2e:wdio
+
+requireNodeVersion();
 
 /**
  * When true (the default), the runner starts a virtual display and window manager
