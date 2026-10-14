@@ -1,9 +1,18 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "allow": [
-      "Bash(npm run lint *)",
-      "Bash(npm test *)",
-      "Bash(npx tsc *)"
+      "Bash(npx wdio *)",
+      "Bash(npx typedoc *)",
+      "WebFetch(domain:obsidian.md)",
+      "WebFetch(domain:*.obsidian.md)",
+      "WebFetch(domain:webdriver.io)",
+      "WebFetch(domain:jesse-r-s-hines.github.io)",
+      "WebFetch(domain:developers.google.com)",
+      "WebFetch(domain:codemirror.net)"
+    ],
+    "deny": [
+      "Read(/.e2e-refresh-token)"
     ]
   }
 }
