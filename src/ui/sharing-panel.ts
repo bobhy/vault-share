@@ -20,10 +20,10 @@
  * On mobile each section's toolbar drops to the bottom of its section, staying
  * clear of the notification area.
  *
- * The panel re-renders reactively: {@link Logger.setAppendCallback} drives it on
- * every new log line, and `main.ts` wires {@link CandidateStore}, the
- * {@link sync/sync-activity!SyncActivity} stream, and the scheduler's next-run
- * notification to {@link SharingPanelView.refresh}. All display state is read
+ * The panel re-renders reactively: {@link Logger.setAppendCallback} re-renders
+ * the log section on every new log line, and `main.ts` wires
+ * {@link CandidateStore}, the {@link sync/sync-activity!SyncActivity} stream,
+ * and the scheduler's next-run notification to {@link SharingPanelView.refresh}. All display state is read
  * live from those sources — no in-memory snapshot is held here.
  *
  * @packageDocumentation
@@ -35,7 +35,7 @@ import {
 	ExtraButtonComponent,
 	Platform,
 } from 'obsidian';
-import type { Candidate, SyncActionType, SyncContext } from '../sync/types';
+import type { SyncActionType, SyncContext } from '../sync/types';
 import type { CandidateStore } from '../sync/candidate-store';
 import type { BulkSync } from '../sync/bulk-sync';
 import type { Logger, LogEntry, LogSeverity } from '../logger';
@@ -90,6 +90,8 @@ export class SharingPanelView extends ItemView {
 	private severityDropdown: DropdownComponent | null = null;
 	/** Container for the status line + pending table; rebuilt by {@link refresh}. */
 	private statusEl: HTMLElement | null = null;
+	/** Header slot for the pause/resume + refresh buttons; refilled by {@link renderShareControls}. */
+	private shareControlsEl: HTMLElement | null = null;
 	/** Panel root (`containerEl.children[1]`); carries the `--vault-share-split` var. */
 	private rootEl: HTMLElement | null = null;
 	/** Draggable divider between the two sections; kept for aria/clamp updates. */
@@ -114,7 +116,8 @@ export class SharingPanelView extends ItemView {
 		private readonly getNextSyncAt: () => number,
 	) {
 		super(leaf);
-		logger.setAppendCallback(() => this.refresh());
+		// Status changes reach refresh() via main.ts; a log line only touches the log.
+		logger.setAppendCallback(() => this.renderLog());
 	}
 
 	getViewType(): string { return SHARING_STATUS_VIEW_TYPE; }
@@ -164,6 +167,7 @@ export class SharingPanelView extends ItemView {
 		this.logEl = null;
 		this.severityDropdown = null;
 		this.statusEl = null;
+		this.shareControlsEl = null;
 		this.rootEl = null;
 		this.splitterEl = null;
 		this.dragging = false;
@@ -191,7 +195,7 @@ export class SharingPanelView extends ItemView {
 		const section = root.createDiv({ cls: 'vault-share-panel-section vault-share-panel-section-status' });
 		const header = section.createDiv({ cls: 'vault-share-panel-section-header' });
 		header.createSpan({ cls: 'vault-share-panel-section-title', text: 'Sharing' });
-		header.createDiv({ cls: 'vault-share-panel-section-controls vault-share-panel-share-controls' });
+		this.shareControlsEl = header.createDiv({ cls: 'vault-share-panel-section-controls vault-share-panel-share-controls' });
 		this.statusEl = section.createDiv({ cls: 'vault-share-panel-status' });
 	}
 
@@ -255,8 +259,8 @@ export class SharingPanelView extends ItemView {
 
 	/** Rebuild the pause/resume + refresh controls to match the paused state. */
 	private renderShareControls(paused: boolean): void {
-		const slot = this.containerEl.querySelector('.vault-share-panel-share-controls');
-		if (!(slot instanceof HTMLElement)) return;
+		const slot = this.shareControlsEl;
+		if (!slot) return;
 		slot.empty();
 
 		new ExtraButtonComponent(slot)
@@ -345,8 +349,8 @@ export class SharingPanelView extends ItemView {
 	}
 
 	private renderLog(): void {
-		// Keep the dropdown in sync if the severity was changed elsewhere
-		// (e.g. the settings tab) while the panel is open.
+		// Keep the dropdown in sync with the current severity (the logger has no
+		// change notification, so re-read it on each render).
 		this.severityDropdown?.setValue(this.getSeverity());
 
 		const logEl = this.logEl;
@@ -357,9 +361,7 @@ export class SharingPanelView extends ItemView {
 		for (const entry of this.logger.getEntries()) {
 			const row = logEl.createDiv({ cls: `vault-share-log-entry vault-share-log-${entry.severity.toLowerCase()}` });
 
-			const ts = new Date(entry.timestamp);
-			const timeStr = ts.toLocaleTimeString(undefined, { hour12: false });
-			row.createSpan({ cls: 'vault-share-log-time', text: timeStr + ' ' });
+			row.createSpan({ cls: 'vault-share-log-time', text: formatClock(entry.timestamp) + ' ' });
 			row.createSpan({ cls: 'vault-share-log-severity', text: `[${entry.severity}] ` });
 			row.createSpan({ cls: 'vault-share-log-message', text: entry.message });
 
@@ -373,11 +375,7 @@ export class SharingPanelView extends ItemView {
 	}
 
 	private copyToClipboard(): void {
-		const lines: string[] = [];
-		for (const entry of this.logger.getEntries()) {
-			lines.push(formatEntry(entry));
-		}
-		void navigator.clipboard.writeText(lines.join('\n'));
+		void navigator.clipboard.writeText(this.logger.getEntries().map(formatEntry).join('\n'));
 	}
 
 	// ── Status region ─────────────────────────────────────────────────────────
@@ -417,14 +415,6 @@ export class SharingPanelView extends ItemView {
 			return;
 		}
 
-		// Group candidates by action type for the table.
-		const byType = new Map<SyncActionType, Candidate[]>();
-		for (const c of allCandidates) {
-			const list = byType.get(c.actionType) ?? [];
-			list.push(c);
-			byType.set(c.actionType, list);
-		}
-
 		const table = container.createEl('table', { cls: 'vault-share-sharing-status-table' });
 		const headerRow = table.createEl('thead').createEl('tr');
 		headerRow.createEl('th', { text: 'Vault affected' });
@@ -434,7 +424,7 @@ export class SharingPanelView extends ItemView {
 
 		const tbody = table.createEl('tbody');
 		for (const row of STATUS_ROWS) {
-			const candidates = byType.get(row.type) ?? [];
+			const candidates = allCandidates.filter(c => c.actionType === row.type);
 			if (candidates.length === 0) continue;
 
 			// Pending = will be shared on resume (Default + Approved);
@@ -476,14 +466,25 @@ export class SharingPanelView extends ItemView {
 	private formatNextRun(): string {
 		const at = this.getNextSyncAt();
 		if (!at || at <= Date.now()) return '';
-		const timeStr = new Date(at).toLocaleTimeString(undefined, { hour12: false });
-		return ` till ${timeStr}`;
+		return ` till ${formatClock(at)}`;
 	}
 }
 
+/**
+ * 24-hour local wall-clock formatter. Built once: `toLocaleTimeString` constructs
+ * a fresh `Intl.DateTimeFormat` per call, and the log renders up to
+ * `logHorizon` rows per log line.
+ */
+const CLOCK_FORMAT = new Intl.DateTimeFormat(undefined, {
+	hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false,
+});
+
+/** Format an epoch-ms time as local `HH:MM:SS`. */
+function formatClock(ms: number): string {
+	return CLOCK_FORMAT.format(ms);
+}
+
 function formatEntry(entry: LogEntry): string {
-	const ts = new Date(entry.timestamp);
-	const timeStr = ts.toLocaleTimeString(undefined, { hour12: false });
-	const line = `${timeStr} [${entry.severity}] ${entry.message}`;
+	const line = `${formatClock(entry.timestamp)} [${entry.severity}] ${entry.message}`;
 	return entry.detail ? `${line}\n  ${entry.detail}` : line;
 }

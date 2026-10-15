@@ -234,3 +234,16 @@ export const config: WebdriverIO.MultiremoteConfig = {
 		process.env["VAULT_SHARE_REFRESH_TOKEN"] = refreshToken;
 	},
 };
+
+/**
+ * The two vault instances of the multiremote session, keyed as in `config.capabilities`.
+ * Must go through `browser`, not the `multiremotebrowser` global: wdio-obsidian-service
+ * reloads sessions when it opens a vault, and only `browser` tracks the reloaded instances.
+ */
+export function vaults(): { primary: WebdriverIO.Browser; peer: WebdriverIO.Browser } {
+	const multiremote = browser as unknown as WebdriverIO.MultiRemoteBrowser;
+	return {
+		primary: multiremote.getInstance("primaryVault"),
+		peer: multiremote.getInstance("peerVault"),
+	};
+}

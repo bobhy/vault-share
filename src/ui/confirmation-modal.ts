@@ -23,15 +23,20 @@ import { App, Modal, sanitizeHTMLToDom } from 'obsidian';
  * static factory parameters for context-specific copy.
  */
 export class ConfirmationModal extends Modal {
-	private resolve!: (value: boolean) => void;
+	/** Set when the confirm button is clicked; any other close resolves `false`. */
+	private confirmed = false;
 
+	/**
+	 * @param cancelLabel - Label for the cancel button, or `null` for single-button mode.
+	 * @param resolve     - Settled exactly once, from {@link onClose}.
+	 */
 	private constructor(
 		app: App,
 		private readonly title: string,
 		private readonly bodyHtml: string,
-		private readonly confirmLabel: string = 'Continue',
-		private readonly cancelLabel: string = 'Quit',
-		private readonly singleButton = false,
+		private readonly confirmLabel: string,
+		private readonly cancelLabel: string | null,
+		private readonly resolve: (confirmed: boolean) => void,
 	) {
 		super(app);
 	}
@@ -49,9 +54,7 @@ export class ConfirmationModal extends Modal {
 		cancelLabel = 'Quit',
 	): Promise<boolean> {
 		return new Promise(resolve => {
-			const modal = new ConfirmationModal(app, title, bodyHtml, confirmLabel, cancelLabel);
-			modal.resolve = resolve;
-			modal.open();
+			new ConfirmationModal(app, title, bodyHtml, confirmLabel, cancelLabel, resolve).open();
 		});
 	}
 
@@ -68,9 +71,7 @@ export class ConfirmationModal extends Modal {
 		buttonLabel = 'OK',
 	): Promise<void> {
 		return new Promise(resolve => {
-			const modal = new ConfirmationModal(app, title, bodyHtml, buttonLabel, buttonLabel, true);
-			modal.resolve = () => resolve();
-			modal.open();
+			new ConfirmationModal(app, title, bodyHtml, buttonLabel, null, () => resolve()).open();
 		});
 	}
 
@@ -87,22 +88,19 @@ export class ConfirmationModal extends Modal {
 
 		const continueBtn = buttonRow.createEl('button', { text: this.confirmLabel, cls: 'mod-cta' });
 		continueBtn.addEventListener('click', () => {
-			this.resolve(true);
+			this.confirmed = true;
 			this.close();
 		});
 
-		if (!this.singleButton) {
+		if (this.cancelLabel !== null) {
 			const quitBtn = buttonRow.createEl('button', { text: this.cancelLabel });
-			quitBtn.addEventListener('click', () => {
-				this.resolve(false);
-				this.close();
-			});
+			quitBtn.addEventListener('click', () => { this.close(); });
 		}
 	}
 
 	onClose(): void {
-		// If closed without clicking a button (e.g. Escape key), treat as Quit.
-		this.resolve?.(false);
+		// Quit button, Escape and click-outside all land here unconfirmed.
+		this.resolve(this.confirmed);
 		this.contentEl.empty();
 	}
 }

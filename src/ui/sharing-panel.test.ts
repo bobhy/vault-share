@@ -157,12 +157,14 @@ describe('SharingPanelView — log region', () => {
 		expect(list.querySelector('.vault-share-log-detail')?.textContent).toBe('stack here');
 	});
 
-	it('re-renders on logger append', async () => {
+	it('renders a new log line on logger append without a full refresh', async () => {
 		const { view, logger } = makeView();
 		await view.onOpen();
 		const spy = vi.spyOn(view, 'refresh');
 		logger.info('trigger');
-		expect(spy).toHaveBeenCalled();
+		const list = content(view).querySelector('.vault-share-log-container') as HTMLElement;
+		expect(list.textContent).toContain('trigger');
+		expect(spy).not.toHaveBeenCalled();
 	});
 
 	it('clears the log when the clear control is clicked', async () => {

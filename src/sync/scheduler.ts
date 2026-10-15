@@ -35,7 +35,7 @@ export interface PerFileState {
 	 * The common case is `false`: an entry created reactively by a vault
 	 * create/modify (any non-excluded file, e.g. another plugin rewriting a closed
 	 * note) is a one-shot — it fires a single hold-down sync and is then evicted, so
-	 * {@link fileStates} does not accumulate one row per file ever touched.
+	 * `SyncScheduler.fileStates` does not accumulate one row per file ever touched.
 	 */
 	persistent: boolean;
 }

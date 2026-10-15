@@ -137,6 +137,16 @@ describe('PendingListModal — accordion', () => {
 		expect(modal.contentEl.querySelector('.vault-share-pending-detail')!.classList.contains('is-hidden')).toBe(true);
 	});
 
+	it('re-expanding a row keeps its loaded preview instead of reloading it', () => {
+		const { modal } = openModal({ candidates: [makeCandidate({})] });
+		const path = modal.contentEl.querySelector<HTMLElement>('.vault-share-pending-path')!;
+		path.click();
+		path.click();
+		path.click();
+		expect(loadFilePanels).toHaveBeenCalledTimes(1);
+		expect(modal.contentEl.querySelector('.vault-share-pending-detail')!.classList.contains('is-hidden')).toBe(false);
+	});
+
 	it('expanding another row collapses the first', () => {
 		const { modal } = openModal({ candidates: [
 			makeCandidate({ path: 'a.md' }), makeCandidate({ path: 'b.md' }),
@@ -150,25 +160,18 @@ describe('PendingListModal — accordion', () => {
 });
 
 describe('PendingListModal — resolution buttons by type', () => {
-	it('non-conflict shows Proceed / Back out / Skip', () => {
-		const { modal } = openModal({ type: 'push', candidates: [makeCandidate({ actionType: 'push' })] });
+	it.each([
+		{ name: 'non-conflict', type: 'push' as const, path: 'f.md', labels: ['Proceed', 'Back out', 'Skip'] },
+		{ name: 'text conflict', type: 'conflict' as const, path: 'doc.md', labels: ['Merge', 'Back out', 'Skip'] },
+		{ name: 'binary conflict', type: 'conflict' as const, path: 'img.png', labels: ['Keep local', 'Keep group vault', 'Delete both', 'Skip'] },
+		// Merge eligibility follows the sync layer (.md/.txt only): other text
+		// formats get the keep-one-side choices, since the preview has no textarea.
+		{ name: 'non-mergeable text conflict', type: 'conflict' as const, path: 'data.json', labels: ['Keep local', 'Keep group vault', 'Delete both', 'Skip'] },
+	])('$name shows $labels', ({ type, path, labels }) => {
+		const { modal } = openModal({ type, candidates: [makeCandidate({ actionType: type, path })] });
 		const detail = expand(modal);
-		const labels = [...detail.querySelectorAll('.vault-share-pending-buttons button')].map(b => b.textContent);
-		expect(labels).toEqual(['Proceed', 'Back out', 'Skip']);
-	});
-
-	it('text conflict shows Merge / Back out / Skip', () => {
-		const { modal } = openModal({ type: 'conflict', candidates: [makeCandidate({ actionType: 'conflict', path: 'doc.md' })] });
-		const detail = expand(modal);
-		const labels = [...detail.querySelectorAll('.vault-share-pending-buttons button')].map(b => b.textContent);
-		expect(labels).toEqual(['Merge', 'Back out', 'Skip']);
-	});
-
-	it('binary conflict shows Keep local / Keep group vault / Delete both / Skip', () => {
-		const { modal } = openModal({ type: 'conflict', candidates: [makeCandidate({ actionType: 'conflict', path: 'img.png' })] });
-		const detail = expand(modal);
-		const labels = [...detail.querySelectorAll('.vault-share-pending-buttons button')].map(b => b.textContent);
-		expect(labels).toEqual(['Keep local', 'Keep group vault', 'Delete both', 'Skip']);
+		const shown = [...detail.querySelectorAll('.vault-share-pending-buttons button')].map(b => b.textContent);
+		expect(shown).toEqual(labels);
 	});
 });
 

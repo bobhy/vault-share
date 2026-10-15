@@ -162,17 +162,6 @@ describe('VaultShareSettingTab — sharing settings', () => {
 		expect(plugin.rebuildExcludeMatcher).toHaveBeenCalled();
 	});
 
-	it('a valid sharing interval is parsed and saved', () => {
-		const plugin = makePlugin();
-		const tab = makeTab(plugin);
-		tab.display();
-		const input = settingByName(tab.containerEl, 'Sharing interval').querySelector('input') as HTMLInputElement;
-		input.value = '120';
-		input.dispatchEvent(new Event('input'));
-		expect(plugin.settings.bulkSyncPoll).toBe(120);
-		expect(plugin.saveData).toHaveBeenCalled();
-	});
-
 	it('an invalid (non-numeric) interval is ignored', () => {
 		const plugin = makePlugin();
 		const tab = makeTab(plugin);
@@ -184,9 +173,10 @@ describe('VaultShareSettingTab — sharing settings', () => {
 		expect(plugin.saveData).not.toHaveBeenCalled();
 	});
 
-	// The remaining numeric fields share the parse-and-save shape; cover each so
-	// every onChange handler is exercised.
+	// Every positive-integer field goes through the same helper; cover each so a
+	// label/key mismatch in the wiring is caught.
 	it.each<[string, keyof PluginMock['settings']]>([
+		['Sharing interval', 'bulkSyncPoll'],
 		['Open file poll interval', 'openFilePoll'],
 		['Edit holddown', 'openFileChangeHoldDown'],
 		['Log history size', 'logHorizon'],

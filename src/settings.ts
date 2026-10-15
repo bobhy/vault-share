@@ -12,6 +12,16 @@
 export type FileConflictStrategy = 'Use Newer' | 'Keep Both';
 /** Conflict-resolution strategy for text files (.md, .txt) — `Merge` runs diff3. */
 export type TextFileConflictStrategy = 'Use Newer' | 'Keep Both' | 'Merge';
+/** Settings-tab dropdown labels for {@link FileConflictStrategy}, in display order. */
+export const FILE_CONFLICT_OPTIONS: Record<FileConflictStrategy, string> = {
+	'Keep Both': 'Keep both',
+	'Use Newer': 'Use newer',
+};
+/** Settings-tab dropdown labels for {@link TextFileConflictStrategy}, in display order. */
+export const TEXT_FILE_CONFLICT_OPTIONS: Record<TextFileConflictStrategy, string> = {
+	'Merge': 'Merge',
+	...FILE_CONFLICT_OPTIONS,
+};
 /** Minimum severity for accepted log entries; less-severe entries are dropped. */
 export type LogSeverity = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
 

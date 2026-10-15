@@ -11,6 +11,13 @@
  */
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import type VaultSharePlugin from '../main';
+import {
+	FILE_CONFLICT_OPTIONS,
+	TEXT_FILE_CONFLICT_OPTIONS,
+	type FileConflictStrategy,
+	type TextFileConflictStrategy,
+	type VaultShareSettings,
+} from '../settings';
 import { ConfirmationModal } from './confirmation-modal';
 
 /**
@@ -79,11 +86,10 @@ export class VaultShareSettingTab extends PluginSettingTab {
 			)
 			.addDropdown(drop =>
 				drop
-					.addOption('Keep Both', 'Keep both')
-					.addOption('Use Newer', 'Use newer')
+					.addOptions(FILE_CONFLICT_OPTIONS)
 					.setValue(this.plugin.settings.fileConflict)
 					.onChange(async value => {
-						this.plugin.settings.fileConflict = value as typeof this.plugin.settings.fileConflict;
+						this.plugin.settings.fileConflict = value as FileConflictStrategy;
 						await this.plugin.saveData(this.plugin.settings);
 					}),
 			);
@@ -97,12 +103,10 @@ export class VaultShareSettingTab extends PluginSettingTab {
 			)
 			.addDropdown(drop =>
 				drop
-					.addOption('Merge', 'Merge')
-					.addOption('Keep Both', 'Keep both')
-					.addOption('Use Newer', 'Use newer')
+					.addOptions(TEXT_FILE_CONFLICT_OPTIONS)
 					.setValue(this.plugin.settings.textFileConflict)
 					.onChange(async value => {
-						this.plugin.settings.textFileConflict = value as typeof this.plugin.settings.textFileConflict;
+						this.plugin.settings.textFileConflict = value as TextFileConflictStrategy;
 						await this.plugin.saveData(this.plugin.settings);
 					}),
 			);
@@ -129,50 +133,26 @@ export class VaultShareSettingTab extends PluginSettingTab {
 				area.inputEl.rows = 6;
 			});
 
-		new Setting(containerEl)
-			.setName('Sharing interval')
-			.setDesc('How often (in seconds) vault sharing runs in the background.')
-			.addText(text =>
-				text
-					.setValue(String(this.plugin.settings.bulkSyncPoll))
-					.onChange(async value => {
-						const n = parseInt(value, 10);
-						if (!isNaN(n) && n > 0) {
-							this.plugin.settings.bulkSyncPoll = n;
-							await this.plugin.saveData(this.plugin.settings);
-						}
-					}),
-			);
+		this.addPositiveIntSetting(
+			containerEl,
+			'Sharing interval',
+			'How often (in seconds) vault sharing runs in the background.',
+			'bulkSyncPoll',
+		);
 
-		new Setting(containerEl)
-			.setName('Open file poll interval')
-			.setDesc('How often (in seconds) an open visible file is checked for remote changes.')
-			.addText(text =>
-				text
-					.setValue(String(this.plugin.settings.openFilePoll))
-					.onChange(async value => {
-						const n = parseInt(value, 10);
-						if (!isNaN(n) && n > 0) {
-							this.plugin.settings.openFilePoll = n;
-							await this.plugin.saveData(this.plugin.settings);
-						}
-					}),
-			);
+		this.addPositiveIntSetting(
+			containerEl,
+			'Open file poll interval',
+			'How often (in seconds) an open visible file is checked for remote changes.',
+			'openFilePoll',
+		);
 
-		new Setting(containerEl)
-			.setName('Edit holddown')
-			.setDesc('Seconds to wait after the last keystroke before sharing an edited file.')
-			.addText(text =>
-				text
-					.setValue(String(this.plugin.settings.openFileChangeHoldDown))
-					.onChange(async value => {
-						const n = parseInt(value, 10);
-						if (!isNaN(n) && n > 0) {
-							this.plugin.settings.openFileChangeHoldDown = n;
-							await this.plugin.saveData(this.plugin.settings);
-						}
-					}),
-			);
+		this.addPositiveIntSetting(
+			containerEl,
+			'Edit holddown',
+			'Seconds to wait after the last keystroke before sharing an edited file.',
+			'openFileChangeHoldDown',
+		);
 
 		// --- Logging ---
 		// The log level is set from the log panel's own dropdown, and the panel
@@ -180,39 +160,31 @@ export class VaultShareSettingTab extends PluginSettingTab {
 		// only logging setting here is history size.
 		new Setting(containerEl).setName('Logging').setHeading();
 
-		new Setting(containerEl)
-			.setName('Log history size')
-			.setDesc('Number of most recent log entries to retain for the log panel.')
-			.addText(text =>
-				text
-					.setValue(String(this.plugin.settings.logHorizon))
-					.onChange(async value => {
-						const n = parseInt(value, 10);
-						if (!isNaN(n) && n > 0) {
-							this.plugin.settings.logHorizon = n;
-							await this.plugin.saveData(this.plugin.settings);
-						}
-					}),
-			);
+		this.addPositiveIntSetting(
+			containerEl,
+			'Log history size',
+			'Number of most recent log entries to retain for the log panel.',
+			'logHorizon',
+		);
 
 		// --- Statistics (read-only) ---
 		new Setting(containerEl).setName('Statistics').setHeading();
 
 		const stats = this.plugin.statsTracker?.getCurrent();
 		if (stats) {
-			const fields: Array<[string, string, string | number]> = [
-				['Server clock skew', 'serverClockSkew', `${stats.serverClockSkew} ms`],
-				['Api response time', 'APIResponseTime', `${stats.APIResponseTime} ms`],
-				['Bulk sharing passes', 'bulkSyncPasses', stats.bulkSyncPasses],
-				['Passes with Drive duplicates', 'bulkPassesWithDuplicates', stats.bulkPassesWithDuplicates],
-				['Single file shares', 'singleFileSyncCount', stats.singleFileSyncCount],
-				['Files pushed', 'filesPushed', stats.filesPushed],
-				['Files pulled', 'filesPulled', stats.filesPulled],
-				['Files merged', 'filesMerged', stats.filesMerged],
-				['Content conflicts', 'contentConflicts', stats.contentConflicts],
-				['Delete conflicts', 'deleteConflicts', stats.deleteConflicts],
+			const fields: Array<[string, string | number]> = [
+				['Server clock skew', `${stats.serverClockSkew} ms`],
+				['Api response time', `${stats.APIResponseTime} ms`],
+				['Bulk sharing passes', stats.bulkSyncPasses],
+				['Passes with Drive duplicates', stats.bulkPassesWithDuplicates],
+				['Single file shares', stats.singleFileSyncCount],
+				['Files pushed', stats.filesPushed],
+				['Files pulled', stats.filesPulled],
+				['Files merged', stats.filesMerged],
+				['Content conflicts', stats.contentConflicts],
+				['Delete conflicts', stats.deleteConflicts],
 			];
-			for (const [name, , value] of fields) {
+			for (const [name, value] of fields) {
 				new Setting(containerEl)
 					.setName(name)
 					.setDesc(String(value));
@@ -270,5 +242,37 @@ export class VaultShareSettingTab extends PluginSettingTab {
 					}),
 			);
 	}
+
+	/**
+	 * Add a text setting bound to a positive-integer field. Input that does not
+	 * parse to an integer > 0 is ignored (the stored value is left unchanged).
+	 */
+	private addPositiveIntSetting(
+		containerEl: HTMLElement,
+		name: string,
+		desc: string,
+		key: PositiveIntSettingKey,
+	): void {
+		new Setting(containerEl)
+			.setName(name)
+			.setDesc(desc)
+			.addText(text =>
+				text
+					.setValue(String(this.plugin.settings[key]))
+					.onChange(async value => {
+						const n = parseInt(value, 10);
+						if (!isNaN(n) && n > 0) {
+							this.plugin.settings[key] = n;
+							await this.plugin.saveData(this.plugin.settings);
+						}
+					}),
+			);
+	}
 }
+
+/** Settings fields edited as positive integers via {@link VaultShareSettingTab.addPositiveIntSetting}. */
+type PositiveIntSettingKey = keyof Pick<
+	VaultShareSettings,
+	'bulkSyncPoll' | 'openFilePoll' | 'openFileChangeHoldDown' | 'logHorizon'
+>;
 

@@ -20,17 +20,8 @@
  * @packageDocumentation
  */
 export function formatSyncStatus(paused: boolean, count: number | null): string {
-	if (count === null) {
-		return 'Checking…';
-	}
-	if (paused && count > 0) {
-		return `Sharing paused – ${count} file${count === 1 ? '' : 's'} pending`;
-	}
-	if (paused) {
-		return 'Sharing paused';
-	}
-	if (count > 0) {
-		return `${count} file${count === 1 ? '' : 's'} pending`;
-	}
-	return '';
+	if (count === null) return 'Checking…';
+	const files = count > 0 ? `${count} file${count === 1 ? '' : 's'} pending` : '';
+	if (!paused) return files;
+	return files ? `Sharing paused – ${files}` : 'Sharing paused';
 }

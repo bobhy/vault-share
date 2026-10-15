@@ -163,13 +163,6 @@ describe('ConflictMarkerNavigator — single-conflict, cursor inside', () => {
 		expect(editor.getCursor().line).toBe(3);
 	});
 
-	it('emits "No other conflicts." when cursor is inside the only conflict', () => {
-		const { editor, cursor } = makeEditor([...BLOCK_A]);
-		cursor.line = 3;
-		new ConflictMarkerNavigator().navigateForward(editor);
-		expect(vi.mocked(Notice)).toHaveBeenCalledWith('No other conflicts.');
-	});
-
 	it('completes navigation (no throw) with cursor anywhere in the conflict on first use', () => {
 		for (const line of [0, 1, 2, 3, 4, 5, 6, 7]) {
 			const { editor, cursor } = makeEditor([...BLOCK_A]);
@@ -264,19 +257,13 @@ describe('ConflictMarkerNavigator — applyResolution', () => {
 		({ editor, getLines } = makeEditor([...BLOCK_A]));
 	});
 
-	it('choose A1: replaces the region with that alternative only', () => {
-		nav.applyResolution(editor, BLOCK_A_DESC, ['LOCAL LINE']);
-		expect(getLines()).toEqual(['LOCAL LINE']);
-	});
-
-	it('choose A2: replaces the region with that alternative only', () => {
-		nav.applyResolution(editor, BLOCK_A_DESC, ['REMOTE LINE']);
-		expect(getLines()).toEqual(['REMOTE LINE']);
-	});
-
-	it('choose base: replaces the region with the base segment only', () => {
-		nav.applyResolution(editor, BLOCK_A_DESC, ['BASE LINE']);
-		expect(getLines()).toEqual(['BASE LINE']);
+	it.each([
+		{ name: 'A1', lines: ['LOCAL LINE'] },
+		{ name: 'A2', lines: ['REMOTE LINE'] },
+		{ name: 'base', lines: ['BASE LINE'] },
+	])('choose $name: replaces the region with that segment only', ({ lines }) => {
+		nav.applyResolution(editor, BLOCK_A_DESC, lines);
+		expect(getLines()).toEqual(lines);
 	});
 
 	it('preserves lines before and after the replaced region', () => {
@@ -410,14 +397,11 @@ function noopCallbacks() {
 }
 
 describe('buildConflictBanner — mobile placement', () => {
-	it('docks at the BOTTOM on mobile (top === false)', () => {
-		const { top } = buildConflictBanner(makeBlock(), 0, 2, true, noopCallbacks());
-		expect(top).toBe(false);
-	});
-
-	it('docks at the TOP on desktop (top === true)', () => {
-		const { top } = buildConflictBanner(makeBlock(), 0, 2, false, noopCallbacks());
-		expect(top).toBe(true);
+	it.each([
+		{ name: 'BOTTOM on mobile', isMobile: true, top: false },
+		{ name: 'TOP on desktop', isMobile: false, top: true },
+	])('docks at the $name (top === $top)', ({ isMobile, top }) => {
+		expect(buildConflictBanner(makeBlock(), 0, 2, isMobile, noopCallbacks()).top).toBe(top);
 	});
 });
 

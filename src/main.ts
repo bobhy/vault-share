@@ -35,6 +35,7 @@ import { SharingPanelView, SHARING_STATUS_VIEW_TYPE } from './ui/sharing-panel';
 import { ConfirmationModal } from './ui/confirmation-modal';
 import { ConflictMarkerNavigator, conflictHighlightExtension } from './ui/conflict-marker-navigator';
 import { formatSyncStatus } from './ui/sync-status-bar';
+import { errorMessage } from './errors';
 
 /**
  * Vault Share plugin entry point.
@@ -235,7 +236,7 @@ export default class VaultSharePlugin extends Plugin {
 				new Notice('Logged in to Google Drive.');
 				this.settingTab.display();
 			} catch (err) {
-				new Notice(`Connection failed: ${err instanceof Error ? err.message : String(err)}`);
+				new Notice(`Connection failed: ${errorMessage(err)}`);
 			}
 		});
 
@@ -329,7 +330,7 @@ export default class VaultSharePlugin extends Plugin {
 						}
 					})
 					.catch((err: unknown) => {
-						const msg = err instanceof Error ? err.message : String(err);
+						const msg = errorMessage(err);
 						this.logger.error('Drive repair failed', msg);
 						new Notice(`Drive repair failed: ${msg}`);
 					});

@@ -10,8 +10,9 @@
  * @packageDocumentation
  */
 import type { Candidate, SyncContext } from '../sync/types';
-import { computeMerge } from '../sync/resolution-executor';
+import { computeMerge, readLocalText, readRemoteText } from '../sync/resolution-executor';
 import { isMergeEligible } from '../sync/nway-merge';
+import { errorMessage } from '../errors';
 
 /**
  * Mutable reference to the editable textarea created for text-conflict candidates.
@@ -52,7 +53,7 @@ export async function loadFilePanels(
 		container.empty();
 		container.createEl('p', {
 			cls: 'vault-share-pending-panel-error',
-			text: `Could not load file content: ${err instanceof Error ? err.message : String(err)}`,
+			text: `Could not load file content: ${errorMessage(err)}`,
 		});
 	}
 }
@@ -63,29 +64,12 @@ async function renderFilePanels(
 	ctx: SyncContext,
 	textareaRef: TextareaRef,
 ): Promise<void> {
-	const dec = new TextDecoder();
-
-	/** Read the local vault file and decode to text. */
-	const readLocal = async (): Promise<string> => {
-		const bytes = await ctx.localFs.read(candidate.path);
-		return dec.decode(bytes);
-	};
-
-	/** Download the remote file and decode to text, or return null if the Drive file ID is unavailable. */
-	const readRemote = async (): Promise<string | null> => {
-		const driveFileId = candidate.remote?.driveFileId ?? candidate.driveFileId;
-		if (!driveFileId) return null;
-		const bytes = await ctx.driveFs.readBinary(driveFileId);
-		return dec.decode(bytes);
-	};
-
-	container.empty();
-
 	switch (candidate.actionType) {
 		case 'push':
 		case 'deleteRemote': {
 			// Local vault content (read-only).
-			const text = await readLocal();
+			const text = await readLocalText(candidate, ctx);
+			container.empty();
 			renderReadOnlyPanel(container, 'Local vault', text);
 			break;
 		}
@@ -93,12 +77,9 @@ async function renderFilePanels(
 		case 'pull':
 		case 'deleteLocal': {
 			// Remote content (read-only, downloaded on demand).
-			const text = await readRemote();
-			if (text === null) {
-				renderUnavailable(container, 'Remote file is unavailable.');
-			} else {
-				renderReadOnlyPanel(container, 'Group vault', text);
-			}
+			const text = await readRemoteText(candidate, ctx);
+			container.empty();
+			renderRemotePanel(container, text);
 			break;
 		}
 
@@ -106,6 +87,7 @@ async function renderFilePanels(
 			if (isMergeEligible(candidate.path)) {
 				// Editable merged-result textarea.
 				const result = await computeMerge(candidate, ctx);
+				container.empty();
 				const ta = renderEditablePanel(container, 'Merged result', result.content);
 				textareaRef.el = ta;
 				if (result.hasConflicts) {
@@ -116,36 +98,47 @@ async function renderFilePanels(
 				}
 			} else {
 				// Two stacked read-only panels for binary files.
-				const [local, remote] = await Promise.all([readLocal(), readRemote()]);
+				const [local, remote] = await Promise.all([
+					readLocalText(candidate, ctx),
+					readRemoteText(candidate, ctx),
+				]);
+				container.empty();
 				renderReadOnlyPanel(container, 'Local vault', local);
-				if (remote === null) {
-					renderUnavailable(container, 'Remote file is unavailable.');
-				} else {
-					renderReadOnlyPanel(container, 'Group vault', remote);
-				}
+				renderRemotePanel(container, remote);
 			}
 			break;
 		}
 
 		default:
+			container.empty();
 			break;
 	}
 }
 
-function renderReadOnlyPanel(container: HTMLElement, label: string, content: string): void {
+/** Create a panel div with its label; the caller adds the content element. */
+function createLabelledPanel(container: HTMLElement, label: string): HTMLElement {
 	const panel = container.createDiv({ cls: 'vault-share-file-panel' });
 	panel.createSpan({ cls: 'vault-share-file-panel-label', text: label });
-	panel.createEl('pre', { cls: 'vault-share-file-panel-content', text: content });
+	return panel;
+}
+
+function renderReadOnlyPanel(container: HTMLElement, label: string, content: string): void {
+	createLabelledPanel(container, label)
+		.createEl('pre', { cls: 'vault-share-file-panel-content', text: content });
+}
+
+/** Group vault panel, or an "unavailable" notice when the file has no Drive copy. */
+function renderRemotePanel(container: HTMLElement, content: string | null): void {
+	if (content === null) {
+		container.createEl('p', { cls: 'vault-share-pending-panel-error', text: 'Remote file is unavailable.' });
+	} else {
+		renderReadOnlyPanel(container, 'Group vault', content);
+	}
 }
 
 function renderEditablePanel(container: HTMLElement, label: string, content: string): HTMLTextAreaElement {
-	const panel = container.createDiv({ cls: 'vault-share-file-panel' });
-	panel.createSpan({ cls: 'vault-share-file-panel-label', text: label });
-	const ta = panel.createEl('textarea', { cls: 'vault-share-file-panel-textarea' });
+	const ta = createLabelledPanel(container, label)
+		.createEl('textarea', { cls: 'vault-share-file-panel-textarea' });
 	ta.value = content;
 	return ta;
-}
-
-function renderUnavailable(container: HTMLElement, message: string): void {
-	container.createEl('p', { cls: 'vault-share-pending-panel-error', text: message });
 }

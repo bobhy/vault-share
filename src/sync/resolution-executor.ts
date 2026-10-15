@@ -24,6 +24,26 @@ export interface MergePreview {
 }
 
 /**
+ * The Drive file ID for a candidate: the remote side's ID when the plan saw one,
+ * otherwise the ID recorded at last sync. Empty when the file was never on Drive.
+ */
+export function effectiveDriveFileId(candidate: Candidate): string {
+	return candidate.remote?.driveFileId ?? candidate.driveFileId;
+}
+
+/** Read the candidate's local vault file as text. */
+export async function readLocalText(candidate: Candidate, ctx: SyncContext): Promise<string> {
+	return new TextDecoder().decode(await ctx.localFs.read(candidate.path));
+}
+
+/** Download the candidate's Drive file as text, or `null` when it has no Drive file ID. */
+export async function readRemoteText(candidate: Candidate, ctx: SyncContext): Promise<string | null> {
+	const driveFileId = effectiveDriveFileId(candidate);
+	if (!driveFileId) return null;
+	return new TextDecoder().decode(await ctx.driveFs.readBinary(driveFileId));
+}
+
+/**
  * Execute the planned action for a candidate immediately.
  * Used by the **Proceed** button for push / pull / deleteLocal / deleteRemote candidates.
  *
@@ -59,7 +79,7 @@ export async function executeBackOut(
 ): Promise<void> {
 	const rootFolderId = ctx.driveFolderId();
 	const sampler = { value: false };
-	const driveFileId = candidate.remote?.driveFileId ?? candidate.driveFileId;
+	const driveFileId = effectiveDriveFileId(candidate);
 
 	switch (candidate.actionType) {
 		case 'push': {
@@ -171,7 +191,7 @@ export async function executeDeleteBoth(
 	ctx: SyncContext,
 	candidateStore: CandidateStore,
 ): Promise<void> {
-	const driveFileId = candidate.remote?.driveFileId ?? candidate.driveFileId;
+	const driveFileId = effectiveDriveFileId(candidate);
 	await ctx.localFs.delete(candidate.path);
 	if (driveFileId) await ctx.driveFs.delete(driveFileId);
 	await candidateStore.remove(candidate.path);
@@ -183,23 +203,16 @@ export async function executeDeleteBoth(
  * Does not write to either vault side.
  */
 export async function computeMerge(candidate: Candidate, ctx: SyncContext): Promise<MergePreview> {
-	const dec = new TextDecoder();
-	const driveFileId = candidate.remote?.driveFileId ?? candidate.driveFileId;
+	// The three reads are independent; run them concurrently so the preview
+	// waits for the slowest (usually the Drive download), not their sum.
+	const [localText, remoteText, baseBytes] = await Promise.all([
+		readLocalText(candidate, ctx),
+		readRemoteText(candidate, ctx),
+		ctx.store.getContent(candidate.path),
+	]);
+	const baseText = baseBytes ? new TextDecoder().decode(baseBytes) : '';
 
-	const localBytes = await ctx.localFs.read(candidate.path);
-	const localText = dec.decode(localBytes);
-
-	let remoteText = '';
-	if (driveFileId) {
-		const remoteBytes = await ctx.driveFs.readBinary(driveFileId);
-		remoteText = dec.decode(remoteBytes);
-	}
-
-	let baseText = '';
-	const baseBytes = await ctx.store.getContent(candidate.path);
-	if (baseBytes) baseText = dec.decode(baseBytes);
-
-	const result = reconcileText(baseText, localText, remoteText);
+	const result = reconcileText(baseText, localText, remoteText ?? '');
 	// keep-both has no merged text to preview — fall back to local so the user
 	// still sees content; the actual Merge action resolves it via resolveKeepBoth.
 	if (result.kind === 'keepBoth') return { content: localText, hasConflicts: true };

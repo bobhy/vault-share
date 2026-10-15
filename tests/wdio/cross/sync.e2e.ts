@@ -11,24 +11,9 @@
 
 import { createHash } from "node:crypto";
 import { CROSS_VAULT_DRIVE_FOLDER, cleanupTestDriveFolder, injectAndConfigure, runBulkSync } from "../../../wdio.conf.mts";
+import { vaults } from "../../../wdio.multiremote.conf.mts";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/**
- * The multiremote session as its proper type. Must go through `browser`, not the
- * `multiremotebrowser` global: wdio-obsidian-service reloads sessions when it opens
- * a vault, and only `browser` tracks the reloaded instances.
- */
-function multiremote(): WebdriverIO.MultiRemoteBrowser {
-	return browser as unknown as WebdriverIO.MultiRemoteBrowser;
-}
-
-function vaults(): { primary: WebdriverIO.Browser; peer: WebdriverIO.Browser } {
-	return {
-		primary: multiremote().getInstance("primaryVault"),
-		peer: multiremote().getInstance("peerVault"),
-	};
-}
 
 async function create(vault: WebdriverIO.Browser, path: string, content: string): Promise<void> {
 	await vault.executeObsidian(async ({ app }, p, c) => {

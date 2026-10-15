@@ -15,6 +15,7 @@ import type { ExcludeMatcher } from './exclude';
 import type { CandidateStore } from './candidate-store';
 import { syncOneFile } from './file-syncer';
 import { sha256Hex } from './content-hash';
+import { errorMessage } from '../errors';
 
 /**
  * Tally one file's sync result into a {@link SyncPassResult} counter set.
@@ -302,7 +303,7 @@ export class BulkSync {
 			this.ctx.logger.info(summary);
 
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
+			const msg = errorMessage(err);
 			result.error = err instanceof Error ? err : new Error(msg);
 			this.setStatusBar(`Sharing interrupted: ${msg}`);
 			this.ctx.logger.error('Bulk sync interrupted', msg);
@@ -352,7 +353,7 @@ export class BulkSync {
 			this.ctx.logger.info(summary);
 
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
+			const msg = errorMessage(err);
 			result.error = err instanceof Error ? err : new Error(msg);
 			this.setStatusBar(`Sharing interrupted: ${msg}`);
 			this.ctx.logger.error('Bulk sync interrupted', msg);
@@ -395,7 +396,7 @@ export class BulkSync {
 			tallyFileResult(actionType, fileResult, result);
 			await this.candidates.applyFileResult(candidate.path, actionType, fileResult);
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
+			const msg = errorMessage(err);
 			result.failed++;
 			this.ctx.logger.error(
 				`sync ${candidate.path} (${actionType}${tag}) failed`,

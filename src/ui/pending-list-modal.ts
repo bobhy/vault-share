@@ -34,18 +34,9 @@ import {
 	executeDeleteBoth,
 	writeResolvedMerge,
 } from '../sync/resolution-executor';
-import { hasConflictMarkers } from '../sync/nway-merge';
+import { hasConflictMarkers, isMergeEligible } from '../sync/nway-merge';
+import { errorMessage } from '../errors';
 import { loadFilePanels, type TextareaRef } from './pending-file-panel';
-
-const TEXT_EXTENSIONS = new Set([
-	'.md', '.txt', '.json', '.yaml', '.yml', '.toml', '.csv',
-	'.html', '.css', '.js', '.ts',
-]);
-
-function isTextFile(path: string): boolean {
-	const dotIdx = path.lastIndexOf('.');
-	return dotIdx >= 0 && TEXT_EXTENSIONS.has(path.slice(dotIdx).toLowerCase());
-}
 
 const MODAL_TITLE: Record<SyncActionType, string> = {
 	push:         'Push operations',
@@ -71,7 +62,7 @@ function candidateDescription(candidate: Candidate): string {
 		case 'pull':         return 'Sharing will pull this file from the group vault.';
 		case 'deleteRemote': return 'Sharing will delete this file from the group vault.';
 		case 'deleteLocal':  return 'Sharing will delete this file from your local vault.';
-		case 'conflict':     return isTextFile(candidate.path)
+		case 'conflict':     return isMergeEligible(candidate.path)
 			? 'Sharing detected conflicting edits. Review both versions and choose a resolution.'
 			: 'Sharing detected conflicting edits to a non-text file. Choose which version to keep.';
 		default:             return '';
@@ -102,7 +93,6 @@ export class PendingListModal extends Modal {
 	private candidates: Candidate[];
 	/** Map from path → whether the checkbox is checked. */
 	private readonly accepted = new Map<string, boolean>();
-	private expandedPath: string | null = null;
 	private listEl: HTMLUListElement | null = null;
 	/** Unsubscribe handle from {@link CandidateStore.onChange}; set in onOpen, cleared in onClose. */
 	private unsubscribe: (() => void) | null = null;
@@ -117,11 +107,24 @@ export class PendingListModal extends Modal {
 		super(app);
 		// Read fresh candidates from the store on open.
 		this.candidates = candidateStore.getByType(actionType);
+		this.syncAccepted();
+	}
+
+	/**
+	 * Align {@link accepted} with {@link candidates}: drop entries for rows that
+	 * are gone and give new rows their default. Existing selections are kept.
+	 *
+	 * Checked ⇔ "will be shared on resume": Default (pre-accepted) and Approved
+	 * (already released) start checked; only Deferred (held back) starts
+	 * unchecked and requires explicit opt-in.
+	 */
+	private syncAccepted(): void {
+		const present = new Set(this.candidates.map(c => c.path));
+		for (const path of [...this.accepted.keys()]) {
+			if (!present.has(path)) this.accepted.delete(path);
+		}
 		for (const c of this.candidates) {
-			// Checked ⇔ "will be shared on resume": Default (pre-accepted) and
-			// Approved (already released) are checked; only Deferred (held back)
-			// starts unchecked and requires explicit opt-in.
-			this.accepted.set(c.path, c.state !== 'Deferred');
+			if (!this.accepted.has(c.path)) this.accepted.set(c.path, c.state !== 'Deferred');
 		}
 	}
 
@@ -186,24 +189,7 @@ export class PendingListModal extends Modal {
 	 */
 	private refresh(): void {
 		this.candidates = this.candidateStore.getByType(this.actionType);
-
-		const present = new Set(this.candidates.map(c => c.path));
-		// Drop accepted-map entries for candidates no longer in this view.
-		for (const path of [...this.accepted.keys()]) {
-			if (!present.has(path)) this.accepted.delete(path);
-		}
-		// New candidates (e.g. a reconcile that introduced fresh pushes) get the
-		// same default the constructor would have set.
-		for (const c of this.candidates) {
-			if (!this.accepted.has(c.path)) {
-				this.accepted.set(c.path, c.state !== 'Deferred');
-			}
-		}
-		// Collapse the expanded accordion if its candidate disappeared.
-		if (this.expandedPath !== null && !present.has(this.expandedPath)) {
-			this.expandedPath = null;
-		}
-
+		this.syncAccepted();
 		this.rerenderList();
 
 		// Auto-close if the store has emptied this view (e.g. all candidates were
@@ -240,7 +226,7 @@ export class PendingListModal extends Modal {
 
 		const cb = row.createEl('input');
 		cb.type = 'checkbox';
-		cb.checked = this.accepted.get(candidate.path) ?? (candidate.state !== 'Deferred');
+		cb.checked = this.accepted.get(candidate.path) ?? false;
 		cb.addClass('vault-share-pending-checkbox');
 		cb.addEventListener('change', () => { this.accepted.set(candidate.path, cb.checked); });
 
@@ -253,27 +239,24 @@ export class PendingListModal extends Modal {
 		li.createDiv({ cls: 'vault-share-pending-detail is-hidden' });
 	}
 
+	/**
+	 * Expand this row's detail (collapsing any other) or collapse it if open.
+	 * The detail is populated on first expand only, so collapsing and re-expanding
+	 * keeps the loaded preview — and any edits in the merge textarea — instead of
+	 * re-downloading it.
+	 */
 	private toggleAccordion(li: HTMLElement, candidate: Candidate): void {
 		const detail = li.querySelector<HTMLElement>('.vault-share-pending-detail');
 		if (!detail) return;
 
-		const isOpen = !detail.hasClass('is-hidden');
+		const wasOpen = !detail.hasClass('is-hidden');
+		li.parentElement
+			?.querySelectorAll<HTMLElement>('.vault-share-pending-detail')
+			.forEach(d => d.addClass('is-hidden'));
 
-		// Collapse any other expanded item before changing this one
-		if (this.expandedPath !== null && this.expandedPath !== candidate.path) {
-			li.parentElement
-				?.querySelectorAll<HTMLElement>('.vault-share-pending-detail')
-				.forEach(d => d.addClass('is-hidden'));
-		}
-
-		if (isOpen) {
-			detail.addClass('is-hidden');
-			this.expandedPath = null;
-		} else {
-			detail.empty();
-			this.populateDetail(detail, candidate);
+		if (!wasOpen) {
+			if (!detail.hasChildNodes()) this.populateDetail(detail, candidate);
 			detail.removeClass('is-hidden');
-			this.expandedPath = candidate.path;
 		}
 	}
 
@@ -294,10 +277,14 @@ export class PendingListModal extends Modal {
 	}
 
 	private addResolutionButtons(container: HTMLElement, candidate: Candidate, textareaRef: TextareaRef): void {
-		/** Helper: create a button that runs an async executor and handles state/errors. */
-		const actionBtn = (label: string, executor: () => Promise<void>): void => {
+		/**
+		 * Helper: create a button that runs an async executor and handles state/errors.
+		 * `precheck`, when given, runs first; returning false aborts the click.
+		 */
+		const actionBtn = (label: string, executor: () => Promise<void>, precheck?: () => boolean): void => {
 			const btn = container.createEl('button', { text: label });
 			btn.addEventListener('click', () => {
+				if (precheck && !precheck()) return;
 				btn.disabled = true;
 				btn.setText('Running…');
 				void executor()
@@ -305,39 +292,32 @@ export class PendingListModal extends Modal {
 					.catch((err: unknown) => {
 						btn.disabled = false;
 						btn.setText(label);
-						const msg = err instanceof Error ? err.message : String(err);
-						new Notice(`${label} failed: ${msg}`);
+						new Notice(`${label} failed: ${errorMessage(err)}`);
 					});
 			});
 		};
 
 		if (candidate.actionType === 'conflict') {
-			if (isTextFile(candidate.path)) {
+			if (isMergeEligible(candidate.path)) {
 				// Merge reads from the editable textarea (textareaRef.el) and checks for
 				// unresolved conflict markers before writing to both vaults.
-				const mergeBtn = container.createEl('button', { text: 'Merge' });
-				mergeBtn.addEventListener('click', () => {
-					const text = textareaRef.el?.value;
-					if (text === undefined) {
-						new Notice('File content not loaded yet — please wait and try again.');
-						return;
-					}
-					if (hasConflictMarkers(text)) {
-						new Notice('Resolve all conflict markers first.');
-						textareaRef.el?.focus();
-						return;
-					}
-					mergeBtn.disabled = true;
-					mergeBtn.setText('Running…');
-					void writeResolvedMerge(candidate, text, this.ctx, this.candidateStore)
-						.then(() => { this.handleSuccess(candidate); })
-						.catch((err: unknown) => {
-							mergeBtn.disabled = false;
-							mergeBtn.setText('Merge');
-							const msg = err instanceof Error ? err.message : String(err);
-							new Notice(`Merge failed: ${msg}`);
-						});
-				});
+				actionBtn(
+					'Merge',
+					() => writeResolvedMerge(candidate, textareaRef.el?.value ?? '', this.ctx, this.candidateStore),
+					() => {
+						const text = textareaRef.el?.value;
+						if (text === undefined) {
+							new Notice('File content not loaded yet — please wait and try again.');
+							return false;
+						}
+						if (hasConflictMarkers(text)) {
+							new Notice('Resolve all conflict markers first.');
+							textareaRef.el?.focus();
+							return false;
+						}
+						return true;
+					},
+				);
 				actionBtn('Back out', () => executeConflictBackOut(candidate, this.ctx, this.candidateStore));
 			} else {
 				actionBtn('Keep local', () => executeKeepLocal(candidate, this.ctx, this.candidateStore));
@@ -354,40 +334,24 @@ export class PendingListModal extends Modal {
 		skip.addEventListener('click', () => {
 			const detail = skip.closest<HTMLElement>('.vault-share-pending-detail');
 			detail?.addClass('is-hidden');
-			this.expandedPath = null;
 		});
 	}
 
 	private async applyAccepted(): Promise<void> {
-		const acceptedSet = new Set(
-			[...this.accepted.entries()].filter(([, ok]) => ok).map(([p]) => p),
-		);
-		const rejectedSet = new Set(
-			[...this.accepted.entries()].filter(([, ok]) => !ok).map(([p]) => p),
-		);
+		const toApprove: string[] = [];
+		const toDefer: string[] = [];
+		for (const c of this.candidates) {
+			const checked = this.accepted.get(c.path) ?? false;
+			// Checked Deferred → approve (release it). Checked Default → approve too,
+			// so the next pass bypasses the threshold guard.
+			if (checked && (c.state === 'Deferred' || c.state === 'Default')) toApprove.push(c.path);
+			// Unchecked Default or Approved → defer. Including Approved is what lets
+			// the user retract a previously released file (Approved → Deferred).
+			else if (!checked && (c.state === 'Default' || c.state === 'Approved')) toDefer.push(c.path);
+		}
 
-		// Deferred candidates that the user checked → approve them.
-		const toApprove = this.candidates
-			.filter(c => c.state === 'Deferred' && acceptedSet.has(c.path))
-			.map(c => c.path);
-
-		// Default or Approved candidates that the user unchecked → defer them.
-		// Including Approved here is what lets the user retract a previously
-		// released file: un-checking it demotes Approved → Deferred so it will
-		// not be shared on resume.
-		const toDefer = this.candidates
-			.filter(c => (c.state === 'Default' || c.state === 'Approved') && rejectedSet.has(c.path))
-			.map(c => c.path);
-
-		// Default candidates that the user kept checked → approve them too (bypass threshold).
-		const defaultApproved = this.candidates
-			.filter(c => c.state === 'Default' && acceptedSet.has(c.path))
-			.map(c => c.path);
-
-		const allToApprove = [...toApprove, ...defaultApproved];
-
-		if (allToApprove.length > 0) {
-			await this.candidateStore.approve(allToApprove);
+		if (toApprove.length > 0) {
+			await this.candidateStore.approve(toApprove);
 		}
 		if (toDefer.length > 0) {
 			await this.candidateStore.defer(toDefer);

@@ -164,8 +164,8 @@ export class ConflictMarkerNavigator {
 		}
 
 		const cursorLine = editor.getCursor().line;
-		const target = this.findTarget(blocks, cursorLine, direction);
-		const targetIndex = blocks.indexOf(target);
+		const targetIndex = this.findTarget(blocks, cursorLine, direction);
+		const target = blocks[targetIndex]!;
 
 		// Determine whether the cursor is already sitting inside the target block.
 		// When there is only one conflict and the cursor is inside it there is
@@ -209,7 +209,7 @@ export class ConflictMarkerNavigator {
 		index: number,
 		total: number,
 	): void {
-		const cm = (editor as unknown as { cm: EditorView }).cm;
+		const cm = cmOf(editor);
 		if (!cm) return;
 
 		// Dismiss any existing panel/highlight, then record the new CM view.
@@ -241,7 +241,7 @@ export class ConflictMarkerNavigator {
 	 * No-ops gracefully when the underlying CM6 view is unavailable (e.g. tests).
 	 */
 	private setHighlight(editor: Editor, block: ConflictBlock): void {
-		const cm = (editor as unknown as { cm: EditorView }).cm;
+		const cm = cmOf(editor);
 		if (!cm) return;
 		// Keep activeEditorView current (may already be set by showBanner).
 		this.activeEditorView = cm;
@@ -279,22 +279,22 @@ export class ConflictMarkerNavigator {
 	}
 
 	/**
-	 * Return the target block to navigate to.
+	 * Return the index of the target block to navigate to, wrapping at either end.
 	 * Precondition: `blocks` is non-empty.
 	 */
 	private findTarget(
 		blocks: ConflictBlock[],
 		cursorLine: number,
 		direction: 'forward' | 'backward',
-	): ConflictBlock {
+	): number {
 		if (direction === 'forward') {
-			return blocks.find(b => b.startLine > cursorLine) ?? blocks[0]!;
+			const i = blocks.findIndex(b => b.startLine > cursorLine);
+			return i === -1 ? 0 : i;
 		}
 		for (let i = blocks.length - 1; i >= 0; i--) {
-			const block = blocks[i]!;
-			if (block.startLine < cursorLine) return block;
+			if (blocks[i]!.startLine < cursorLine) return i;
 		}
-		return blocks[blocks.length - 1]!;
+		return blocks.length - 1;
 	}
 
 	/**
@@ -344,6 +344,13 @@ export class ConflictMarkerNavigator {
 	}
 }
 
+/**
+ * The CM6 view behind an Obsidian {@link Editor}, or `undefined` when there is
+ * none (e.g. the mock editor in unit tests). `cm` is not in Obsidian's public typings.
+ */
+function cmOf(editor: Editor): EditorView | undefined {
+	return (editor as unknown as { cm?: EditorView }).cm;
+}
 
 // ---------------------------------------------------------------------------
 // Resolution panel DOM — extracted as a pure builder so it is unit-testable
@@ -376,7 +383,7 @@ export interface ConflictBannerCallbacks {
  * instead. Do not apply this `touchend`/`preventDefault()` pattern to a native
  * control such as a `<select>`: it would suppress the OS option picker.
  */
-export function bindActivate(el: HTMLElement, handler: () => void): void {
+function bindActivate(el: HTMLElement, handler: () => void): void {
 	el.addEventListener('click', handler);
 	el.addEventListener('touchend', (e) => { e.preventDefault(); handler(); });
 }

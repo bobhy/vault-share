@@ -30,6 +30,7 @@
  */
 
 import { CROSS_VAULT_DRIVE_FOLDER, cleanupTestDriveFolder, injectAndConfigure, runBulkSync } from "../../../wdio.conf.mts";
+import { vaults } from "../../../wdio.multiremote.conf.mts";
 
 /**
  * Files per case. Large enough to exercise throttling/backoff; kept moderate so
@@ -37,22 +38,6 @@ import { CROSS_VAULT_DRIVE_FOLDER, cleanupTestDriveFolder, injectAndConfigure, r
  * field report at the cost of runtime.
  */
 const COUNT = 50;
-
-/**
- * The multiremote session as its proper type. Must go through `browser`, not the
- * `multiremotebrowser` global: wdio-obsidian-service reloads sessions when it opens
- * a vault, and only `browser` tracks the reloaded instances.
- */
-function multiremote(): WebdriverIO.MultiRemoteBrowser {
-	return browser as unknown as WebdriverIO.MultiRemoteBrowser;
-}
-
-function vaults(): { primary: WebdriverIO.Browser; peer: WebdriverIO.Browser } {
-	return {
-		primary: multiremote().getInstance("primaryVault"),
-		peer: multiremote().getInstance("peerVault"),
-	};
-}
 
 interface PassTotals {
 	uploaded: number;

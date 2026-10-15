@@ -8,9 +8,13 @@ import { loadFilePanels, type TextareaRef } from './pending-file-panel';
 import type { Candidate, SyncContext } from '../sync/types';
 
 // computeMerge pulls the full merge/IDB stack; stub it so these tests stay focused
-// on panel rendering. isMergeEligible is left real — it keys purely off the path
-// extension (.md = mergeable text, .png = binary).
-vi.mock('../sync/resolution-executor', () => ({ computeMerge: vi.fn() }));
+// on panel rendering. The read helpers (readLocalText / readRemoteText) stay real
+// so the ctx spies below see the calls. isMergeEligible is left real — it keys
+// purely off the path extension (.md = mergeable text, .png = binary).
+vi.mock('../sync/resolution-executor', async importOriginal => ({
+	...await importOriginal<typeof import('../sync/resolution-executor')>(),
+	computeMerge: vi.fn(),
+}));
 import { computeMerge } from '../sync/resolution-executor';
 
 beforeEach(() => { vi.clearAllMocks(); });

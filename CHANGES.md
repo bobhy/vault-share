@@ -10,9 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed 
 - Consolidated sharing log and sharing status panels to a single panel.  Allows you to see the log activity when you pause or resume sharing, e.g.
 - each file modified by sharing is now logged at INFO rather than DEBUG severity.  So INFO is a reasonable setting for logging filter.
+- Sharing status panel is much cheaper to keep open during a big sharing pass: a new log line now re-renders only the log section, not the whole panel (status line, controls and pending table).
+- In the pending-file review, collapsing and re-expanding a file keeps its preview (and any edits in the merge text box) instead of re-downloading it.  The "Loading…" placeholder now actually shows while the preview loads.
+- Conflict merge preview fetches the local, group vault and last-shared copies in parallel, so it opens faster.
+- Internal cleanup of the UI code (no intended functional change beyond the items above): removed duplicated helpers and state, shared the file-read and error-message helpers with the sync layer, and converted repetitive unit tests to table-driven cases.
+- `npm run build` now also type-checks the e2e (wdio) tests.
 
 ### Added
 - do single-file sharing for *any* file modified or created in the local vault, not just a file open for editing.  Previously, non-edit file changes (e.g, the Tasks plugin updating a task status in the the original note) would not be shared until the next bulk sharing cycle and other devices would lag in tracking the change.
+
+### Fixed
+- Conflicts on text files other than `.md` / `.txt` (e.g. `.json`, `.yaml`, `.css`) offered a **Merge** button that could never succeed ("File content not loaded yet").  They now offer **Keep local** / **Keep group vault** / **Delete both**, matching what sharing itself does with those files.
 
 ## [1.0.5]
 

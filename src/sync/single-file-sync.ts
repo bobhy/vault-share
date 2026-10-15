@@ -18,6 +18,7 @@ import { syncOneFile } from './file-syncer';
 import { hasConflictMarkers, isMergeEligible } from './nway-merge';
 import { ConfirmationModal } from '../ui/confirmation-modal';
 import { GDriveError } from '../gdrive/errors';
+import { errorMessage } from '../errors';
 
 /**
  * Sync a single file that is currently open or recently opened.
@@ -139,7 +140,7 @@ export async function singleFileSync(
 		await ctx.statsTracker.flush();
 
 	} catch (err) {
-		const msg = err instanceof Error ? err.message : String(err);
+		const msg = errorMessage(err);
 		const detail = err instanceof GDriveError
 			? ` [${err.code}${err.status !== undefined ? `/${err.status}` : ''}]`
 			: '';
