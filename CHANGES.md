@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [unreleased]
 
 ### Changed
-- Development: e2e tests now run on current Node releases (verified on Node 22, 24 and 26) instead of being pinned to Node 22.  Removed `.nvmrc` and the Node-version check in the wdio configs; CI now uses the current Node LTS.
+- Development: e2e tests now run on current Node releases (verified on Node 22, 24 and 26) instead of being pinned to Node 22.  Removed `.nvmrc` and the Node-version check in the wdio configs; `package.json` now declares `engines: node >=22`, and CI tests on both Node 22 and the current LTS.
 - Development: upgraded the WebdriverIO e2e stack to 9.32 (`webdriver`/`webdriverio` 9.27.1 → 9.32.0, `expect-webdriverio` 5 → 6) and `wdio-obsidian-service` to 3.3.0.  WebdriverIO 9.30 fixed the Node 26 `UND_ERR_INVALID_ARG` failure ([webdriverio#15265](https://github.com/webdriverio/webdriverio/issues/15265)).
 - Updated runtime and development dependencies via Dependabot (#20): 14 minor and patch updates, including `undici`, `tar`, `ws` and `postcss`.
 - Security: `vitest` and its coverage packages 4.1.8 → 4.1.12 (fixes the `@vitest/mocker` path-traversal advisory), and `moment` (pulled in by the `obsidian` typings package) overridden to 2.31.0.  None of these ship in the plugin bundle.
