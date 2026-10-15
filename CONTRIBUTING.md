@@ -409,9 +409,9 @@ We want to use the [published obsidian-mock](https://github.com/dianedef/obsidia
 this package is actually built against [a PR branch](https://github.com/bobhy/obsidian-mock/tree/thirdRound) rather than the packaged version.
 
 ### Webdriverio
-Bug exposed in node 26, we're currently pinning ourselves to node 22
-I'd prefer to depend on a patched version of this package.
-
-[#15265](https://github.com/webdriverio/webdriverio/issues/15265)
+`webdriver` before 9.30 sent request headers that Node 26 rejects, failing every e2e run with `UND_ERR_INVALID_ARG`
+([#15265](https://github.com/webdriverio/webdriverio/issues/15265), fixed in 9.30.0).
+`package.json` `overrides` pins `webdriver`/`webdriverio` so every wdio package shares one copy; keep that pin at ^9.32.0 (anything ≥ 9.30).
+WebdriverIO 10 is out, but `wdio-obsidian-service` (3.3.0) still declares `webdriverio ^9` — upgrade once it supports 10.
 
 

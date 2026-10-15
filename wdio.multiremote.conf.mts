@@ -7,12 +7,9 @@ import { readFile, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import ObsidianLauncher from "obsidian-launcher";
-import { requireNodeVersion } from "./wdio.conf.mts";
 
 // Cross-vault (multiremote) e2e tests. Run with: npm run test:e2e:cross
 // One-time token setup:  npm run setup:e2e:wdio
-
-requireNodeVersion();
 
 /**
  * When true (the default), the runner starts a virtual display and window manager
@@ -242,8 +239,10 @@ export const config: WebdriverIO.MultiremoteConfig = {
  */
 export function vaults(): { primary: WebdriverIO.Browser; peer: WebdriverIO.Browser } {
 	const multiremote = browser as unknown as WebdriverIO.MultiRemoteBrowser;
-	return {
-		primary: multiremote.getInstance("primaryVault"),
-		peer: multiremote.getInstance("peerVault"),
+	const instance = (name: string): WebdriverIO.Browser => {
+		const b = multiremote.getInstance(name);
+		if (!b) throw new Error(`multiremote instance "${name}" not found; check config.capabilities`);
+		return b;
 	};
+	return { primary: instance("primaryVault"), peer: instance("peerVault") };
 }

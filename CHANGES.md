@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [unreleased]
+
+### Changed
+- Development: e2e tests now run on current Node releases (verified on Node 22, 24 and 26) instead of being pinned to Node 22.  Removed `.nvmrc` and the Node-version check in the wdio configs; CI now uses the current Node LTS.
+- Development: upgraded the WebdriverIO e2e stack to 9.32 (`webdriver`/`webdriverio` 9.27.1 → 9.32.0, `expect-webdriverio` 5 → 6) and `wdio-obsidian-service` to 3.3.0.  WebdriverIO 9.30 fixed the Node 26 `UND_ERR_INVALID_ARG` failure ([webdriverio#15265](https://github.com/webdriverio/webdriverio/issues/15265)).
+- Updated runtime and development dependencies via Dependabot (#20): 14 minor and patch updates, including `undici`, `tar`, `ws` and `postcss`.
+
+No user-facing changes to the plugin itself in this release.
+
 ## [1.0.6]
 
 ### Changed 

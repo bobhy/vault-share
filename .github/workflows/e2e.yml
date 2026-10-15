@@ -1,6 +1,6 @@
 name: E2E tests
 
-# Runs on push to main and on demand.
+# Manual only (workflow_dispatch): `gh workflow run e2e.yml --ref <branch>`.
 # Requires the VAULT_SHARE_REFRESH_TOKEN repository secret — see CONTRIBUTING.md.
 on:
   workflow_dispatch:
@@ -8,13 +8,20 @@ on:
 jobs:
   e2e-single:
     runs-on: ubuntu-latest
+    # The supported floor (package.json engines) plus the current LTS. One at a
+    # time: both jobs share the same live Drive test folder.
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        node: ['22', 'lts/*']
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node }}
           cache: npm
 
       - run: npm ci

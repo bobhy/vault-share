@@ -9,9 +9,9 @@
 
 ## Prerequisites
 
-- **Node 22.** The system default (Node 26) fails the wdio run with
-  `UND_ERR_INVALID_ARG`. Prefix every e2e command with the Node 22 path:
-  `PATH="/home/bobhy/.local/share/nvm/v22.19.0/bin:$PATH"`.
+- **Node 22 or newer** (`engines` in `package.json`). Verified on 22, 24 and 26. Node 26 needs
+  `webdriver`/`webdriverio` ≥ 9.30 (pinned via `overrides` in `package.json`);
+  older versions fail session creation with `UND_ERR_INVALID_ARG`.
 - **A saved Google Drive refresh token.** One-time: `npm run setup:e2e:wdio`
   writes `.e2e-refresh-token`. Alternatively set `VAULT_SHARE_REFRESH_TOKEN`.
   The tests hit *live* Drive — they are not mocked.

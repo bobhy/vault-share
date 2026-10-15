@@ -4,29 +4,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-
-/**
- * Throw unless the running Node major version matches the project's `.nvmrc`.
- *
- * The e2e toolchain breaks on newer Node majors with an obscure
- * `UND_ERR_INVALID_ARG` partway through a run; this check fails at config load
- * instead, naming the required version and the Node binary actually in use.
- * Called by every wdio config.
- */
-export function requireNodeVersion(): void {
-	const required = readFileSync(join(import.meta.dirname, ".nvmrc"), "utf8").trim().replace(/^v/, "");
-	const requiredMajor = required.split(".")[0];
-	const actualMajor = process.versions.node.split(".")[0];
-	if (actualMajor !== requiredMajor) {
-		throw new Error(
-			`e2e tests need Node ${required} (from .nvmrc) but are running on ${process.version} (${process.execPath}).`,
-		);
-	}
-}
-requireNodeVersion();
 
 // Single-vault e2e tests. Run with: npm run test:e2e:single
 // One-time token setup:  npm run setup:e2e:wdio
