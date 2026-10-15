@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [unreleased]
+## [1.0.7]
 
 ### Changed
 - Development: e2e tests now run on current Node releases (verified on Node 22, 24 and 26) instead of being pinned to Node 22.  Removed `.nvmrc` and the Node-version check in the wdio configs; `package.json` now declares `engines: node >=22`, and CI tests on both Node 22 and the current LTS.

@@ -1,6 +1,6 @@
 {
 	"name": "vault-share",
-	"version": "1.0.6",
+	"version": "1.0.7",
 	"description": "Share vaults between devices and users through Google Drive.",
 	"main": "main.js",
 	"type": "module",
